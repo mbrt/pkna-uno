@@ -10,7 +10,11 @@ import PIL.Image
 load_dotenv()
 
 # Flags
-root_dir = '../export/pkna-03'
+root_dir = '../export/pkna-0'
+model_name = 'gemini-2.5-pro-exp-03-25'
+# model_name = 'gemini-2.0-flash'
+from_chunk = 0
+to_chunk = 256
 
 
 def to_json(text: str) -> str:
@@ -45,11 +49,15 @@ image_chunks = [images[i:i + 10] for i in range(0, len(images), 10)]
 
 # Generate content for each chunk
 for i, image_chunk in enumerate(image_chunks):
+    if i < from_chunk or i > to_chunk:
+        print(f"Skipping chunk {i + 1}")
+        continue
+
     print(f"Processing chunk {i + 1}/{len(image_chunks)}...")
 
     # Generate content for each chunk
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model=model_name,
        contents=[prompt, characters] + image_chunk)  # type: ignore
 
     if response.text is None:
