@@ -1,29 +1,45 @@
 from glob import glob
 import os
 
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 import PIL.Image
 
 
 load_dotenv()
 
 # Flags
-root_dir = '../export/pkna-0'
+root_dir = '../export/pkna-1'
 model_name = 'gemini-2.5-pro-exp-03-25'
 # model_name = 'gemini-2.0-flash'
 from_chunk = 0
 to_chunk = 256
 
 
-def to_json(text: str) -> str:
-    out = []
-    for line in text.splitlines(keepends=True):
-        if line.startswith('```'):
-            continue
-        out.append(line)
-    return "".join(out)
+class Caption(BaseModel):
+    text: str
+
+class Bubble(BaseModel):
+    text: str
+    character: str
+
+class Frame(BaseModel):
+    page: int
+    frame: int
+    captions: list[Caption]
+    bubbles: list[Bubble]
+    description: str = Field(description="One sentence description of the frame")
+
+
+class Scene(BaseModel):
+    frames: list[Frame]
+    summary: str = Field(description="Brief summary of the scene")
+
+
+class Response(BaseModel):
+    scenes: list[Scene]
 
 
 # Load the images
@@ -58,11 +74,16 @@ for i, image_chunk in enumerate(image_chunks):
     # Generate content for each chunk
     response = client.models.generate_content(
         model=model_name,
-       contents=[prompt, characters] + image_chunk)  # type: ignore
+        config={
+            'response_mime_type': 'application/json',
+            'response_schema': Response,
+        },
+        contents=[prompt, characters] + image_chunk, # type: ignore
+    )  
 
     if response.text is None:
         raise ValueError("Response text is None")
-    json_out = to_json(response.text)
+    json_out = response.text
 
     out_file = os.path.join(root_dir, f'out-{i}.part.json')
     with open(out_file, 'a') as out:

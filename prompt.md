@@ -9,37 +9,9 @@ Given the input comic book, extract the following information:
 Use the provided JSON input describing the main characters of the book for more
 background information.
 
-Output as a JSON, following this example:
-
-```
-{
-    "scenes": [
-        {
-            "frames": [
-                {
-                    "page": 3,
-                    "frame": 1,
-                    "captions": [
-                        {
-                            "text": "Tanto tempo fa..."
-                        }
-                    ],
-                    "bubbles": [
-                        {
-                            "text": "Dove siamo?",
-                            "character": "Alice"
-                        }
-                    ],
-                    "description": "One sentence description of the frame."
-                }
-            ]
-        }
-    ]
-}
-```
-
 Convert all caps speech bubbles and captions to normal caps. Whenever you can't identify a character by name, invent one that fits its look and be consistent across frames. Use different names for different characters.
 
 Captions are never associated with a character and could be either the narrator voice, or a sound effect. Speech bubbles are always associated with a character.
 
+Output as a JSON, following the given schema.
 Write all output in Italian, never translate to English.
