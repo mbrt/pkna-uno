@@ -1,9 +1,11 @@
 from glob import glob
 import os
+import time
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from google.genai.errors import ServerError
 from pydantic import BaseModel, Field
 import PIL.Image
 
@@ -11,7 +13,7 @@ import PIL.Image
 load_dotenv()
 
 # Flags
-root_dir = '../export/pkna-1'
+root_dir = '../export/pkna-0-2'
 model_name = 'gemini-2.5-pro-exp-03-25'
 # model_name = 'gemini-2.0-flash'
 from_chunk = 0
@@ -72,14 +74,24 @@ for i, image_chunk in enumerate(image_chunks):
     print(f"Processing chunk {i + 1}/{len(image_chunks)}...")
 
     # Generate content for each chunk
-    response = client.models.generate_content(
-        model=model_name,
-        config={
-            'response_mime_type': 'application/json',
-            'response_schema': Response,
-        },
-        contents=[prompt, characters] + image_chunk, # type: ignore
-    )  
+    max_retries = 3
+    retry_delay = 60  # seconds
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                config={
+                    'response_mime_type': 'application/json',
+                    'response_schema': Response,
+                },
+                contents=[prompt, characters] + image_chunk, # type: ignore
+            )
+            break
+        except ServerError as e:
+            if attempt == max_retries - 1:
+                raise  # Re-raise if all retries failed
+            print(f"Server error, retrying in {retry_delay}s... (attempt {attempt + 1}/{max_retries})")
+            time.sleep(retry_delay)
 
     if response.text is None:
         raise ValueError("Response text is None")
