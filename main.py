@@ -13,11 +13,9 @@ import PIL.Image
 load_dotenv()
 
 # Flags
-root_dir = '../export/pkna-0-2'
+root_dir = '../export/pkna-4'
 model_name = 'gemini-2.5-pro-exp-03-25'
 # model_name = 'gemini-2.0-flash'
-from_chunk = 0
-to_chunk = 256
 
 
 class Caption(BaseModel):
@@ -67,8 +65,11 @@ image_chunks = [images[i:i + 10] for i in range(0, len(images), 10)]
 
 # Generate content for each chunk
 for i, image_chunk in enumerate(image_chunks):
-    if i < from_chunk or i > to_chunk:
-        print(f"Skipping chunk {i + 1}")
+    out_file = os.path.join(root_dir, f'out-{i}.part.json')
+
+    # Skip if the output file is already there
+    if os.path.exists(out_file):
+        print(f"Output file {out_file} already exists, skipping...")
         continue
 
     print(f"Processing chunk {i + 1}/{len(image_chunks)}...")
@@ -97,7 +98,6 @@ for i, image_chunk in enumerate(image_chunks):
         raise ValueError("Response text is None")
     json_out = response.text
 
-    out_file = os.path.join(root_dir, f'out-{i}.part.json')
     with open(out_file, 'a') as out:
         out.write(json_out)
 
