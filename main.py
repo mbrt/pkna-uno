@@ -1,4 +1,5 @@
 from glob import glob
+import logging
 import os
 import time
 
@@ -7,15 +8,26 @@ from google import genai
 from google.genai import types
 from google.genai.errors import ServerError
 from pydantic import BaseModel, Field
+from rich.logging import RichHandler
 import PIL.Image
 
 
 load_dotenv()
 
 # Flags
-root_dir = '../export/pkna-4'
+root_dir = '../export/pkna-9'
 model_name = 'gemini-2.5-pro-exp-03-25'
 # model_name = 'gemini-2.0-flash'
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(show_time=True, show_path=False)]
+)
+log = logging.getLogger('rich')
+
 
 
 class Caption(BaseModel):
@@ -50,7 +62,7 @@ images = [
     for p in image_paths
 ]
 
-print(f"Loaded {len(images)} images from {root_dir}")
+log.info(f"Loaded {len(images)} images from {root_dir}")
 
 # Load prompts
 with open('prompt.md', 'r') as f:
@@ -69,10 +81,10 @@ for i, image_chunk in enumerate(image_chunks):
 
     # Skip if the output file is already there
     if os.path.exists(out_file):
-        print(f"Output file {out_file} already exists, skipping...")
+        log.info(f"Output file {out_file} already exists, skipping...")
         continue
 
-    print(f"Processing chunk {i + 1}/{len(image_chunks)}...")
+    log.info(f"Processing chunk {i + 1}/{len(image_chunks)}...")
 
     # Generate content for each chunk
     max_retries = 3
@@ -91,7 +103,7 @@ for i, image_chunk in enumerate(image_chunks):
         except ServerError as e:
             if attempt == max_retries - 1:
                 raise  # Re-raise if all retries failed
-            print(f"Server error, retrying in {retry_delay}s... (attempt {attempt + 1}/{max_retries})")
+            log.warning(f"Server error, retrying in {retry_delay}s... (attempt {attempt + 1}/{max_retries})")
             time.sleep(retry_delay)
 
     if response.text is None:
@@ -101,4 +113,4 @@ for i, image_chunk in enumerate(image_chunks):
     with open(out_file, 'a') as out:
         out.write(json_out)
 
-    print("Response written to file:", out_file)
+    log.info(f"Response written to file: {out_file}")
