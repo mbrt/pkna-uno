@@ -16,9 +16,11 @@ import PIL.Image
 load_dotenv()
 
 # Flags
-root_dir = '../export/pkna-14'
+root_dir = '../export/pkna-18'
 #model_name = 'gemini-2.5-pro-exp-03-25'
 model_name = 'gemini-2.0-flash'
+# If set to None, it will be computed automatically.
+chunk_size: int | None = None
 
 # Configure logging
 logging.basicConfig(
@@ -73,8 +75,29 @@ with open('../export/characters.json', 'r') as f:
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Split the images in chunks of 10
-image_chunks = [images[i:i + 10] for i in range(0, len(images), 10)]
+# Find the best chunk size, based on the number of images
+# Two cases:
+# 1. There's a size that makes all chunks the same size
+# 2. The last chunk is as big as possible
+if chunk_size is None:
+    chunk_size = 10
+    best_size = -1
+    for candidate in range(10, 7, -1):
+        last_chunk_size = len(images) % candidate
+        if last_chunk_size == 0:
+            chunk_size = candidate
+            break
+        if last_chunk_size > best_size:
+            best_size = last_chunk_size
+            chunk_size = candidate
+else:
+    best_size = len(images) % chunk_size
+
+# Split the images in chunks of chunk_size
+image_chunks = [images[i:i + chunk_size] for i in range(0, len(images), chunk_size)]
+
+log.info(f"Computed chunk size: {chunk_size}, last chunk: {best_size}, num chunks: {len(image_chunks)}")
+
 
 # Generate content for each chunk
 for i, image_chunk in enumerate(image_chunks):
@@ -86,11 +109,6 @@ for i, image_chunk in enumerate(image_chunks):
         continue
 
     log.info(f"Processing chunk {i + 1}/{len(image_chunks)}...")
-
-    num_new_pages = len(image_chunk)
-    if len(image_chunk) < 4:
-        image_chunk = images[-4:]
-        log.info(f"Small chunk: {num_new_pages}, using last 4 pages")
 
     # Generate content for each chunk
     max_retries = 3
@@ -117,10 +135,16 @@ for i, image_chunk in enumerate(image_chunks):
         raise ValueError("Response text is None")
 
     # Parse JSON and add metadata
-    parsed = json.loads(response.text)
+    try:
+        parsed = json.loads(response.text)
+    except json.JSONDecodeError as e:
+        with open(out_file+".err", 'w') as out:
+            out.write(response.text)
+        log.error(f"Failed to parse JSON: {e}")
+        raise
+
     parsed["metadata"] = {
         "model_name": model_name,
-        "num_new_pages": num_new_pages,
         "num_pages": len(image_chunk),
     }
     json_out = json.dumps(parsed, indent=2, ensure_ascii=False)

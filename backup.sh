@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -exuo pipefail
+set -euo pipefail
 
 ROOT_DIR=$(dirname $(dirname "$(realpath "$0")"))
 
