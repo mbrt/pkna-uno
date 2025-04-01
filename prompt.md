@@ -14,4 +14,4 @@ Convert all caps speech bubbles and captions to normal caps. Whenever you can't 
 Captions are never associated with a character and could be either the narrator voice, or a sound effect. Speech bubbles are always associated with a character.
 
 Output as a JSON, following the given schema.
-Write all output in Italian, never translate to English.
+Write all output in Italian, never translate to English. Do not skip pages in the output.

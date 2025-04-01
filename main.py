@@ -16,7 +16,7 @@ import PIL.Image
 load_dotenv()
 
 # Flags
-root_dir = '../export/pkna-18'
+root_dir = '../export/pkna-20'
 #model_name = 'gemini-2.5-pro-exp-03-25'
 model_name = 'gemini-2.0-flash'
 # If set to None, it will be computed automatically.
@@ -41,7 +41,7 @@ class Bubble(BaseModel):
     character: str
 
 class Frame(BaseModel):
-    page: int
+    page: int | None
     frame: int
     captions: list[Caption]
     bubbles: list[Bubble]
@@ -55,6 +55,14 @@ class Scene(BaseModel):
 
 class Response(BaseModel):
     scenes: list[Scene]
+
+
+class ImageLoader:
+
+    def __init__(self, pattern: str):
+        self.paths = glob(pattern)
+        self.paths.sort()
+        self.images = [PIL.Image.open(p) for p in self.paths]
 
 
 # Load the images
@@ -85,6 +93,7 @@ if chunk_size is None:
     for candidate in range(10, 7, -1):
         last_chunk_size = len(images) % candidate
         if last_chunk_size == 0:
+            best_size = candidate
             chunk_size = candidate
             break
         if last_chunk_size > best_size:
@@ -98,6 +107,7 @@ image_chunks = [images[i:i + chunk_size] for i in range(0, len(images), chunk_si
 
 log.info(f"Computed chunk size: {chunk_size}, last chunk: {best_size}, num chunks: {len(image_chunks)}")
 
+found_pages = set()
 
 # Generate content for each chunk
 for i, image_chunk in enumerate(image_chunks):
@@ -152,4 +162,23 @@ for i, image_chunk in enumerate(image_chunks):
     with open(out_file, 'a') as out:
         out.write(json_out)
 
+    found_pages.update((
+        f["page"]
+        for s in parsed["scenes"]
+        for f in s["frames"]
+        if f["page"] is not None
+    ))
+
     log.info(f"Response written to file: {out_file}")
+
+
+# Validate if all pages are present in the output.
+if len(found_pages) > 0:
+    max_page = max(found_pages)
+    min_page = min(found_pages)
+    expected_pages = set(range(min_page, max_page + 1))
+    if expected_pages != found_pages:
+        log.error(f"Missing pages: {expected_pages - found_pages}")
+        raise ValueError(f"Missing pages: {expected_pages - found_pages}")
+
+    log.info(f"All pages found: {len(found_pages)}")
