@@ -1,4 +1,5 @@
 from glob import glob
+import json
 import logging
 import os
 import time
@@ -15,9 +16,9 @@ import PIL.Image
 load_dotenv()
 
 # Flags
-root_dir = '../export/pkna-9'
-model_name = 'gemini-2.5-pro-exp-03-25'
-# model_name = 'gemini-2.0-flash'
+root_dir = '../export/pkna-14'
+#model_name = 'gemini-2.5-pro-exp-03-25'
+model_name = 'gemini-2.0-flash'
 
 # Configure logging
 logging.basicConfig(
@@ -55,7 +56,7 @@ class Response(BaseModel):
 
 
 # Load the images
-image_paths = glob(os.path.join(root_dir, '*.jpg'))
+image_paths = glob(os.path.join(root_dir, '*.jp*g'))
 image_paths.sort()
 images = [
     PIL.Image.open(p)
@@ -86,6 +87,11 @@ for i, image_chunk in enumerate(image_chunks):
 
     log.info(f"Processing chunk {i + 1}/{len(image_chunks)}...")
 
+    num_new_pages = len(image_chunk)
+    if len(image_chunk) < 4:
+        image_chunk = images[-4:]
+        log.info(f"Small chunk: {num_new_pages}, using last 4 pages")
+
     # Generate content for each chunk
     max_retries = 3
     retry_delay = 60  # seconds
@@ -107,8 +113,17 @@ for i, image_chunk in enumerate(image_chunks):
             time.sleep(retry_delay)
 
     if response.text is None:
+        log.error(f"Empty response received: {response}")
         raise ValueError("Response text is None")
-    json_out = response.text
+
+    # Parse JSON and add metadata
+    parsed = json.loads(response.text)
+    parsed["metadata"] = {
+        "model_name": model_name,
+        "num_new_pages": num_new_pages,
+        "num_pages": len(image_chunk),
+    }
+    json_out = json.dumps(parsed, indent=2, ensure_ascii=False)
 
     with open(out_file, 'a') as out:
         out.write(json_out)
