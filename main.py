@@ -18,10 +18,8 @@ import PIL.ImageFile
 load_dotenv()
 
 # Flags
-images_pattern = '../export/pkna-22/*.jp*g'
-root_dir = os.path.dirname(images_pattern)
-#model_name = 'gemini-2.5-pro-exp-03-25'
-model_name = 'gemini-2.0-flash'
+images_pattern = '../export/pkna-30/*.jp*g'
+model_name = 'gemini-2.0-flash'  # Alternative: gemini-2.5-pro-exp-03-25
 # If set to None, it will be computed automatically.
 chunk_size: int | None = None
 max_batch_size = 10
@@ -73,8 +71,7 @@ class ImageLoader:
         self.images = [PIL.Image.open(p) for p in self.paths]
         self.curr_index = 0
         self.num_batch = 0
-        self.default_batch_size = self._compute_batch_size(len(self.images))
-        self.curr_batch_size = self.default_batch_size
+        self.curr_batch_size = self._compute_batch_size(len(self.images))
 
     def __len__(self):
         return len(self.images)
@@ -112,7 +109,7 @@ class ImageLoader:
                 return i
             # Otherwise, find the largest batch size that makes the last chunk
             # as big as possible.
-            if num_images % i > candidate % i:
+            if num_images % i > num_images % candidate:
                 candidate = i
 
         return candidate
@@ -173,6 +170,7 @@ def process_batch(batch: list[PIL.ImageFile.ImageFile]) -> Any:
     return parsed
 
 
+root_dir = os.path.dirname(images_pattern)
 found_pages = set()
 retries = 0
 
@@ -180,6 +178,7 @@ retries = 0
 while True:
     batch = loader.get_batch()
     if not batch:
+        log.info("All images processed, exiting...")
         break
 
     log.info(f"Processing batch of {len(batch)} images...")
@@ -201,12 +200,12 @@ while True:
         retries += 1
         if retries >= max_retries:
             log.error("Max retries reached, exiting...")
-            break
+            raise ValueError("Max retries reached")
         time.sleep(60)
         continue
 
     except BatchTooLargeException:
-        log.warning("Batch too large, decreasing batch size...")
+        log.warning("Batch too large, decreasing size...")
         loader.decrease_batch_size()
         continue
 
