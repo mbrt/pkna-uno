@@ -1,4 +1,5 @@
 from glob import glob
+from typing import Any
 import json
 import logging
 import os
@@ -11,16 +12,23 @@ from google.genai.errors import ServerError
 from pydantic import BaseModel, Field
 from rich.logging import RichHandler
 import PIL.Image
+import PIL.ImageFile
 
 
 load_dotenv()
 
 # Flags
-root_dir = '../export/pkna-20'
+images_pattern = '../export/pkna-22/*.jp*g'
+root_dir = os.path.dirname(images_pattern)
 #model_name = 'gemini-2.5-pro-exp-03-25'
 model_name = 'gemini-2.0-flash'
 # If set to None, it will be computed automatically.
 chunk_size: int | None = None
+max_batch_size = 10
+min_default_batch_size = 8
+min_batch_size = 6
+max_retries = 3
+
 
 # Configure logging
 logging.basicConfig(
@@ -63,17 +71,57 @@ class ImageLoader:
         self.paths = glob(pattern)
         self.paths.sort()
         self.images = [PIL.Image.open(p) for p in self.paths]
+        self.curr_index = 0
+        self.num_batch = 0
+        self.default_batch_size = self._compute_batch_size(len(self.images))
+        self.curr_batch_size = self.default_batch_size
+
+    def __len__(self):
+        return len(self.images)
+
+    def get_batch(self) -> list[PIL.ImageFile.ImageFile]:
+        if self.curr_index >= len(self.images):
+            return []
+        batch = self.images[self.curr_index:self.curr_index + self.curr_batch_size]
+        # Do not increment the index, wait for advance_batch
+        return batch
+
+    def get_num_batch(self) -> int:
+        return self.num_batch
+
+    def advance_batch(self, num_pages: int | None = None) -> None:
+        if num_pages is None:
+            num_pages = self.curr_batch_size
+
+        self.curr_index += num_pages
+        self.num_batch += 1
+        self.curr_batch_size = self._compute_batch_size(len(self.images) - self.curr_index)
+
+    def decrease_batch_size(self) -> None:
+        if self.curr_batch_size <= min_batch_size:
+            raise ValueError(f"Batch size is already at minimum: {self.curr_batch_size}")
+        self.curr_batch_size -= 1
+
+    def _compute_batch_size(self, num_images: int) -> int:
+        candidate = max_batch_size
+
+        for i in range(max_batch_size, min_default_batch_size - 1, -1):
+            if num_images <= i:
+                return i
+            if num_images % i == 0:
+                return i
+            # Otherwise, find the largest batch size that makes the last chunk
+            # as big as possible.
+            if num_images % i > candidate % i:
+                candidate = i
+
+        return candidate
 
 
 # Load the images
-image_paths = glob(os.path.join(root_dir, '*.jp*g'))
-image_paths.sort()
-images = [
-    PIL.Image.open(p)
-    for p in image_paths
-]
+loader = ImageLoader(images_pattern)
 
-log.info(f"Loaded {len(images)} images from {root_dir}")
+log.info(f"Loaded {len(loader)} images from {images_pattern}")
 
 # Load prompts
 with open('prompt.md', 'r') as f:
@@ -83,93 +131,100 @@ with open('../export/characters.json', 'r') as f:
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Find the best chunk size, based on the number of images
-# Two cases:
-# 1. There's a size that makes all chunks the same size
-# 2. The last chunk is as big as possible
-if chunk_size is None:
-    chunk_size = 10
-    best_size = -1
-    for candidate in range(10, 7, -1):
-        last_chunk_size = len(images) % candidate
-        if last_chunk_size == 0:
-            best_size = candidate
-            chunk_size = candidate
-            break
-        if last_chunk_size > best_size:
-            best_size = last_chunk_size
-            chunk_size = candidate
-else:
-    best_size = len(images) % chunk_size
 
-# Split the images in chunks of chunk_size
-image_chunks = [images[i:i + chunk_size] for i in range(0, len(images), chunk_size)]
+class OverloadException(Exception):
+    pass
 
-log.info(f"Computed chunk size: {chunk_size}, last chunk: {best_size}, num chunks: {len(image_chunks)}")
+class BatchTooLargeException(Exception):
+    pass
 
-found_pages = set()
 
-# Generate content for each chunk
-for i, image_chunk in enumerate(image_chunks):
-    out_file = os.path.join(root_dir, f'out-{i}.part.json')
+def process_batch(batch: list[PIL.ImageFile.ImageFile]) -> Any:
 
-    # Skip if the output file is already there
-    if os.path.exists(out_file):
-        log.info(f"Output file {out_file} already exists, skipping...")
-        continue
-
-    log.info(f"Processing chunk {i + 1}/{len(image_chunks)}...")
-
-    # Generate content for each chunk
-    max_retries = 3
-    retry_delay = 60  # seconds
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                config={
-                    'response_mime_type': 'application/json',
-                    'response_schema': Response,
-                },
-                contents=[prompt, characters] + image_chunk, # type: ignore
-            )
-            break
-        except ServerError as e:
-            if attempt == max_retries - 1:
-                raise  # Re-raise if all retries failed
-            log.warning(f"Server error, retrying in {retry_delay}s... (attempt {attempt + 1}/{max_retries})")
-            time.sleep(retry_delay)
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            config={
+                'response_mime_type': 'application/json',
+                'response_schema': Response,
+            },
+            contents=[prompt, characters] + batch, # type: ignore
+        )
+    except ServerError as e:
+        log.error(f"Server error: {e}")
+        raise OverloadException()
 
     if response.text is None:
         log.error(f"Empty response received: {response}")
-        raise ValueError("Response text is None")
+        raise BatchTooLargeException()
 
     # Parse JSON and add metadata
     try:
         parsed = json.loads(response.text)
     except json.JSONDecodeError as e:
-        with open(out_file+".err", 'w') as out:
-            out.write(response.text)
         log.error(f"Failed to parse JSON: {e}")
-        raise
+        raise BatchTooLargeException()
 
     parsed["metadata"] = {
         "model_name": model_name,
-        "num_pages": len(image_chunk),
+        "num_pages": len(batch),
     }
-    json_out = json.dumps(parsed, indent=2, ensure_ascii=False)
 
-    with open(out_file, 'a') as out:
-        out.write(json_out)
+    return parsed
 
+
+found_pages = set()
+retries = 0
+
+
+while True:
+    batch = loader.get_batch()
+    if not batch:
+        break
+
+    log.info(f"Processing batch of {len(batch)} images...")
+    out_file = os.path.join(root_dir, f'out-{loader.get_num_batch()}.part.json')
+
+    if os.path.exists(out_file):
+        with open(out_file, 'r') as f:
+            resp = json.loads(f.read())
+        num_pages = resp["metadata"]["num_pages"]
+        log.info(f"Batch {loader.get_num_batch()} ({num_pages} pages) already processed, skipping...")
+        loader.advance_batch(num_pages)
+        continue
+
+    try:
+        resp = process_batch(batch)
+
+    except OverloadException:
+        log.warning("Overload exception, retrying...")
+        retries += 1
+        if retries >= max_retries:
+            log.error("Max retries reached, exiting...")
+            break
+        time.sleep(60)
+        continue
+
+    except BatchTooLargeException:
+        log.warning("Batch too large, decreasing batch size...")
+        loader.decrease_batch_size()
+        continue
+
+    # Write the response to a file
+    with open(out_file, 'w') as out:
+        out.write(json.dumps(resp, indent=2, ensure_ascii=False))
+
+    # Update the found pages
     found_pages.update((
         f["page"]
-        for s in parsed["scenes"]
+        for s in resp["scenes"]
         for f in s["frames"]
         if f["page"] is not None
     ))
 
     log.info(f"Response written to file: {out_file}")
+    loader.advance_batch()
+    retries = 0
 
 
 # Validate if all pages are present in the output.
