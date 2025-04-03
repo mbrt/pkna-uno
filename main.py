@@ -18,8 +18,9 @@ import PIL.ImageFile
 load_dotenv()
 
 # Flags
-images_pattern = '../export/pkna-30/*.jp*g'
-model_name = 'gemini-2.0-flash'  # Alternative: gemini-2.5-pro-exp-03-25
+images_pattern = '../export/pkna-35/*.jp*g'
+model_name = 'gemini-2.0-flash'
+#model_name = 'gemini-2.5-pro-exp-03-25'
 # If set to None, it will be computed automatically.
 chunk_size: int | None = None
 max_batch_size = 10
@@ -118,6 +119,10 @@ class ImageLoader:
 # Load the images
 loader = ImageLoader(images_pattern)
 
+if len(loader) == 0:
+    log.error(f"No images found in {images_pattern}")
+    raise ValueError(f"No images found in {images_pattern}")
+
 log.info(f"Loaded {len(loader)} images from {images_pattern}")
 
 # Load prompts
@@ -170,7 +175,12 @@ def process_batch(batch: list[PIL.ImageFile.ImageFile]) -> Any:
     return parsed
 
 
-root_dir = os.path.dirname(images_pattern)
+root_dir = os.path.join(
+    os.path.dirname(images_pattern),
+    model_name
+)
+os.makedirs(root_dir, exist_ok=True)
+
 found_pages = set()
 retries = 0
 

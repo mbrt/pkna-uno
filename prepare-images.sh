@@ -5,8 +5,8 @@ set -euo pipefail
 ROOT_DIR=$(dirname $(dirname "$(realpath "$0")"))
 EXPORT_DIR="${ROOT_DIR}/tmp"
 
-FROM_NUM=21
-TO_NUM=30
+FROM_NUM=31
+TO_NUM=40
 
 for i in $(seq $FROM_NUM $TO_NUM); do
     echo "Processing PNKA-$i"
