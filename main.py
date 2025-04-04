@@ -1,5 +1,6 @@
 from glob import glob
 from typing import Any
+import hashlib
 import json
 import logging
 import os
@@ -18,7 +19,7 @@ import PIL.ImageFile
 load_dotenv()
 
 # Flags
-images_pattern = '../export/pkna-35/*.jp*g'
+images_pattern = '../export/pkna-36/*.jp*g'
 model_name = 'gemini-2.0-flash'
 #model_name = 'gemini-2.5-pro-exp-03-25'
 # If set to None, it will be computed automatically.
@@ -131,6 +132,8 @@ with open('prompt.md', 'r') as f:
 with open('../export/characters.json', 'r') as f:
     characters = f.read().strip()
 
+prompt_version = hashlib.sha1(prompt.encode()).hexdigest()
+
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
@@ -170,6 +173,7 @@ def process_batch(batch: list[PIL.ImageFile.ImageFile]) -> Any:
     parsed["metadata"] = {
         "model_name": model_name,
         "num_pages": len(batch),
+        "prompt_version": prompt_version,
     }
 
     return parsed
