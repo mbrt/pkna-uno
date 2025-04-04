@@ -19,11 +19,9 @@ import PIL.ImageFile
 load_dotenv()
 
 # Flags
-images_pattern = '../export/pkna-36/*.jp*g'
+images_pattern = '../export/pkna-38/*.jp*g'
 model_name = 'gemini-2.0-flash'
 #model_name = 'gemini-2.5-pro-exp-03-25'
-# If set to None, it will be computed automatically.
-chunk_size: int | None = None
 max_batch_size = 10
 min_default_batch_size = 8
 min_batch_size = 6
