@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "docling-core>=2.25.0",
     "google-genai>=1.8.0",
     "jupyter>=1.1.1",
     "pandas>=2.2.3",
@@ -12,6 +13,7 @@ dependencies = [
     "pydantic>=2.11.0",
     "python-dotenv>=1.1.0",
     "rich>=14.0.0",
+    "vllm>=0.8.3",
 ]
 
 [tool.uv]
