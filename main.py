@@ -19,7 +19,7 @@ import PIL.ImageFile
 load_dotenv()
 
 # Flags
-images_pattern = '../export/pkna-41/*.jp*g'
+images_pattern = '../export/pkna-49/*.jp*g'
 model_name = 'gemini-2.0-flash'
 #model_name = 'gemini-2.5-pro-exp-03-25'
 max_batch_size = 10
@@ -38,7 +38,6 @@ logging.basicConfig(
 log = logging.getLogger('rich')
 
 
-
 class Caption(BaseModel):
     text: str
 
@@ -53,11 +52,9 @@ class Frame(BaseModel):
     bubbles: list[Bubble]
     description: str = Field(description="One sentence description of the frame")
 
-
 class Scene(BaseModel):
     frames: list[Frame]
     summary: str = Field(description="Brief summary of the scene")
-
 
 class Response(BaseModel):
     scenes: list[Scene]
@@ -127,10 +124,9 @@ log.info(f"Loaded {len(loader)} images from {images_pattern}")
 # Load prompts
 with open('prompt.md', 'r') as f:
     prompt = f.read().strip()
+prompt_version = hashlib.sha1(prompt.encode()).hexdigest()
 with open('../export/characters.json', 'r') as f:
     characters = f.read().strip()
-
-prompt_version = hashlib.sha1(prompt.encode()).hexdigest()
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
@@ -186,7 +182,6 @@ os.makedirs(root_dir, exist_ok=True)
 found_pages = set()
 retries = 0
 
-
 while True:
     batch = loader.get_batch()
     if not batch:
@@ -236,7 +231,6 @@ while True:
     log.info(f"Response written to file: {out_file}")
     loader.advance_batch()
     retries = 0
-
 
 # Validate if all pages are present in the output.
 if len(found_pages) > 0:
