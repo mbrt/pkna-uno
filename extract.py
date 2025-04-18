@@ -12,6 +12,7 @@ from google.genai import types
 from google.genai.errors import ServerError
 from pydantic import BaseModel, Field
 from rich.logging import RichHandler
+import click
 import PIL.Image
 import PIL.ImageFile
 
@@ -19,8 +20,8 @@ import PIL.ImageFile
 load_dotenv()
 
 # Flags
-images_pattern = '../export/pkna-49/*.jp*g'
-model_name = 'gemini-2.0-flash'
+default_model = 'gemini-2.5-flash-preview-04-17'
+#model_name = 'gemini-2.0-flash'
 #model_name = 'gemini-2.5-pro-exp-03-25'
 max_batch_size = 10
 min_default_batch_size = 8
@@ -112,14 +113,6 @@ class ImageLoader:
         return candidate
 
 
-# Load the images
-loader = ImageLoader(images_pattern)
-
-if len(loader) == 0:
-    log.error(f"No images found in {images_pattern}")
-    raise ValueError(f"No images found in {images_pattern}")
-
-log.info(f"Loaded {len(loader)} images from {images_pattern}")
 
 # Load prompts
 with open('prompt.md', 'r') as f:
@@ -138,15 +131,20 @@ class BatchTooLargeException(Exception):
     pass
 
 
-def process_batch(batch: list[PIL.ImageFile.ImageFile]) -> Any:
+def process_batch(model: str, batch: list[PIL.ImageFile.ImageFile]) -> Any:
 
     try:
         response = client.models.generate_content(
-            model=model_name,
-            config={
-                'response_mime_type': 'application/json',
-                'response_schema': Response,
-            },
+            model=model,
+            config=types.GenerateContentConfig(
+                response_mime_type='application/json',
+                response_schema=Response.model_json_schema(),
+                max_output_tokens=65536,
+            ),
+            #config={
+            #    'response_mime_type': 'application/json',
+            #    'response_schema': Response,
+            #},
             contents=[prompt, characters] + batch, # type: ignore
         )
     except ServerError as e:
@@ -165,7 +163,7 @@ def process_batch(batch: list[PIL.ImageFile.ImageFile]) -> Any:
         raise BatchTooLargeException()
 
     parsed["metadata"] = {
-        "model_name": model_name,
+        "model_name": model,
         "num_pages": len(batch),
         "prompt_version": prompt_version,
     }
@@ -173,72 +171,99 @@ def process_batch(batch: list[PIL.ImageFile.ImageFile]) -> Any:
     return parsed
 
 
-root_dir = os.path.join(
-    os.path.dirname(images_pattern),
-    model_name
-)
-os.makedirs(root_dir, exist_ok=True)
+def process_all(images_pattern: str, model: str) -> None:
+    # Load the images
+    loader = ImageLoader(images_pattern)
 
-found_pages = set()
-retries = 0
+    if len(loader) == 0:
+        log.error(f"No images found in {images_pattern}")
+        raise ValueError(f"No images found in {images_pattern}")
 
-while True:
-    batch = loader.get_batch()
-    if not batch:
-        log.info("All images processed, exiting...")
-        break
+    log.info(f"Loaded {len(loader)} images from {images_pattern}")
 
-    log.info(f"Processing batch of {len(batch)} images...")
-    out_file = os.path.join(root_dir, f'out-{loader.get_num_batch()}.part.json')
+    root_dir = os.path.join(
+        os.path.dirname(images_pattern),
+        model
+    )
+    os.makedirs(root_dir, exist_ok=True)
 
-    if os.path.exists(out_file):
-        with open(out_file, 'r') as f:
-            resp = json.loads(f.read())
-        num_pages = resp["metadata"]["num_pages"]
-        log.info(f"Batch {loader.get_num_batch()} ({num_pages} pages) already processed, skipping...")
-        loader.advance_batch(num_pages)
-        continue
-
-    try:
-        resp = process_batch(batch)
-
-    except OverloadException:
-        log.warning("Overload exception, retrying...")
-        retries += 1
-        if retries >= max_retries:
-            log.error("Max retries reached, exiting...")
-            raise ValueError("Max retries reached")
-        time.sleep(60)
-        continue
-
-    except BatchTooLargeException:
-        log.warning("Batch too large, decreasing size...")
-        loader.decrease_batch_size()
-        continue
-
-    # Write the response to a file
-    with open(out_file, 'w') as out:
-        out.write(json.dumps(resp, indent=2, ensure_ascii=False))
-
-    # Update the found pages
-    found_pages.update((
-        f["page"]
-        for s in resp["scenes"]
-        for f in s["frames"]
-        if f["page"] is not None
-    ))
-
-    log.info(f"Response written to file: {out_file}")
-    loader.advance_batch()
+    found_pages = set()
     retries = 0
 
-# Validate if all pages are present in the output.
-if len(found_pages) > 0:
-    max_page = max(found_pages)
-    min_page = min(found_pages)
-    expected_pages = set(range(min_page, max_page + 1))
-    if expected_pages != found_pages:
-        log.error(f"Missing pages: {expected_pages - found_pages}")
-        raise ValueError(f"Missing pages: {expected_pages - found_pages}")
+    while True:
+        batch = loader.get_batch()
+        if not batch:
+            log.info("All images processed, exiting...")
+            break
 
-    log.info(f"All pages found: {len(found_pages)}")
+        log.info(f"Processing batch of {len(batch)} images...")
+        out_file = os.path.join(root_dir, f'out-{loader.get_num_batch()}.part.json')
+
+        if os.path.exists(out_file):
+            with open(out_file, 'r') as f:
+                resp = json.loads(f.read())
+            num_pages = resp["metadata"]["num_pages"]
+            log.info(f"Batch {loader.get_num_batch()} ({num_pages} pages) already processed, skipping...")
+            loader.advance_batch(num_pages)
+            continue
+
+        try:
+            resp = process_batch(model, batch)
+
+        except OverloadException:
+            log.warning("Overload exception, retrying...")
+            retries += 1
+            if retries >= max_retries:
+                log.error("Max retries reached, exiting...")
+                raise ValueError("Max retries reached")
+            time.sleep(60)
+            continue
+
+        except BatchTooLargeException:
+            log.warning("Batch too large, decreasing size...")
+            loader.decrease_batch_size()
+            continue
+
+        # Write the response to a file
+        with open(out_file, 'w') as out:
+            out.write(json.dumps(resp, indent=2, ensure_ascii=False))
+
+        # Update the found pages
+        found_pages.update((
+            f["page"]
+            for s in resp["scenes"]
+            for f in s["frames"]
+            if f["page"] is not None
+        ))
+
+        log.info(f"Response written to file: {out_file}")
+        loader.advance_batch()
+        retries = 0
+
+    # Validate if all pages are present in the output.
+    if len(found_pages) > 0:
+        max_page = max(found_pages)
+        min_page = min(found_pages)
+        expected_pages = set(range(min_page, max_page + 1))
+        if expected_pages != found_pages:
+            log.error(f"Missing pages: {expected_pages - found_pages}")
+            raise ValueError(f"Missing pages: {expected_pages - found_pages}")
+
+        log.info(f"All pages found: {len(found_pages)}")
+
+
+@click.command()
+@click.option('--model', default=default_model, help='Name of the model to use')
+@click.option('--images-pattern', default='*.jp*g', help='Pattern to load images from')
+@click.argument('directories', nargs=-1)
+def main(model: str, images_pattern: str, directories: tuple[str, ...]):
+    try:
+        for dir in directories:
+            pattern = os.path.join(dir, images_pattern)
+            process_all(pattern, model)
+    except Exception as e:
+        log.error(f"An error occurred: {e}")
+
+
+if __name__ == "__main__":
+    main()
