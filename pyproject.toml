@@ -8,11 +8,15 @@ dependencies = [
     "docling-core>=2.25.0",
     "google-genai>=1.8.0",
     "jupyter>=1.1.1",
+    "layoutparser[layoutmodels]>=0.3.4",
+    "opencv-python>=4.11.0.86",
     "pandas>=2.2.3",
     "pillow>=11.1.0",
     "pydantic>=2.11.0",
+    "pytesseract>=0.3.13",
     "python-dotenv>=1.1.0",
     "rich>=14.0.0",
+    "torch>=2.6.0",
     "vllm>=0.8.3",
 ]
 

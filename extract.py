@@ -140,11 +140,8 @@ def process_batch(model: str, batch: list[PIL.ImageFile.ImageFile]) -> Any:
                 response_mime_type='application/json',
                 response_schema=Response.model_json_schema(),
                 max_output_tokens=65536,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
-            #config={
-            #    'response_mime_type': 'application/json',
-            #    'response_schema': Response,
-            #},
             contents=[prompt, characters] + batch, # type: ignore
         )
     except ServerError as e:
