@@ -8,6 +8,7 @@ ROOT_DIR=$(dirname $(dirname "$(realpath "$0")"))
 cd "${ROOT_DIR}/exporter"
 mkdir -p "${ROOT_DIR}/backup/exporter"
 git ls-files | xargs -I{} cp --parents {} "${ROOT_DIR}/backup/exporter"
+cp -r ".git" "${ROOT_DIR}/backup/exporter/dot-git"
 
 # Backup results
 cd "${ROOT_DIR}"
