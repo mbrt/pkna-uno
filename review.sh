@@ -2,4 +2,4 @@
 
 set -euo pipefail
 
-uvx streamlit run ./review-app.py
+uvx streamlit run ./review-app.py $@

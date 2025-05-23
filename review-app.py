@@ -1,9 +1,14 @@
 import json
 import os
 import streamlit as st
+import sys
 from PIL import Image
 
-DATA_PATH = "../input/review/input.json"
+
+if len(sys.argv) < 2:
+    raise ValueError("Usage: python review-app.py <input_json_path>")
+
+DATA_PATH = sys.argv[1]
 REVIEWED_PATH = "../output/dataset/reviewed.jsonl"
 
 # Load dataset
