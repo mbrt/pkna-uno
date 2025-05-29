@@ -39,6 +39,7 @@ if "index" not in st.session_state:
 current = unreviewed_items[st.session_state.index]
 image_path = current["image"]
 ocr_data = current["ocr"]
+full_data = current["full"]
 
 st.set_page_config(layout="wide")
 st.title("📝 OCR Review Tool")
@@ -67,3 +68,6 @@ with col2:
 
         st.session_state.index += 1
         st.rerun()
+
+    with st.expander("Original JSON", expanded=False):
+        st.write("```" + json.dumps(full_data, indent=2) + "\n```")
