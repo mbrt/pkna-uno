@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "docling-core>=2.25.0",
+    "dspy>=2.6.27",
     "google-genai>=1.8.0",
     "jupyter>=1.1.1",
     "layoutparser[layoutmodels]>=0.3.4",
@@ -16,6 +17,7 @@ dependencies = [
     "pytesseract>=0.3.13",
     "python-dotenv>=1.1.0",
     "rich>=14.0.0",
+    "scikit-learn>=1.7.0",
     "streamlit>=1.45.1",
     "torch>=2.6.0",
     "vllm>=0.8.3",
