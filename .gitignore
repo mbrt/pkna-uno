@@ -1,4 +1,5 @@
 .env
+unsloth_compiled_cache
 
 # Python-generated files
 __pycache__/
