@@ -1,5 +1,6 @@
 .env
 unsloth_compiled_cache
+llama.cpp
 
 # Python-generated files
 __pycache__/
