@@ -3,15 +3,27 @@
 from typing import Literal, Any
 import json
 import os
+import logging
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 import dspy
+from rich.console import Console
+from rich.logging import RichHandler
 
 
 TRAINING_MODE = "light"
 EXAMPLES_PATH = "../output/dataset/reviewed.jsonl"
-OPTIMIZED_DIR = "../output/models"
+OPTIMIZED_PATH = "../output/models/dspy-extract-filtered.json"
+
+# Setup rich console and logging
+console = Console()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    handlers=[RichHandler(console=console, rich_tracebacks=True)]
+)
+logger = logging.getLogger(__name__)
 
 
 Character = Literal['uno', 'paperinik', 'other']
@@ -98,6 +110,7 @@ def init_llms() -> tuple[dspy.LM, dspy.LM]:
     task_lm = make_gemini_llm('gemini-2.5-flash')
     prompt_lm = make_gemini_llm('gemini-2.5-pro')
     dspy.configure(lm=task_lm, track_usage=True)
+    logger.info("LLMs initialized - Task: gemini-2.5-flash, Prompt: gemini-2.5-pro")
     return task_lm, prompt_lm
 
 
@@ -119,6 +132,7 @@ def optimize(
         training_mode: Literal["light", "medium"],
 ) -> Any:
     task_lm, prompt_lm = init_llms()
+
     characters = [
         load_character('uno'),
         load_character('paperinik'),
@@ -128,7 +142,6 @@ def optimize(
         ),
     ]
     extractor = ExtractorModule(characters=characters)
-
     teleprompter = dspy.MIPROv2(
         metric=validate,
         auto=training_mode,
@@ -137,11 +150,12 @@ def optimize(
         num_threads=8,
         verbose=True,
     )
-    return teleprompter.compile(
+    compiled_model = teleprompter.compile(
         extractor,
         trainset=examples,
         requires_permission_to_run=False,
     )
+    return compiled_model
 
 
 def classify_character(character: str) -> Character:
@@ -172,23 +186,33 @@ def parse_reviewed(line: str) -> dspy.Example | None:
             )
             for line in dialogue
         ]
-    ).with_inputs('path')
+    ).with_inputs('page')
 
 
 def build_dataset(examples_path: str) -> list[dspy.Example]:
     res = []
+
     with open(examples_path, 'r') as f:
         for line in f:
             example = parse_reviewed(line)
             if example:
                 res.append(example)
+
+    logger.info(f"Dataset loaded: {len(res)}")
     return res
+
+
+def save_model(model: Any, output_path: str) -> None:
+    """Save the optimized model to the specified output path."""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    model.save(output_path)
+    logger.info(f"Model saved to {output_path}")
 
 
 def main():
     examples = build_dataset(EXAMPLES_PATH)
     m = optimize(examples, TRAINING_MODE)
-    m.save(os.path.join(OPTIMIZED_DIR, 'dspy-extract-filtered.json'))
+    save_model(m, OPTIMIZED_PATH)
 
 
 if __name__ == "__main__":
