@@ -4,6 +4,7 @@ from typing import Literal, Any
 import json
 import os
 import logging
+from datetime import datetime
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -15,16 +16,36 @@ from rich.logging import RichHandler
 TRAINING_MODE = "light"
 EXAMPLES_PATH = "../output/dataset/reviewed.jsonl"
 OPTIMIZED_PATH = "../output/models/dspy-extract-filtered.json"
+LOG_DIR = "../output/logs"
 
-# Setup rich console and logging
-console = Console()
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    handlers=[RichHandler(console=console, rich_tracebacks=True)]
-)
-logger = logging.getLogger(__name__)
 
+def setup_logging() -> logging.Logger:
+    console = Console()
+    os.makedirs(LOG_DIR, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = os.path.join(LOG_DIR, f"dspy_extract_optimize_{timestamp}.log")
+    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    ))
+
+    rich_handler = RichHandler(console=console, rich_tracebacks=True)
+    rich_handler.setLevel(logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        handlers=[file_handler, rich_handler]
+    )
+
+    logger = logging.getLogger(__name__)
+    dspy_logger = logging.getLogger('dspy')
+    dspy_logger.addHandler(file_handler)
+    dspy_logger.setLevel(logging.INFO)
+    return logger
+
+
+# Initialize logging
+logger = setup_logging()
 
 Character = Literal['uno', 'paperinik', 'other']
 
@@ -110,7 +131,8 @@ def init_llms() -> tuple[dspy.LM, dspy.LM]:
     task_lm = make_gemini_llm('gemini-2.5-flash')
     prompt_lm = make_gemini_llm('gemini-2.5-pro')
     dspy.configure(lm=task_lm, track_usage=True)
-    logger.info("LLMs initialized - Task: gemini-2.5-flash, Prompt: gemini-2.5-pro")
+    logger.info(
+        "LLMs initialized - Task: gemini-2.5-flash, Prompt: gemini-2.5-pro")
     return task_lm, prompt_lm
 
 
@@ -122,9 +144,46 @@ def load_character(name: Character) -> CharacterDescription:
     return CharacterDescription(name=name, description=description)
 
 
-def validate(example: dspy.Example, pred: dspy.Prediction, trace=None) -> bool:
+def validate(example: dspy.Example, pred: dspy.Prediction, trace=None) -> float | bool:
     """Validate the prediction."""
-    return example.dialogue == pred.dialogue
+
+    def score_it(v: float | bool) -> float | bool:
+        if isinstance(v, bool):
+            fscore = 1.0 if v else 0.0
+        else:
+            fscore = float(v)
+        if trace is None:
+            # We're doing optimization or evaluation.
+            # Return precise score.
+            return fscore
+        return fscore >= 0.99
+    
+    # Full score for exact match.
+    if example.dialogue == pred.dialogue:
+        return score_it(True)
+
+    # Partial scoring.
+    length = score_it(len(example.dialogue) == len(pred.dialogue))
+    characters = score_it(set(
+        line.character for line in example.dialogue) == set(
+        line.character for line in pred.dialogue
+    ))
+    # Count correct lines.
+    correct_lines = sum(
+        1 for line in pred.dialogue
+        if line in example.dialogue
+    ) / len(example.dialogue)
+    # Correct attribution.
+    attribution = sum(
+        1 for e, p in zip(example.dialogue, pred.dialogue)
+        if e.character == p.character
+    ) / len(example.dialogue)
+
+    # Average score.
+    return score_it(
+        (length + characters + correct_lines + attribution) / 4.0
+    )
+
 
 
 def optimize(
@@ -132,7 +191,6 @@ def optimize(
         training_mode: Literal["light", "medium"],
 ) -> Any:
     task_lm, prompt_lm = init_llms()
-
     characters = [
         load_character('uno'),
         load_character('paperinik'),
