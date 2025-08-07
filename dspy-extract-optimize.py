@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 
-from typing import Literal, Any
+from typing import Literal
 import json
 import os
 import logging
 from datetime import datetime
 
 from dotenv import load_dotenv
+from dspy.evaluate import Evaluate
 from pydantic import BaseModel, Field
-import dspy
 from rich.console import Console
 from rich.logging import RichHandler
+import dspy
 
 
 TRAINING_MODE = "light"
 EXAMPLES_PATH = "../output/dataset/reviewed.jsonl"
-OPTIMIZED_PATH = "../output/models/dspy-extract-filtered.json"
+OPTIMIZED_PATH = f"../output/models/dspy-extract-filtered-{TRAINING_MODE}.json"
 LOG_DIR = "../output/logs"
 
 
@@ -189,7 +190,7 @@ def validate(example: dspy.Example, pred: dspy.Prediction, trace=None) -> float 
 def optimize(
         examples: list[dspy.Example],
         training_mode: Literal["light", "medium"],
-) -> Any:
+) -> dspy.Module:
     task_lm, prompt_lm = init_llms()
     characters = [
         load_character('uno'),
@@ -260,17 +261,25 @@ def build_dataset(examples_path: str) -> list[dspy.Example]:
     return res
 
 
-def save_model(model: Any, output_path: str) -> None:
+def save_model(model: dspy.Module, output_path: str) -> None:
     """Save the optimized model to the specified output path."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     model.save(output_path)
     logger.info(f"Model saved to {output_path}")
 
 
+def run_eval(model: dspy.Module, examples: list[dspy.Example]) -> None:
+    evaluator = Evaluate(devset=examples, num_threads=4,
+                         display_progress=True, display_table=True,
+                         return_outputs=True)
+    evaluator(model, metric=validate)
+
+
 def main():
     examples = build_dataset(EXAMPLES_PATH)
     m = optimize(examples, TRAINING_MODE)
     save_model(m, OPTIMIZED_PATH)
+    run_eval(m, examples)
 
 
 if __name__ == "__main__":
