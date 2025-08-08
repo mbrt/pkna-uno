@@ -13,11 +13,13 @@ git ls-files | xargs -I{} cp --parents {} "${ROOT_DIR}/backup/exporter"
 # Backup results
 cd "${ROOT_DIR}"
 mkdir -p "backup/output"
-rsync -avz output/ "${ROOT_DIR}/backup/output/" --prune-empty-dirs --delete
+rsync -avz output/ "${ROOT_DIR}/backup/output/" --prune-empty-dirs --delete \
+    --exclude 'mlartifacts/'
 
 # Backup some input files
 mkdir -p "${ROOT_DIR}/backup/input"
-rsync -avz input/ "${ROOT_DIR}/backup/input/" --prune-empty-dirs --delete --exclude 'pkna/' --exclude 'schede/' --exclude 'characters/'
+rsync -avz input/ "${ROOT_DIR}/backup/input/" --prune-empty-dirs --delete \
+    --exclude 'pkna/' --exclude 'schede/' --exclude 'characters/'
 
 # Save list of files in input
 find input/ -type f | sort > "${ROOT_DIR}/backup/input-files.txt"
