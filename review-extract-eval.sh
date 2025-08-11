@@ -2,4 +2,5 @@
 
 set -euo pipefail
 
-streamlit run review-extract-eval.py $@
+uv tool run \
+    streamlit run review-extract-eval.py $@
