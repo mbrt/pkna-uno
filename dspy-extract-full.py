@@ -3,13 +3,16 @@
 import concurrent.futures
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import dspy
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 
 
 # Configure logging
@@ -22,11 +25,39 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# Define paths
+
+# Settings
+MODEL_NAME = "vertex_ai/gemini-2.5-pro"
+VERSION = "v0"
+
+# Paths
 SCRIPT_DIR = Path(__file__).parent
 PAGES_ROOT = SCRIPT_DIR.parent / "input/pkna"
 WIKI_ROOT = SCRIPT_DIR.parent / "output/wiki/fandom/crawl/storie/storie-di-pkna"
-OUT_ROOT = SCRIPT_DIR.parent / "output/dspy-extract-full/v0"
+OUT_ROOT = SCRIPT_DIR.parent / f"output/dspy-extract-full/{VERSION}"
+
+
+def make_progress() -> Progress:
+    return Progress(
+        SpinnerColumn(),
+        *Progress.get_default_columns(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    )
+
+
+def configure_lm() -> None:
+    load_dotenv()
+    lm = dspy.LM(
+        model=MODEL_NAME,
+        vertex_credentials=os.getenv("VERTEX_AI_CREDS"),
+        temperature=1.0,
+        top_p=0.95,
+        top_k=64,
+        max_tokens=65535,
+    )
+    dspy.configure(lm=lm, track_usage=True)
 
 
 class DialogueLine(BaseModel):
@@ -183,13 +214,18 @@ class PlotSummarizer(dspy.Module):
 
 
 @dataclass
+class ExtractedPageMeta:
+    model_name: str
+    input_page_path: str
+    lm_usage: dict | None = None
+
+
+@dataclass
 class ExtractedPage:
     summary: str
     panels: list[Panel]
     last_event: str | None
-    processing_time_seconds: float
-    model_name: str
-    input_page_path: str
+    meta: ExtractedPageMeta
 
     def to_json(self, path: Path) -> None:
         with open(path, "w", encoding="utf-8") as f:
@@ -211,9 +247,11 @@ class ExtractedPage:
                         for panel in self.panels
                     ],
                     "last_event": self.last_event,
-                    "processing_time_seconds": self.processing_time_seconds,
-                    "model_name": self.model_name,
-                    "input_page_path": self.input_page_path,
+                    "meta": {
+                        "model_name": MODEL_NAME,
+                        "input_page_path": self.meta.input_page_path,
+                        "lm_usage": self.meta.lm_usage,
+                    },
                 },
                 f,
                 ensure_ascii=False,
@@ -226,9 +264,11 @@ class ExtractedPage:
             summary=pred.summary,
             panels=pred.panels,
             last_event=pred.new_last_event,
-            processing_time_seconds=pred.processing_time_seconds,
-            model_name=pred.model_name,
-            input_page_path=input_page.as_posix(),
+            meta=ExtractedPageMeta(
+                model_name=MODEL_NAME,
+                input_page_path=input_page.as_posix(),
+                lm_usage=pred.get_lm_usage(),
+            ),
         )
 
     @staticmethod
@@ -239,9 +279,11 @@ class ExtractedPage:
             summary=data["summary"],
             panels=[Panel(**panel) for panel in data["panels"]],
             last_event=data.get("last_event"),
-            processing_time_seconds=data["processing_time_seconds"],
-            model_name=data["model_name"],
-            input_page_path=data["input_page_path"],
+            meta=ExtractedPageMeta(
+                model_name=data["model_name"],
+                input_page_path=data["input_page_path"],
+                lm_usage=data.get("lm_usage"),
+            ),
         )
 
 
@@ -323,10 +365,7 @@ def process_item(it: WorkItem) -> None:
     out_dir = OUT_ROOT / it.id
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    out_paths = [
-        out_dir / f"page_{i + 1:03d}.json"
-        for i in range(len(it.pages_paths))
-    ]
+    out_paths = [out_dir / f"page_{i + 1:03d}.json" for i in range(len(it.pages_paths))]
     extracted = []
     need_work = []
 
@@ -337,10 +376,14 @@ def process_item(it: WorkItem) -> None:
             need_work.append((in_path, out_path))
 
     if not need_work:
-        log.info(f"All pages ({len(extracted)}) already processed for {it.id}, skipping")
+        log.info(
+            f"All pages ({len(extracted)}) already processed for {it.id}, skipping"
+        )
         return
     if len(extracted) > 0:
-        log.info(f"Resuming processing for {it.id}, {len(extracted)} pages done, {len(need_work)} to go")
+        log.info(
+            f"Resuming processing for {it.id}, {len(extracted)} pages done, {len(need_work)} to go"
+        )
 
     # Otherwise, we need to reconstruct the work that was done so far
     # Starting from the issue summary
@@ -362,23 +405,29 @@ def process_item(it: WorkItem) -> None:
         extractor.update_from_extracted(extracted_page)
 
     # Now process the remaining pages
-    for in_path, out_path in need_work:
-        log.info(f"Processing page {in_path.name} for {it.id}")
-        page_image = dspy.Image.from_file(in_path)
-        pred = extractor(page=page_image)
-        # Save extracted page
-        extracted_page = ExtractedPage.from_prediction(pred, input_page=in_path)
-        extracted_page.to_json(out_path)
+    with make_progress() as progress:
+        for in_path, out_path in progress.track(
+            need_work,
+            total=len(need_work),
+            description=f"Processing pages for {it.id}...",
+        ):
+            page_image = dspy.Image.from_file(in_path.as_posix())
+            pred = extractor(page=page_image)
+            # Save extracted page
+            extracted_page = ExtractedPage.from_prediction(pred, input_page=in_path)
+            extracted_page.to_json(out_path)
 
     log.info(f"Finished processing for {it.id}")
 
 
 def main():
+    configure_lm()
+
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
     items = get_items_to_process()
 
     # Number of concurrent threads
-    max_workers = min(4, len(items))
+    max_workers = min(8, len(items))
     log.info(f"Starting pool with {max_workers} workers")
 
     # Using ThreadPoolExecutor to manage threads
@@ -387,12 +436,19 @@ def main():
         future_to_item = {executor.submit(process_item, it): it for it in items}
 
         # Iterate over futures as they complete
-        for future in concurrent.futures.as_completed(future_to_item):
-            item = future_to_item[future]
-            try:
-                future.result()
-            except Exception as exc:
-                log.error(f"Item {item} generated an exception: {exc}")
+        with make_progress() as progress:
+            for future in progress.track(
+                concurrent.futures.as_completed(future_to_item),
+                total=len(future_to_item),
+                description="Processing issues...",
+            ):
+                item = future_to_item[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    log.exception(
+                        f"Item {item.id} generated an exception: {exc}", exc_info=exc
+                    )
 
     log.info("All tasks completed")
 
