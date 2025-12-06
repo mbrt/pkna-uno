@@ -28,7 +28,8 @@ log = logging.getLogger(__name__)
 
 # Settings
 MODEL_NAME = "vertex_ai/gemini-2.5-pro"
-VERSION = "v0"
+VERSION = "v1"
+MAX_WORKERS = 4
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent
@@ -70,6 +71,10 @@ class DialogueLine(BaseModel):
 class Panel(BaseModel):
     """A single panel from a comic book page."""
 
+    is_new_scene: bool = Field(
+        default=False,
+        description="Indicates whether this panel is a break from the previous scene, in terms of location or time.",
+    )
     description: str = Field(
         description="A detailed description of the events happening in the panel."
     )
@@ -87,6 +92,7 @@ class PlotExtractor(dspy.Signature):
 
     Follow these instructions:
     - Identify the main characters involved in the plot.
+    - Each character should be returned by itself and represented by their name. Do not group characters together.
     - Summarize the key events that drive the story forward.
     - Use the language of the comic book (Italian) for all summaries and descriptions.
     """
@@ -234,6 +240,7 @@ class ExtractedPage:
                     "summary": self.summary,
                     "panels": [
                         {
+                            "is_new_scene": panel.is_new_scene,
                             "description": panel.description,
                             "caption_text": panel.caption_text,
                             "dialogues": [
@@ -356,6 +363,57 @@ def get_items_to_process() -> list[WorkItem]:
         make_work_item(n, w)
         for n, w in [
             ("pkna-0", "evroniani-albo.md"),
+            ("pkna-0-2", "quando-soffia-il-vento-del-tempo.md"),
+            ("pkna-0-3", "xadhoom.md"),
+            ("pkna-1", "ombre-su-venere.md"),
+            ("pkna-2", "due-albo.md"),
+            ("pkna-3", "il-giorno-del-sole-freddo.md"),
+            ("pkna-4", "terremoto.md"),
+            ("pkna-5", "ritratto-dell-eroe-da-giovane.md"),
+            ("pkna-6", "spore.md"),
+            ("pkna-7", "invasione.md"),
+            ("pkna-8", "silicio.md"),
+            ("pkna-9", "le-sorgenti-della-luna.md"),
+            ("pkna-10", "trauma-albo.md"),
+            ("pkna-11", "urk-albo.md"),
+            ("pkna-12", "seconda-stesura.md"),
+            ("pkna-13", "la-notte-pi-buia.md"),
+            ("pkna-14", "carpe-diem.md"),
+            ("pkna-15", "motore-azione.md"),
+            ("pkna-16", "manutenzione-straordinaria.md"),
+            ("pkna-17", "stella-cadente.md"),
+            ("pkna-18", "antico-futuro.md"),
+            ("pkna-19", "zero-assoluto.md"),
+            ("pkna-20", "mekkano.md"),
+            ("pkna-21", "tyrannic.md"),
+            ("pkna-22", "frammenti-d-autunno.md"),
+            ("pkna-23", "vuoto-di-memoria.md"),
+            ("pkna-24", "crepuscolo.md"),
+            ("pkna-25", "fuoco-incrociato.md"),
+            ("pkna-26", "il-tempo-fugge.md"),
+            ("pkna-27", "i-mastini-dell-universo.md"),
+            ("pkna-28", "metamorfosi.md"),
+            ("pkna-29", "virus.md"),
+            ("pkna-30", "fase-due.md"),
+            ("pkna-31", "beato-angelico.md"),
+            ("pkna-32", "underground.md"),
+            ("pkna-33", "il-giorno-che-verr.md"),
+            ("pkna-34", "niente-di-personale.md"),
+            ("pkna-35", "clandestino-a-bordo.md"),
+            ("pkna-36", "lontano-lontano.md"),
+            ("pkna-37", "sotto-un-nuovo-sole.md"),
+            ("pkna-38", "nella-nebbia.md"),
+            ("pkna-39", "cronaufragio.md"),
+            ("pkna-40", "un-solo-respiro.md"),
+            ("pkna-41", "agdy-days.md"),
+            ("pkna-42", "la-sindrome-di-ulisse.md"),
+            ("pkna-43", "tempo-al-tempo.md"),
+            ("pkna-44", "sul-lato-oscuro.md"),
+            ("pkna-45", "operazione-efesto.md"),
+            ("pkna-46", "nell-ombra.md"),
+            ("pkna-47", "prima-dell-alba.md"),
+            ("pkna-48", "le-parti-e-il-tutto.md"),
+            ("pkna-49", "se.md"),
         ]
     ]
 
@@ -427,7 +485,7 @@ def main():
     items = get_items_to_process()
 
     # Number of concurrent threads
-    max_workers = min(8, len(items))
+    max_workers = min(MAX_WORKERS, len(items))
     log.info(f"Starting pool with {max_workers} workers")
 
     # Using ThreadPoolExecutor to manage threads
