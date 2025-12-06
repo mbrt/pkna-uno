@@ -282,14 +282,15 @@ class ExtractedPage:
     def from_json(path: Path) -> "ExtractedPage":
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
+        meta = data["meta"]
         return ExtractedPage(
             summary=data["summary"],
             panels=[Panel(**panel) for panel in data["panels"]],
             last_event=data.get("last_event"),
             meta=ExtractedPageMeta(
-                model_name=data["model_name"],
-                input_page_path=data["input_page_path"],
-                lm_usage=data.get("lm_usage"),
+                model_name=meta["model_name"],
+                input_page_path=meta["input_page_path"],
+                lm_usage=meta.get("lm_usage"),
             ),
         )
 
