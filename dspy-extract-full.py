@@ -25,11 +25,10 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-
 # Settings
 MODEL_NAME = "vertex_ai/gemini-2.5-pro"
 VERSION = "v1"
-MAX_WORKERS = 4
+MAX_WORKERS = 8
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent
@@ -37,15 +36,14 @@ PAGES_ROOT = SCRIPT_DIR.parent / "input/pkna"
 WIKI_ROOT = SCRIPT_DIR.parent / "output/wiki/fandom/crawl/storie/storie-di-pkna"
 OUT_ROOT = SCRIPT_DIR.parent / f"output/dspy-extract-full/{VERSION}"
 
-
-def make_progress() -> Progress:
-    return Progress(
-        SpinnerColumn(),
-        *Progress.get_default_columns(),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True,
-    )
+# Global progress bar
+PROGRESS = Progress(
+    SpinnerColumn(),
+    *Progress.get_default_columns(),
+    TimeElapsedColumn(),
+    console=console,
+    transient=True,
+)
 
 
 def configure_lm() -> None:
@@ -119,6 +117,10 @@ class PageExtractor(dspy.Signature):
     - Use the previous page summary and panels to maintain continuity.
     - Use the same character names as previously introduced, if the character is the same.
     - New character can be introduced if they haven't appeared before.
+
+    Output ordering:
+    - Maintain the order of panels as they should be read on the page.
+    - Within each panel, maintain the order of lines as they happen chronologically.
 
     Last event tracking:
     - Use the last event to keep track of story progression.
@@ -464,7 +466,7 @@ def process_item(it: WorkItem) -> None:
         extractor.update_from_extracted(extracted_page)
 
     # Now process the remaining pages
-    with make_progress() as progress:
+    with PROGRESS as progress:
         for in_path, out_path in progress.track(
             need_work,
             total=len(need_work),
@@ -495,7 +497,7 @@ def main():
         future_to_item = {executor.submit(process_item, it): it for it in items}
 
         # Iterate over futures as they complete
-        with make_progress() as progress:
+        with PROGRESS as progress:
             for future in progress.track(
                 concurrent.futures.as_completed(future_to_item),
                 total=len(future_to_item),
