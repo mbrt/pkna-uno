@@ -26,8 +26,8 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # Settings
-MODEL_NAME = "vertex_ai/gemini-2.5-pro"
-VERSION = "v1"
+MODEL_NAME = "vertex_ai/gemini-3-flash-preview"
+VERSION = "v2"
 MAX_WORKERS = 8
 
 # Paths
@@ -51,6 +51,8 @@ def configure_lm() -> None:
     lm = dspy.LM(
         model=MODEL_NAME,
         vertex_credentials=os.getenv("VERTEX_AI_CREDS"),
+        vertex_project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+        vertex_location=os.getenv("GOOGLE_CLOUD_LOCATION"),
         temperature=1.0,
         top_p=0.95,
         top_k=64,
@@ -130,6 +132,7 @@ class PageExtractor(dspy.Signature):
     Character attribution:
     - Make extra effort to correctly attribute dialogue lines to the right characters.
     - The speaker of a line might not always be visible in the panel. Use context from previous and following panels to infer the speaker.
+    - Sounds or onomatopoeias should not be considered dialogue lines. Mention them in the panel description if relevant, but do not include them in the dialogues list.
 
     Output text:
     - Use the language of the comic book (Italian) for all summaries and descriptions.
