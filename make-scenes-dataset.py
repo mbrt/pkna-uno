@@ -4,17 +4,22 @@
 Create scenes dataset from panel extractions.
 
 Groups panels into scenes based on is_new_scene flag and filters
-for scenes containing the character "Uno".
+for scenes containing the character "Uno". Outputs to CSV format.
 """
 
+import csv
 import json
 import logging
-import shutil
 from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 from rich.logging import RichHandler
+
+
+BASE_DIR = Path(__file__).parent.parent
+INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
+OUTPUT_FILE = BASE_DIR / "output" / "dataset" / "dataset-2.csv"
 
 
 # Configure logging
@@ -54,32 +59,58 @@ def scene_contains_uno(panels: list[dict[str, Any]]) -> bool:
     return False
 
 
-def generate_scene_summary(panels: list[dict[str, Any]]) -> str:
-    """Generate a combined summary from all panel descriptions."""
-    descriptions = []
+def format_conversations(panels: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Format panel dialogues as conversation role/content pairs.
+
+    Uses character 'uno' as 'assistant' and any other character as 'human'.
+    Consecutive lines with the same role are collated with newline separation.
+    """
+    conversations = []
     for panel in panels:
-        desc = panel.get("description")
-        if desc:
-            descriptions.append(desc)
-    return " ".join(descriptions)
+        dialogues = panel.get("dialogues", [])
+        for dialogue in dialogues:
+            character = dialogue.get("character", "").strip()
+            line = dialogue.get("line", "").strip()
+            if not character or not line:
+                continue
+
+            # Determine role based on character name
+            role = "assistant" if character.lower() == "uno" else "human"
+            # Collate consecutive lines with the same role
+            if conversations and conversations[-1]["role"] == role:
+                conversations[-1]["content"] += "\n" + line
+            else:
+                conversations.append({"role": role, "content": line})
+    return conversations
 
 
-def process_issue(issue_dir: Path, output_dir: Path) -> int:
-    """Process all pages in an issue and create scene files.
+def get_unique_characters(panels: list[dict[str, Any]]) -> list[str]:
+    """Extract unique character names from scene panels."""
+    characters = set()
+    for panel in panels:
+        dialogues = panel.get("dialogues", [])
+        for dialogue in dialogues:
+            character = dialogue.get("character", "").strip()
+            if character:
+                characters.add(character)
+    return sorted(list(characters))
 
-    Returns the number of scenes created.
+
+def process_issue(issue_dir: Path) -> list[dict[str, Any]]:
+    """Process all pages in an issue and return scene data.
+
+    Returns a list of scene dictionaries ready for CSV output.
     """
     issue_name = issue_dir.name
     page_files = sorted(issue_dir.glob("page_*.json"))
 
     if not page_files:
         log.error(f"No page files found in {issue_dir}")
-        return 0
+        return []
 
     current_scene_panels = []
     current_scene_pages = []
-    scene_number = 1
-    scenes_created = 0
+    scenes = []
 
     for page_file in page_files:
         with open(page_file) as f:
@@ -96,77 +127,79 @@ def process_issue(issue_dir: Path, output_dir: Path) -> int:
             # Check if this starts a new scene
             if panel.get("is_new_scene", False) and current_scene_panels:
                 # Save the current scene if it contains Uno
-                if not scene_contains_uno(current_scene_panels):
-                    continue
-
-                scene_data = {
-                    "issue": issue_name,
-                    "scene_number": scene_number,
-                    "pages": current_scene_pages,
-                    "scene_summary": generate_scene_summary(current_scene_panels),
-                    "panels": current_scene_panels,
-                }
-
-                output_file = (
-                    output_dir / f"{issue_name}_scene_{scene_number:03d}.json"
-                )
-                with open(output_file, "w") as f:
-                    json.dump(scene_data, f, indent=2, ensure_ascii=False)
-
-                scenes_created += 1
+                if scene_contains_uno(current_scene_panels):
+                    scenes.append(
+                        {
+                            "pkna": issue_name,
+                            "input_pages": current_scene_pages.copy(),
+                            "characters": get_unique_characters(current_scene_panels),
+                            "conversations": format_conversations(current_scene_panels),
+                        }
+                    )
 
                 # Start a new scene
-                scene_number += 1
                 current_scene_panels = []
                 current_scene_pages = []
 
-            # Add panel to current scene (remove is_new_scene from output)
-            panel_copy = {k: v for k, v in panel.items() if k != "is_new_scene"}
-            current_scene_panels.append(panel_copy)
+            # Add panel to current scene
+            current_scene_panels.append(panel)
             if page_ref not in current_scene_pages:
                 current_scene_pages.append(page_ref)
 
     # Save the last scene if it contains Uno
     if current_scene_panels and scene_contains_uno(current_scene_panels):
-        scene_data = {
-            "issue": issue_name,
-            "scene_number": scene_number,
-            "pages": current_scene_pages,
-            "scene_summary": generate_scene_summary(current_scene_panels),
-            "panels": current_scene_panels,
-        }
+        scenes.append(
+            {
+                "pkna": issue_name,
+                "input_pages": current_scene_pages.copy(),
+                "characters": get_unique_characters(current_scene_panels),
+                "conversations": format_conversations(current_scene_panels),
+            }
+        )
 
-        output_file = output_dir / f"{issue_name}_scene_{scene_number:03d}.json"
-        with open(output_file, "w") as f:
-            json.dump(scene_data, f, indent=2, ensure_ascii=False)
-
-        scenes_created += 1
-
-    log.info(f"Created {scenes_created} scenes for issue {issue_name}")
-    return scenes_created
+    log.info(f"Extracted {len(scenes)} scenes containing 'Uno' from {issue_name}")
+    return scenes
 
 
 def main() -> None:
-    """Main function to process all issues."""
-    base_dir = Path(__file__).parent.parent
-    input_dir = base_dir / "output" / "dspy-extract-full" / "v2"
-    output_dir = base_dir / "output" / "scenes"
-
-    # Create (or clear) output directory
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    """Main function to process all issues and write to CSV."""
+    # Ensure output directory exists
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
 
     # Get all issue directories
-    issue_dirs = sorted([d for d in input_dir.iterdir() if d.is_dir()])
+    issue_dirs = sorted([d for d in INPUT_DIR.iterdir() if d.is_dir()])
 
-    total_scenes = 0
+    # Collect all scenes from all issues
+    all_scenes = []
     for issue_dir in issue_dirs:
         log.info(f"Processing {issue_dir.name}...")
-        scenes = process_issue(issue_dir, output_dir)
-        total_scenes += scenes
+        scenes = process_issue(issue_dir)
+        all_scenes.extend(scenes)
 
-    log.info(f"Created {total_scenes} scenes containing 'Uno' in {output_dir}")
+    # Write to CSV
+    if all_scenes:
+        with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=["pkna", "input_pages", "characters", "conversations"],
+                quoting=csv.QUOTE_ALL,
+            )
+            writer.writeheader()
+
+            for scene in all_scenes:
+                # Convert lists to Python repr format (matching original dataset format)
+                writer.writerow(
+                    {
+                        "pkna": scene["pkna"],
+                        "input_pages": repr(scene["input_pages"]),
+                        "characters": repr(scene["characters"]),
+                        "conversations": repr(scene["conversations"]),
+                    }
+                )
+
+        log.info(f"Created {len(all_scenes)} scenes containing 'Uno' in {OUTPUT_FILE}")
+    else:
+        log.warning("No scenes found containing 'Uno'")
 
 
 if __name__ == "__main__":
