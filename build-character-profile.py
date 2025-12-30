@@ -65,7 +65,7 @@ def configure_lm() -> None:
         temperature=1.0,
         top_p=0.95,
         top_k=64,
-        max_tokens=8192,
+        max_tokens=65535,
     )
     dspy.configure(lm=lm, track_usage=True)
 
@@ -404,6 +404,9 @@ def process_scene_with_retry(
 ) -> tuple[bool, str]:
     """Process a scene with retry logic for failed edits."""
     for attempt in range(MAX_RETRIES):
+        if attempt > 0:
+            dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)
+
         try:
             # Get updates from the model
             pred = builder(current_document=doc_manager.get_content(), scene=scene)
@@ -444,6 +447,11 @@ def process_scene_with_retry(
                 log.warning(f"Retrying (attempt {attempt + 2}/{MAX_RETRIES})")
             else:
                 return False, f"Error: {str(e)}"
+
+        finally:
+            # Reset cache settings
+            if attempt > 0:
+                dspy.configure_cache(enable_disk_cache=True, enable_memory_cache=True)
 
     return False, "Max retries exceeded"
 
