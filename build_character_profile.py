@@ -11,6 +11,8 @@ The profile serves as a "soul document" for fine-tuning an LLM to mimic Uno's be
 import json
 import logging
 import os
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -44,6 +46,7 @@ BASE_DIR = SCRIPT_DIR.parent
 INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
 OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / "v2"
 CHECKPOINTS_DIR = OUTPUT_DIR / "checkpoints"
+DIFFS_DIR = OUTPUT_DIR / "diffs"
 
 # Global progress bar
 PROGRESS = Progress(
@@ -91,10 +94,10 @@ To be developed based on decisions and statements.
 
 ## Relationships
 
-### With Paperinik/Paperino
-To be developed based on interactions.
+To be developed based on interactions with various characters.
 
-### With another character
+### With Paperinik/Paperino
+
 To be developed based on interactions.
 
 ## Knowledge and Capabilities
@@ -199,7 +202,7 @@ class DocumentStructure:
         write_section(root)
 
         # Join and clean up trailing newlines
-        result = "\n".join(lines)
+        result = "\n\n".join(lines)
         return result.rstrip() + "\n" if result else ""
 
     @staticmethod
@@ -340,6 +343,7 @@ class CharacterDocumentUpdater(dspy.Signature):
           - Provide new_content for the subsection body
 
        Simply provide the section name (e.g., "Personality Traits" or "With Paperinik")
+       DO NOT provide full paths or hierarchical indicators (e.g. no '/' or '#' symbols)
        The system will find it anywhere in the document
        All matching is case-insensitive
 
@@ -429,6 +433,9 @@ class DocumentManager:
             log.warning(f"Section not found: '{edit.section_path}'")
             return False
 
+        if edit.new_content is not None:
+            edit.new_content = edit.new_content.strip()
+
         if edit.operation == EditOperation.ADD_LINE:
             # Add a new line at the end of the section
             if edit.new_content is None:
@@ -439,10 +446,10 @@ class DocumentManager:
 
         elif edit.operation == EditOperation.REPLACE_LINE:
             # Find and replace a line
-            if edit.search_text is None:
+            if not edit.search_text:
                 log.error("replace_line requires search_text")
                 return False
-            if edit.new_content is None:
+            if not edit.new_content:
                 log.error("replace_line requires new_content")
                 return False
 
@@ -468,7 +475,7 @@ class DocumentManager:
 
         elif edit.operation == EditOperation.DELETE_LINE:
             # Find and delete a line
-            if edit.search_text is None:
+            if not edit.search_text:
                 log.error("delete_line requires search_text")
                 return False
 
@@ -694,6 +701,102 @@ def process_scene_with_retry(
     return False, "Max retries exceeded"
 
 
+def generate_and_save_diff(
+    old_content: str, new_content: str, diff_path: Path, version_num: int
+) -> None:
+    """Generate unified diff and save to file using diff -u command.
+
+    Args:
+        old_content: Previous version content
+        new_content: Current version content
+        diff_path: Path where diff file should be saved
+        version_num: Current version number
+    """
+    # Write contents to temporary files
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", delete=False, encoding="utf-8"
+    ) as old_file:
+        old_file.write(old_content)
+        old_path = old_file.name
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", delete=False, encoding="utf-8"
+    ) as new_file:
+        new_file.write(new_content)
+        new_path = new_file.name
+
+    try:
+        # Run diff -u (returns exit code 1 when files differ, which is expected)
+        result = subprocess.run(
+            [
+                "diff",
+                "-u",
+                "--label",
+                f"a/document_v{version_num - 1:04d}.md",
+                "--label",
+                f"b/document_v{version_num:04d}.md",
+                old_path,
+                new_path,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        diff_output = result.stdout
+
+        # Save diff to file
+        diff_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(diff_path, "w", encoding="utf-8") as f:
+            f.write(diff_output)
+
+        log.debug(f"Saved diff to {diff_path}")
+    finally:
+        # Cleanup temp files
+        Path(old_path).unlink()
+        Path(new_path).unlink()
+
+
+def save_checkpoint_with_diff(
+    doc_manager: DocumentManager, checkpoint_num: int, previous_content: str | None
+) -> str:
+    """Save checkpoint as both diff and full document (for last 3).
+
+    Args:
+        doc_manager: Document manager with current state
+        checkpoint_num: Current checkpoint number
+        previous_content: Content of previous version (None for first checkpoint)
+
+    Returns:
+        Current document content for next iteration
+    """
+    current_content = doc_manager.get_content()
+    checkpoint_path = CHECKPOINTS_DIR / f"document_v{checkpoint_num:04d}.md"
+    diff_path = DIFFS_DIR / f"document_v{checkpoint_num:04d}.diff"
+
+    # Always save the diff
+    if previous_content is not None:
+        generate_and_save_diff(
+            previous_content, current_content, diff_path, checkpoint_num
+        )
+    else:
+        # First checkpoint - diff from seed
+        generate_and_save_diff(
+            SEED_DOCUMENT, current_content, diff_path, checkpoint_num
+        )
+
+    # Always save full document (will be cleaned up later if not in last 3)
+    doc_manager.save(checkpoint_path)
+
+    # Cleanup old full documents (keep last 3)
+    if checkpoint_num > 3:
+        old_checkpoint = CHECKPOINTS_DIR / f"document_v{checkpoint_num - 3:04d}.md"
+        if old_checkpoint.exists():
+            old_checkpoint.unlink()
+            log.debug(f"Deleted old checkpoint: {old_checkpoint}")
+
+    return current_content
+
+
 def natural_sort_key(path: Path) -> tuple:
     """Generate a sort key for natural/numeric sorting of issue directories.
 
@@ -718,6 +821,7 @@ def main() -> None:
     configure_lm()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
+    DIFFS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Save seed document
     seed_path = OUTPUT_DIR / "seed_document.md"
@@ -750,6 +854,7 @@ def main() -> None:
 
     # Process each scene
     successful_count = 0
+    previous_content = None  # Track previous version for diffs
 
     with open(log_path, "w", encoding="utf-8") as log_file:
         with PROGRESS as progress:
@@ -767,9 +872,10 @@ def main() -> None:
                 if success:
                     successful_count += 1
 
-                # Save checkpoint
-                checkpoint_path = CHECKPOINTS_DIR / f"document_v{i:04d}.md"
-                doc_manager.save(checkpoint_path)
+                # Save checkpoint with diff and update previous_content
+                previous_content = save_checkpoint_with_diff(
+                    doc_manager, i, previous_content
+                )
 
                 # Write log entry immediately as JSONL
                 log_entry = {
