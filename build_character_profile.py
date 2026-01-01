@@ -11,9 +11,9 @@ The profile serves as a "soul document" for fine-tuning an LLM to mimic Uno's be
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Literal
 
 import dspy
 from dotenv import load_dotenv
@@ -42,7 +42,7 @@ MAX_RETRIES = 3
 SCRIPT_DIR = Path(__file__).parent
 BASE_DIR = SCRIPT_DIR.parent
 INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
-OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / "v1"
+OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / "v2"
 CHECKPOINTS_DIR = OUTPUT_DIR / "checkpoints"
 
 # Global progress bar
@@ -115,22 +115,195 @@ To be collected from scenes (preserved in original Italian).
 """
 
 
-class DocumentEdit(BaseModel):
-    """A single edit operation on the character document."""
+# ============================================================================
+# Document Structure Classes
+# ============================================================================
 
-    operation: Literal["modify", "append_to_section"] = Field(
-        description="Type of edit: modify existing text or append to a section"
+
+@dataclass
+class Line:
+    """A single line of text in the document."""
+
+    content: str
+
+
+@dataclass
+class Section:
+    """A section in the document with optional subsections."""
+
+    header: str  # Full header including markdown symbols (e.g., "## Personality")
+    level: int  # Header level (1 for #, 2 for ##, etc.)
+    lines: list[Line] = field(default_factory=list)
+    subsections: list["Section"] = field(default_factory=list)
+
+
+class DocumentStructure:
+    """Manages hierarchical document structure with parsing and editing."""
+
+    @staticmethod
+    def parse_markdown(text: str) -> Section:
+        """Parse markdown text into a hierarchical Section structure.
+
+        Returns a root section (level 0) containing the document structure.
+        """
+        lines = text.split("\n")
+        root = Section(header="", level=0)
+        stack: list[Section] = [root]
+
+        for line in lines:
+            # Check if this is a header
+            if line.strip().startswith("#"):
+                # Count the number of # symbols
+                level = 0
+                for char in line:
+                    if char == "#":
+                        level += 1
+                    else:
+                        break
+
+                # Create new section
+                new_section = Section(header=line.strip(), level=level)
+
+                # Pop stack until we find the parent (section with level < current)
+                while len(stack) > 1 and stack[-1].level >= level:
+                    stack.pop()
+
+                # Add to parent's subsections
+                stack[-1].subsections.append(new_section)
+                stack.append(new_section)
+            else:
+                # Regular line - add to current section
+                if line or stack[-1].lines:  # Keep empty lines if we have content
+                    stack[-1].lines.append(Line(content=line))
+
+        return root
+
+    @staticmethod
+    def to_markdown(root: Section) -> str:
+        """Convert Section structure back to markdown text."""
+        lines: list[str] = []
+
+        def write_section(section: Section) -> None:
+            # Write header (skip for root)
+            if section.level > 0:
+                lines.append(section.header)
+
+            # Write lines
+            for line in section.lines:
+                lines.append(line.content)
+
+            # Write subsections
+            for subsection in section.subsections:
+                write_section(subsection)
+
+        write_section(root)
+
+        # Join and clean up trailing newlines
+        result = "\n".join(lines)
+        return result.rstrip() + "\n" if result else ""
+
+    @staticmethod
+    def find_section(root: Section, path: str) -> Section | None:
+        """Find a section by path (e.g., 'Core Identity/Relationships').
+
+        Path components are matched case-insensitively against section headers
+        (without the # symbols).
+        """
+        if not path:
+            return root
+
+        path_parts = [p.strip() for p in path.split("/")]
+        current = root
+
+        for part in path_parts:
+            part_lower = part.lower()
+            found = False
+
+            for subsection in current.subsections:
+                # Extract header text without # symbols
+                header_text = subsection.header.lstrip("#").strip()
+                if header_text.lower() == part_lower:
+                    current = subsection
+                    found = True
+                    break
+
+            if not found:
+                return None
+
+        return current
+
+    @staticmethod
+    def find_line_in_section(section: Section, search: str) -> tuple[Line | None, bool]:
+        """Find a line in a section by partial case-insensitive match.
+
+        Returns: (Line | None, is_unique: bool)
+        - (Line, True) if exactly one match found
+        - (None, False) if no matches found
+        - (Line, False) if multiple matches found (returns first)
+        """
+        search_lower = search.lower()
+        matches: list[Line] = []
+
+        for line in section.lines:
+            if search_lower in line.content.lower():
+                matches.append(line)
+
+        if len(matches) == 0:
+            return None, False
+        elif len(matches) == 1:
+            return matches[0], True
+        else:
+            # Multiple matches - not unique
+            return matches[0], False
+
+
+class EditOperation(str, Enum):
+    """Types of edit operations on the document."""
+
+    ADD_LINE = "add_line"
+    REPLACE_LINE = "replace_line"
+    DELETE_LINE = "delete_line"
+    ADD_SUBSECTION = "add_subsection"
+
+
+class DocumentEdit(BaseModel):
+    """A single edit operation on the character document.
+
+    Operations:
+    - add_line: Add a new line to a section (at the end)
+    - replace_line: Replace an existing line (found via partial search)
+    - delete_line: Delete a line (found via partial search)
+    - add_subsection: Add a new subsection to an existing section
+    """
+
+    operation: EditOperation = Field(description="Type of edit operation to perform")
+    section_path: str = Field(
+        description=(
+            "Path to the target section using '/' separator. "
+            "Example: 'Core Identity' or 'Relationships/With Paperinik'. "
+            "Path matching is case-insensitive."
+        )
     )
     search_text: str | None = Field(
         default=None,
-        description="Text to find and replace (for modify operation). Must match exactly including whitespace.",
+        description=(
+            "Partial text to find the target line (for replace_line and delete_line). "
+            "Matching is case-insensitive and can match anywhere in the line. "
+            "Must uniquely identify a single line."
+        ),
     )
-    replacement_text: str = Field(
-        description="New text to insert. For modify, this replaces search_text. For append_to_section, this is appended."
-    )
-    section_name: str | None = Field(
+    new_content: str | None = Field(
         default=None,
-        description="Section header to append to (for append_to_section operation). E.g., '## Personality Traits'",
+        description=(
+            "New content to add or replace with (for add_line, replace_line, add_subsection)"
+        ),
+    )
+    subsection_header: str | None = Field(
+        default=None,
+        description=(
+            "Header for new subsection (for add_subsection). "
+            "Example: '### With Lyla' (include ## or ### symbols)"
+        ),
     )
 
 
@@ -144,11 +317,31 @@ class CharacterDocumentUpdater(dspy.Signature):
        - Preserve original Italian dialogue as quoted examples
        - Example: "Uno shows sarcasm: 'Sai che dispiacere!' (What a pity!)"
 
-    2. EDIT OPERATIONS:
-       - Use 'modify' to replace existing placeholder text (e.g., "To be developed...")
-       - Use 'append_to_section' to add new insights to existing sections
-       - For 'modify': search_text must match EXACTLY (including whitespace)
-       - For 'append_to_section': specify the section header (e.g., "## Personality Traits")
+    2. EDIT OPERATIONS (Four available operations):
+
+       a) add_line: Add new content to end of a section
+          - Specify section_path (e.g., "Personality Traits")
+          - Provide new_content with the line to add
+          - Example: Add behavioral observations to existing sections
+
+       b) replace_line: Replace existing content (e.g., placeholders)
+          - Specify section_path (e.g., "Communication Style")
+          - Provide search_text (partial, case-insensitive match like "to be developed")
+          - Provide new_content with replacement text
+          - Search must uniquely identify one line
+
+       c) delete_line: Remove outdated or incorrect content
+          - Specify section_path
+          - Provide search_text (partial, case-insensitive match)
+          - Search must uniquely identify one line
+
+       d) add_subsection: Create new subsection with content
+          - Specify section_path for parent (e.g., "Relationships")
+          - Provide subsection_header (e.g., "### With Lyla" or just "With Lyla")
+          - Provide new_content for the subsection body
+
+       Section paths use "/" separator: "Relationships/With Paperinik"
+       All matching is case-insensitive
 
     3. CONTENT FOCUS:
        - Character identity, personality, values, and beliefs
@@ -166,6 +359,7 @@ class CharacterDocumentUpdater(dspy.Signature):
     5. EXAMPLES:
        - Include actual dialogue quotes in Italian to illustrate points
        - Each example should support a specific character insight
+       - Include a brief explanation of what the example reveals about Uno
     """
 
     current_document: str = dspy.InputField(
@@ -221,70 +415,121 @@ class Scene:
 
 
 class DocumentManager:
-    """Manages the character profile document and applies edits."""
+    """Manages the character profile document using structured editing."""
 
     def __init__(self, initial_content: str):
-        self.content = initial_content
+        self._root = DocumentStructure.parse_markdown(initial_content)
 
     def apply_edit(self, edit: DocumentEdit) -> bool:
         """Apply a single edit to the document. Returns True if successful."""
-        if edit.operation == "modify":
+        # Find the target section
+        section = DocumentStructure.find_section(self._root, edit.section_path)
+        if section is None:
+            log.warning(f"Section not found: '{edit.section_path}'")
+            return False
+
+        if edit.operation == EditOperation.ADD_LINE:
+            # Add a new line at the end of the section
+            if edit.new_content is None:
+                log.error("add_line requires new_content")
+                return False
+            section.lines.append(Line(content=edit.new_content))
+            return True
+
+        elif edit.operation == EditOperation.REPLACE_LINE:
+            # Find and replace a line
             if edit.search_text is None:
-                log.error("modify operation requires search_text")
+                log.error("replace_line requires search_text")
                 return False
-            if edit.search_text not in self.content:
-                log.warning(f"Search text not found: {edit.search_text[:50]}...")
+            if edit.new_content is None:
+                log.error("replace_line requires new_content")
                 return False
-            self.content = self.content.replace(
-                edit.search_text, edit.replacement_text, 1
+
+            line, is_unique = DocumentStructure.find_line_in_section(
+                section, edit.search_text
             )
+            if line is None:
+                log.warning(
+                    f"Line not found in section '{edit.section_path}': "
+                    f"'{edit.search_text[:50]}...'"
+                )
+                return False
+            if not is_unique:
+                log.warning(
+                    f"Multiple lines match in section '{edit.section_path}': "
+                    f"'{edit.search_text[:50]}...'. Please be more specific."
+                )
+                return False
+
+            # Replace the line content
+            line.content = edit.new_content
             return True
 
-        elif edit.operation == "append_to_section":
-            if edit.section_name is None:
-                log.error("append_to_section operation requires section_name")
+        elif edit.operation == EditOperation.DELETE_LINE:
+            # Find and delete a line
+            if edit.search_text is None:
+                log.error("delete_line requires search_text")
                 return False
 
-            # Find the section
-            if edit.section_name not in self.content:
-                log.warning(f"Section not found: {edit.section_name}")
+            line, is_unique = DocumentStructure.find_line_in_section(
+                section, edit.search_text
+            )
+            if line is None:
+                log.warning(
+                    f"Line not found in section '{edit.section_path}': "
+                    f"'{edit.search_text[:50]}...'"
+                )
+                return False
+            if not is_unique:
+                log.warning(
+                    f"Multiple lines match in section '{edit.section_path}': "
+                    f"'{edit.search_text[:50]}...'. Please be more specific."
+                )
                 return False
 
-            # Find the next section or end of document
-            lines = self.content.split("\n")
-            section_idx = None
-            for i, line in enumerate(lines):
-                if line.strip() == edit.section_name:
-                    section_idx = i
-                    break
-
-            if section_idx is None:
-                return False
-
-            # Find the end of this section (next ## header or end of document)
-            end_idx = len(lines)
-            for i in range(section_idx + 1, len(lines)):
-                if lines[i].startswith("## "):
-                    end_idx = i
-                    break
-
-            # Insert the new content before the next section
-            lines.insert(end_idx, "")
-            lines.insert(end_idx + 1, edit.replacement_text)
-            self.content = "\n".join(lines)
+            # Remove the line
+            section.lines.remove(line)
             return True
 
+        elif edit.operation == EditOperation.ADD_SUBSECTION:
+            # Add a new subsection
+            if edit.subsection_header is None:
+                log.error("add_subsection requires subsection_header")
+                return False
+            if edit.new_content is None:
+                log.error("add_subsection requires new_content")
+                return False
+
+            # Determine the level of the new subsection
+            level = section.level + 1
+            if edit.subsection_header.startswith("#"):
+                # Count # symbols in the provided header
+                level = len(edit.subsection_header) - len(
+                    edit.subsection_header.lstrip("#")
+                )
+                header = edit.subsection_header.strip()
+            else:
+                # Generate header with appropriate level
+                header = "#" * level + " " + edit.subsection_header
+
+            # Create new subsection with content
+            new_section = Section(header=header, level=level)
+            new_section.lines.append(Line(content=edit.new_content))
+            section.subsections.append(new_section)
+            return True
+
+        log.error(f"Unknown operation: {edit.operation}")
         return False
 
     def get_content(self) -> str:
-        """Get the current document content."""
-        return self.content
+        """Get the current document content as markdown."""
+        return DocumentStructure.to_markdown(self._root)
 
     def save(self, path: Path) -> None:
         """Save the document to a file."""
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            f.write(self.content)
+            f.write(self.get_content())
 
 
 class CharacterProfileBuilder(dspy.Module):
@@ -505,38 +750,37 @@ def main() -> None:
     # Process each scene
     successful_count = 0
 
-    log_file = open(log_path, "w", encoding="utf-8")
-    with PROGRESS as progress:
-        for i, scene in progress.track(
-            enumerate(all_scenes, 1),
-            total=len(all_scenes),
-            description="Building character profile...",
-        ):
-            log.info(f"\nProcessing scene {i}/{len(all_scenes)}: {scene.issue}")
+    with open(log_path, "w", encoding="utf-8") as log_file:
+        with PROGRESS as progress:
+            for i, scene in progress.track(
+                enumerate(all_scenes, 1),
+                total=len(all_scenes),
+                description="Building character profile...",
+            ):
+                log.info(f"\nProcessing scene {i}/{len(all_scenes)}: {scene.issue}")
 
-            success, insights = process_scene_with_retry(builder, doc_manager, scene, i)
+                success, insights = process_scene_with_retry(
+                    builder, doc_manager, scene, i
+                )
 
-            if success:
-                successful_count += 1
+                if success:
+                    successful_count += 1
 
-            # Save checkpoint
-            checkpoint_path = CHECKPOINTS_DIR / f"document_v{i:04d}.md"
-            doc_manager.save(checkpoint_path)
+                # Save checkpoint
+                checkpoint_path = CHECKPOINTS_DIR / f"document_v{i:04d}.md"
+                doc_manager.save(checkpoint_path)
 
-            # Write log entry immediately as JSONL
-            log_entry = {
-                "scene_number": i,
-                "issue": scene.issue,
-                "pages": scene.page_numbers,
-                "success": success,
-                "insights": insights,
-                "uno_dialogue_count": len(scene.uno_dialogues),
-            }
-            log_file.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
-            log_file.flush()  # Ensure it's written immediately
-
-    # Close log file explicitly
-    log_file.close()
+                # Write log entry immediately as JSONL
+                log_entry = {
+                    "scene_number": i,
+                    "issue": scene.issue,
+                    "pages": scene.page_numbers,
+                    "success": success,
+                    "insights": insights,
+                    "uno_dialogue_count": len(scene.uno_dialogues),
+                }
+                log_file.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+                log_file.flush()  # Ensure it's written immediately
 
     # Save final document
     final_path = OUTPUT_DIR / "uno_profile.md"
