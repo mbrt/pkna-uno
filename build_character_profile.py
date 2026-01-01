@@ -404,9 +404,6 @@ def process_scene_with_retry(
 ) -> tuple[bool, str]:
     """Process a scene with retry logic for failed edits."""
     for attempt in range(MAX_RETRIES):
-        if attempt > 0:
-            dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)
-
         try:
             # Get updates from the model
             pred = builder(current_document=doc_manager.get_content(), scene=scene)
@@ -448,12 +445,25 @@ def process_scene_with_retry(
             else:
                 return False, f"Error: {str(e)}"
 
-        finally:
-            # Reset cache settings
-            if attempt > 0:
-                dspy.configure_cache(enable_disk_cache=True, enable_memory_cache=True)
-
     return False, "Max retries exceeded"
+
+
+def natural_sort_key(path: Path) -> tuple:
+    """Generate a sort key for natural/numeric sorting of issue directories.
+
+    Examples:
+        pkna-0 → ("pkna", 0)
+        pkna-0-2 → ("pkna", 0, 2)
+        pkna-10 → ("pkna", 10)
+    """
+    parts = path.name.split("-")
+    key = []
+    for part in parts:
+        try:
+            key.append(int(part))
+        except ValueError:
+            key.append(part)
+    return tuple(key)
 
 
 def main() -> None:
@@ -478,7 +488,9 @@ def main() -> None:
     # Collect all scenes with Uno
     log.info("Scanning for scenes containing Uno...")
     all_scenes = []
-    issue_dirs = sorted([d for d in INPUT_DIR.iterdir() if d.is_dir()])
+    issue_dirs = sorted(
+        [d for d in INPUT_DIR.iterdir() if d.is_dir()], key=natural_sort_key
+    )
 
     for issue_dir in issue_dirs:
         scenes = extract_scenes_from_issue(issue_dir)
@@ -502,9 +514,7 @@ def main() -> None:
         ):
             log.info(f"\nProcessing scene {i}/{len(all_scenes)}: {scene.issue}")
 
-            success, insights = process_scene_with_retry(
-                builder, doc_manager, scene, i
-            )
+            success, insights = process_scene_with_retry(builder, doc_manager, scene, i)
 
             if success:
                 successful_count += 1
