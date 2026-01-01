@@ -189,7 +189,7 @@ Content
         assert section is not None
 
     def test_find_section_nested(self):
-        """Test finding a nested section."""
+        """Test finding a nested section by name."""
         text = """## Relationships
 
 ### With Paperinik
@@ -197,7 +197,8 @@ Content
 Content
 """
         root = DocumentStructure.parse_markdown(text)
-        section = DocumentStructure.find_section(root, "Relationships/With Paperinik")
+        # Find the subsection directly by name
+        section = DocumentStructure.find_section(root, "With Paperinik")
         assert section is not None
         assert section.header == "### With Paperinik"
 
@@ -450,7 +451,7 @@ Child content
         manager = DocumentManager(text)
         edit = DocumentEdit(
             operation=EditOperation.ADD_LINE,
-            section_path="Parent/Child",
+            section_path="Child",  # Find nested section directly by name
             new_content="New child content",
         )
         success = manager.apply_edit(edit)

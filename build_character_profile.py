@@ -94,7 +94,7 @@ To be developed based on decisions and statements.
 ### With Paperinik/Paperino
 To be developed based on interactions.
 
-### With Other Characters
+### With another character
 To be developed based on interactions.
 
 ## Knowledge and Capabilities
@@ -203,34 +203,33 @@ class DocumentStructure:
         return result.rstrip() + "\n" if result else ""
 
     @staticmethod
-    def find_section(root: Section, path: str) -> Section | None:
-        """Find a section by path (e.g., 'Core Identity/Relationships').
+    def find_section(root: Section, section_name: str) -> Section | None:
+        """Find a section by name anywhere in the document tree.
 
-        Path components are matched case-insensitively against section headers
-        (without the # symbols).
+        The section name is matched case-insensitively against section headers
+        (without the # symbols). Returns the first matching section found.
         """
-        if not path:
+        if not section_name:
             return root
 
-        path_parts = [p.strip() for p in path.split("/")]
-        current = root
+        section_name_lower = section_name.strip().lower()
 
-        for part in path_parts:
-            part_lower = part.lower()
-            found = False
-
-            for subsection in current.subsections:
+        def search_recursive(section: Section) -> Section | None:
+            # Check current section's subsections
+            for subsection in section.subsections:
                 # Extract header text without # symbols
                 header_text = subsection.header.lstrip("#").strip()
-                if header_text.lower() == part_lower:
-                    current = subsection
-                    found = True
-                    break
+                if header_text.lower() == section_name_lower:
+                    return subsection
 
-            if not found:
-                return None
+                # Recursively search in subsections
+                result = search_recursive(subsection)
+                if result is not None:
+                    return result
 
-        return current
+            return None
+
+        return search_recursive(root)
 
     @staticmethod
     def find_line_in_section(section: Section, search: str) -> tuple[Line | None, bool]:
@@ -279,9 +278,9 @@ class DocumentEdit(BaseModel):
     operation: EditOperation = Field(description="Type of edit operation to perform")
     section_path: str = Field(
         description=(
-            "Path to the target section using '/' separator. "
-            "Example: 'Core Identity' or 'Relationships/With Paperinik'. "
-            "Path matching is case-insensitive."
+            "Name of the target section. "
+            "Example: 'Core Identity' or 'Personality Traits' or 'With Paperinik'. "
+            "Matching is case-insensitive and searches the entire document."
         )
     )
     search_text: str | None = Field(
@@ -340,7 +339,8 @@ class CharacterDocumentUpdater(dspy.Signature):
           - Provide subsection_header (e.g., "### With Lyla" or just "With Lyla")
           - Provide new_content for the subsection body
 
-       Section paths use "/" separator: "Relationships/With Paperinik"
+       Simply provide the section name (e.g., "Personality Traits" or "With Paperinik")
+       The system will find it anywhere in the document
        All matching is case-insensitive
 
     3. CONTENT FOCUS:
@@ -353,6 +353,7 @@ class CharacterDocumentUpdater(dspy.Signature):
     4. EFFICIENCY:
        - Only create edits when new meaningful insights are discovered
        - Don't repeat information already in the document
+       - Prefer generalizing existing content over adding redundant lines
        - Be concise but thorough
        - Preserve existing content unless new evidence contradicts it
 
