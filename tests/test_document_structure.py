@@ -1,6 +1,5 @@
 """Unit tests for document structure classes."""
 
-
 from build_character_profile import (
     DocumentEdit,
     DocumentManager,
@@ -84,8 +83,8 @@ Content
         assert level4.level == 4
         assert len(level4.lines) > 0
 
-    def test_parse_preserves_empty_lines(self):
-        """Test that empty lines within content are preserved."""
+    def test_parse_ignores_empty_lines(self):
+        """Test that empty lines within content are ignored."""
         text = """## Section
 
 Line 1
@@ -94,8 +93,8 @@ Line 2
 """
         root = DocumentStructure.parse_markdown(text)
         section = root.subsections[0]
-        # Should have: empty line, "Line 1", empty line, "Line 2"
-        assert len(section.lines) >= 3
+        # Should have: "Line 1", "Line 2"
+        assert len(section.lines) == 2
 
     def test_parse_multiple_sections_same_level(self):
         """Test parsing multiple sections at the same level."""
@@ -129,14 +128,15 @@ Content
 
 ## Section
 
-More content
+More multi-line
+content
+
+Another paragraph.
 """
         root = DocumentStructure.parse_markdown(text)
         result = DocumentStructure.to_markdown(root)
         # Should be essentially the same (might have trailing newline differences)
-        assert "# Title" in result
-        assert "## Section" in result
-        assert "Content" in result
+        assert result.strip() == text.strip()
 
     def test_to_markdown_preserves_structure(self):
         """Test that serialization preserves structure."""
@@ -340,6 +340,7 @@ To be developed
         text = """## Section
 
 Line to delete
+
 Other line
 """
         manager = DocumentManager(text)
@@ -427,7 +428,9 @@ Content
         text = """## Section
 
 Content here
+
 More content
+
 Even more content
 """
         manager = DocumentManager(text)

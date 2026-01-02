@@ -148,24 +148,40 @@ class DocumentStructure:
         """Parse markdown text into a hierarchical Section structure.
 
         Returns a root section (level 0) containing the document structure.
+
+        Multi-line paragraphs (consecutive non-empty lines) are preserved as single
+        Line objects. Empty lines separate paragraphs.
         """
         lines = text.split("\n")
         root = Section(header="", level=0)
         stack: list[Section] = [root]
+        current_paragraph: list[str] = []
+
+        def flush_paragraph() -> None:
+            """Flush accumulated paragraph lines to current section."""
+            if current_paragraph:
+                # Join lines with newlines to preserve multi-line paragraphs
+                content = "\n".join(current_paragraph)
+                stack[-1].lines.append(Line(content=content))
+                current_paragraph.clear()
 
         for line in lines:
             # Check if this is a header
-            if line.strip().startswith("#"):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                # Flush any accumulated paragraph before starting new section
+                flush_paragraph()
+
                 # Count the number of # symbols
                 level = 0
-                for char in line:
+                for char in stripped:
                     if char == "#":
                         level += 1
                     else:
                         break
 
                 # Create new section
-                new_section = Section(header=line.strip(), level=level)
+                new_section = Section(header=stripped, level=level)
 
                 # Pop stack until we find the parent (section with level < current)
                 while len(stack) > 1 and stack[-1].level >= level:
@@ -175,9 +191,16 @@ class DocumentStructure:
                 stack[-1].subsections.append(new_section)
                 stack.append(new_section)
             else:
-                # Regular line - add to current section
-                if line or stack[-1].lines:  # Keep empty lines if we have content
-                    stack[-1].lines.append(Line(content=line))
+                # Regular line - accumulate into paragraph or flush on empty line
+                if stripped:
+                    # Non-empty line - add to current paragraph
+                    current_paragraph.append(stripped)
+                else:
+                    # Empty line - flush paragraph
+                    flush_paragraph()
+
+        # Don't forget to flush the final paragraph
+        flush_paragraph()
 
         return root
 
@@ -325,6 +348,8 @@ class CharacterDocumentUpdater(dspy.Signature):
           - Specify section_path (e.g., "Personality Traits")
           - Provide new_content with the line to add
           - Example: Add behavioral observations to existing sections
+          - A single line with newline characters (\n) creates a multi-line paragraph
+          - Multiple add_line operations create separate paragraphs
 
        b) replace_line: Replace existing content (e.g., placeholders)
           - Specify section_path (e.g., "Communication Style")
