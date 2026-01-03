@@ -112,7 +112,7 @@ To be developed based on recurring actions and responses.
 
 To be developed based on character arc across issues.
 
-## Example Dialogue
+## Example Dialogues
 
 To be collected from scenes (preserved in original Italian).
 """
@@ -441,7 +441,7 @@ class Scene:
 
     def to_other_context(self) -> str:
         """Create additional context string."""
-        return f"Panel descriptions: {' | '.join(self.panel_descriptions[:3])}"
+        return f"Panel descriptions: {' | '.join(self.panel_descriptions)}"
 
 
 class DocumentManager:
