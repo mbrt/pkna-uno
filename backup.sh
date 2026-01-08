@@ -2,29 +2,27 @@
 
 set -euo pipefail
 
-ROOT_DIR=$(dirname $(dirname "$(realpath "$0")"))
-
-# Backup exporter
-cd "${ROOT_DIR}/exporter"
-rm -rf "${ROOT_DIR}/backup/exporter"
-mkdir -p "${ROOT_DIR}/backup/exporter"
-git ls-files | xargs -I{} cp --parents {} "${ROOT_DIR}/backup/exporter"
-
-# Backup results
+ROOT_DIR=$(dirname "$(realpath "$0")")
 cd "${ROOT_DIR}"
-mkdir -p "backup/output"
-rsync -avz output/ "${ROOT_DIR}/backup/output/" --prune-empty-dirs --delete \
-    --exclude 'mlartifacts/'
 
-# Backup some input files
-mkdir -p "${ROOT_DIR}/backup/input"
-rsync -avz input/ "${ROOT_DIR}/backup/input/" --prune-empty-dirs --delete \
-    --exclude 'pkna/' --exclude 'schede/' --exclude 'characters/'
+# Start fresh
+rm -f pkna-llm-backup.tar
+
+# Backup exporter files
+git ls-files | xargs tar cf pkna-llm-backup.tar
 
 # Save list of files in input
-find input/ -type f | sort > "${ROOT_DIR}/backup/input-files.txt"
+find input/ -type f | sort > input-files.txt
+
+# Backup some input files and output files
+tar --append -f pkna-llm-backup.tar \
+    --exclude='input/pkna' \
+    --exclude='input/schede' \
+    --exclude='input/characters' \
+    --exclude='input/orig' \
+    --exclude='**/mlartifacts' \
+    input/ output/ input-files.txt
 
 # Compress backup
-rm -f pkna-llm-backup.tar*
-tar czf "pkna-llm-backup.tar" "backup"
+rm -f pkna-llm-backup.tar.bz2
 bzip2 --best "pkna-llm-backup.tar"

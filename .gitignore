@@ -6,6 +6,10 @@ llama.cpp
 /input
 /output
 
+# Backup files
+pkna-llm-backup.tar*
+input-files.txt
+
 # Python-generated files
 __pycache__/
 *.py[oc]
