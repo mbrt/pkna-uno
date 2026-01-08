@@ -39,8 +39,7 @@ DEFAULT_PROFILE = "output/character-profile/uno/v2/uno_profile.md"
 CONVERSATIONS_DIR = "output/test-conversations"
 
 # Paths
-SCRIPT_DIR = Path(__file__).parent
-BASE_DIR = SCRIPT_DIR.parent
+BASE_DIR = Path(__file__).parent
 
 
 def extract_character_name(profile_content: str) -> str:

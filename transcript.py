@@ -118,7 +118,7 @@ class ImageLoader:
 with open('prompt.md', 'r') as f:
     prompt = f.read().strip()
 prompt_version = hashlib.sha1(prompt.encode()).hexdigest()
-with open('../output/characters/characters.json', 'r') as f:
+with open('output/characters/characters.json', 'r') as f:
     characters = f.read().strip()
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))

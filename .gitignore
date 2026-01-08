@@ -2,6 +2,10 @@
 unsloth_compiled_cache
 llama.cpp
 
+# generated and input
+/input
+/output
+
 # Python-generated files
 __pycache__/
 *.py[oc]

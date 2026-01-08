@@ -8,12 +8,12 @@ if len(sys.argv) < 2:
     raise ValueError("Usage: python review-app.py <input_json_path>")
 
 INPUT_PATH = sys.argv[1]
-OUTPUT_PATH = "../input/review/manual.json"
+OUTPUT_PATH = "input/review/manual.json"
 
 # The input JSON file is expected to be in this format:
 #
 # {
-#   "input_path": "../input/pkna/XXX/YYY.jpg",
+#   "input_path": "input/pkna/XXX/YYY.jpg",
 #   "extracted": {
 #     "uno_present": true,
 #     "dialogue": [
@@ -34,7 +34,7 @@ OUTPUT_PATH = "../input/review/manual.json"
 #
 # [
 #   {
-#     "image": "../input/pkna/pkna-0-3/PK.Vol.0-3 002.jpg",
+#     "image": "input/pkna/pkna-0-3/PK.Vol.0-3 002.jpg",
 #     "ocr": {
 #       "dialogue": [
 #         {

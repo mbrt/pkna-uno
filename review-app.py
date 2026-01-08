@@ -9,7 +9,7 @@ if len(sys.argv) < 2:
     raise ValueError("Usage: python review-app.py <input_json_path>")
 
 DATA_PATH = sys.argv[1]
-REVIEWED_PATH = "../output/dataset/reviewed.jsonl"
+REVIEWED_PATH = "output/dataset/reviewed.jsonl"
 
 # Load dataset
 with open(DATA_PATH, "r", encoding="utf-8") as f:

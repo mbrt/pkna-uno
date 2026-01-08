@@ -8,7 +8,6 @@ import time
 
 from dotenv import load_dotenv
 from google import genai
-from google.genai import types
 from google.genai.errors import ServerError
 from pydantic import BaseModel, Field
 from rich.logging import RichHandler
@@ -19,7 +18,7 @@ import PIL.ImageFile
 load_dotenv()
 
 # Flags
-images_pattern = '../export/pkna-0/*.jp*g'
+images_pattern = 'input/pkna/pkna-0/*.jp*g'
 model_name = 'gemini-2.0-flash'
 #model_name = 'gemini-2.5-pro-exp-03-25'
 max_retries = 3
@@ -114,7 +113,7 @@ os.makedirs(root_dir, exist_ok=True)
 retries = 0
 
 while True:
-    out_file = os.path.join(root_dir, f'characters-id.json')
+    out_file = os.path.join(root_dir, 'characters-id.json')
 
     try:
         resp = process_batch(images)

@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 
-BASE_DIR = Path(__file__).parent.parent
+BASE_DIR = Path(__file__).parent
 INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
 OUTPUT_FILE = BASE_DIR / "output" / "dataset" / "dataset-2.csv"
 

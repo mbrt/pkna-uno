@@ -31,10 +31,10 @@ VERSION = "v2"
 MAX_WORKERS = 8
 
 # Paths
-SCRIPT_DIR = Path(__file__).parent
-PAGES_ROOT = SCRIPT_DIR.parent / "input/pkna"
-WIKI_ROOT = SCRIPT_DIR.parent / "output/wiki/fandom/crawl/storie/storie-di-pkna"
-OUT_ROOT = SCRIPT_DIR.parent / f"output/dspy-extract-full/{VERSION}"
+BASE_DIR = Path(__file__).parent
+PAGES_ROOT = BASE_DIR / "input/pkna"
+WIKI_ROOT = BASE_DIR / "output/wiki/fandom/crawl/storie/storie-di-pkna"
+OUT_ROOT = BASE_DIR / f"output/dspy-extract-full/{VERSION}"
 
 # Global progress bar
 PROGRESS = Progress(

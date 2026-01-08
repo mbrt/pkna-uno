@@ -7,7 +7,7 @@ from pathlib import Path
 
 # Configuration
 MODEL_PATH = "ds4sd/SmolDocling-256M-preview"
-IMAGE_DIR = "../export/pkna-0"  # Place your page images here
+IMAGE_DIR = "input/pkna/pkna-0"  # Place your page images here
 PROMPT_TEXT = "Convert page to Docling."
 OUTPUT_DIR = os.path.join(os.path.dirname(IMAGE_DIR), "ocr")
 

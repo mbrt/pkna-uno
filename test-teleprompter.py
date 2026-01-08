@@ -98,14 +98,14 @@ extractor = ComicBookExtractor()
 
 examples = [
     dspy.Example(
-        img=dspy.Image.from_file('../input/pkna/pkna-0/pkna-0-029.jpg'),
+        img=dspy.Image.from_file('input/pkna/pkna-0/pkna-0-029.jpg'),
         output=ComicBookPage(
             uno_present=False,
             dialogue=[],
         )
     ).with_inputs('img'),
     dspy.Example(
-        img=dspy.Image.from_file('../input/pkna/pkna-0/pkna-0-030.jpg'),
+        img=dspy.Image.from_file('input/pkna/pkna-0/pkna-0-030.jpg'),
         output=ComicBookPage(
             uno_present=True,
             dialogue=[],

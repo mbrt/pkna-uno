@@ -15,9 +15,9 @@ import dspy
 
 
 TRAINING_MODE = "light"
-EXAMPLES_PATH = "../output/dataset/reviewed.jsonl"
-OPTIMIZED_PATH = f"../output/models/dspy-extract-filtered-{TRAINING_MODE}.json"
-LOG_DIR = "../output/logs"
+EXAMPLES_PATH = "output/dataset/reviewed.jsonl"
+OPTIMIZED_PATH = f"output/models/dspy-extract-filtered-{TRAINING_MODE}.json"
+LOG_DIR = "output/logs"
 
 
 def setup_logging() -> logging.Logger:
@@ -139,7 +139,7 @@ def init_llms() -> tuple[dspy.LM, dspy.LM]:
 
 def load_character(name: Character) -> CharacterDescription:
     """Load a character description from the environment variable."""
-    p = os.path.join('../input/bios', f'{name}.md')
+    p = os.path.join('input/bios', f'{name}.md')
     with open(p, 'r', encoding='utf-8') as f:
         description = f.read()
     return CharacterDescription(name=name, description=description)

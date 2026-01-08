@@ -41,8 +41,7 @@ CHARACTER_NAME = "Uno"
 MAX_RETRIES = 3
 
 # Paths
-SCRIPT_DIR = Path(__file__).parent
-BASE_DIR = SCRIPT_DIR.parent
+BASE_DIR = Path(__file__).parent
 INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
 OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / "v2"
 CHECKPOINTS_DIR = OUTPUT_DIR / "checkpoints"

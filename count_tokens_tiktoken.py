@@ -31,4 +31,4 @@ if __name__ == "__main__":
     token_count = count_tokens(file_path)
 
     print(f"Token count (tiktoken/cl100k_base): {token_count}")
-    print(f"Note: This is an approximation. Gemini's tokenizer may count differently.")
+    print("Note: This is an approximation. Gemini's tokenizer may count differently.")
