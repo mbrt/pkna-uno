@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import dspy
@@ -49,13 +50,15 @@ CHARACTER_NAME = "Uno"
 TARGET_MAX_TOKENS = 7000  # Target profile size
 ENCODING_NAME = "cl100k_base"  # GPT-4 tokenizer as approximation
 MAX_RETRIES = 3
+VERSION_TAG = "v6"
 
 # Paths
 BASE_DIR = Path(__file__).parent
 INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
-OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / "v5"
+OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / VERSION_TAG
 CHECKPOINTS_DIR = OUTPUT_DIR / "checkpoints"
 DIFFS_DIR = OUTPUT_DIR / "diffs"
+FAILURES_LOG_PATH = OUTPUT_DIR / "failures_log.jsonl"
 
 # Global progress bar
 PROGRESS = Progress(
@@ -315,6 +318,16 @@ class ProfileEdit(BaseModel):
     reason: str = Field(description="Brief explanation of why this edit is being made")
 
 
+@dataclass
+class EditFailure:
+    """Detailed information about why an edit failed."""
+
+    edit: ProfileEdit
+    failure_type: str  # "not_found", "not_unique", "broke_structure"
+    failure_message: str
+    timestamp: str
+
+
 def create_profile_updater_signature() -> type[dspy.Signature]:
     """Create CondensedProfileUpdater signature with structure description injected.
 
@@ -342,7 +355,17 @@ def create_profile_updater_signature() -> type[dspy.Signature]:
        - Each search_text must be UNIQUE in the document
        - Use multi-line text blocks for section replacements
 
-    3. SIZE MANAGEMENT:
+    3. RETRY FEEDBACK:
+       - If previous_failures is provided, those edits FAILED in the last attempt
+       - DO NOT repeat the same edits that failed
+       - Understand WHY they failed:
+         * "not_found" - search text doesn't exist (maybe it was already edited)
+         * "not_unique" - search text appears multiple times (be more specific)
+         * "broke_structure" - edit removed a required section header (keep headers intact)
+       - Adjust your approach based on the failure type
+       - If content was already updated, skip redundant edits
+
+    4. SIZE MANAGEMENT:
        - Current document is {{current_token_count}} tokens
        - Target max: {{target_max_tokens}} tokens
        - If approaching target, CONSOLIDATE:
@@ -350,13 +373,13 @@ def create_profile_updater_signature() -> type[dspy.Signature]:
          * Remove weaker examples, keep only the best
          * Merge redundant content WITHIN sections (not across)
 
-    4. WHAT TO EDIT:
+    5. WHAT TO EDIT:
        - Replace "To be developed..." placeholders with actual content
        - Add new traits to existing sections (replace section content)
        - Update sections to add new insights
        - Consolidate redundant content
 
-    5. EDIT EXAMPLES:
+    6. EDIT EXAMPLES:
 
        Example 1 - Replace placeholder (preserves section header):
        search_text: "To be developed based on observed core facts and constraints."
@@ -374,12 +397,12 @@ def create_profile_updater_signature() -> type[dspy.Signature]:
        search_text: "## Essential Identity"
        replace_text: "## Essential Identity & Personality"  # NEVER change headers!
 
-    6. QUALITY OVER QUANTITY:
+    7. QUALITY OVER QUANTITY:
        - Add insights ONLY if they're truly new and distinctive
        - Better to have 30 well-defined traits than 50 vague ones
        - Each edit should meaningfully improve the profile
 
-    7. LANGUAGE:
+    8. LANGUAGE:
        - Write all descriptions in English
        - Preserve Italian dialogue examples with English translations in parentheses
     """
@@ -408,6 +431,9 @@ def create_profile_updater_signature() -> type[dspy.Signature]:
         )
         capabilities_shown: list[str] = dspy.InputField(
             desc="Capabilities demonstrated"
+        )
+        previous_failures: str = dspy.InputField(
+            desc="Description of edits that failed in previous attempts (empty if first attempt)"
         )
 
         edits: list[ProfileEdit] = dspy.OutputField(
@@ -446,19 +472,35 @@ class SimpleDocumentManager:
                 return False
         return True
 
-    def apply_edit(self, edit: ProfileEdit) -> bool:
-        """Apply a search-and-replace edit. Returns True if successful."""
+    def apply_edit(self, edit: ProfileEdit) -> tuple[bool, EditFailure | None]:
+        """Apply a search-and-replace edit.
+
+        Returns:
+            Tuple of (success: bool, failure: EditFailure | None)
+        """
+        timestamp = datetime.now(timezone.utc).isoformat()
+
         if edit.search_text not in self._content:
-            log.warning(f"Search text not found: '{edit.search_text[:100]}...'")
-            return False
+            failure_msg = f"Search text not found: '{edit.search_text[:100]}...'"
+            log.warning(failure_msg)
+            return False, EditFailure(
+                edit=edit,
+                failure_type="not_found",
+                failure_message=failure_msg,
+                timestamp=timestamp,
+            )
 
         # Count occurrences to ensure uniqueness
         count = self._content.count(edit.search_text)
         if count > 1:
-            log.warning(
-                f"Search text appears {count} times (not unique): '{edit.search_text[:100]}...'"
+            failure_msg = f"Search text appears {count} times (not unique): '{edit.search_text[:100]}...'"
+            log.warning(failure_msg)
+            return False, EditFailure(
+                edit=edit,
+                failure_type="not_unique",
+                failure_message=failure_msg,
+                timestamp=timestamp,
             )
-            return False
 
         # Save old content for rollback
         old_content = self._content
@@ -468,14 +510,20 @@ class SimpleDocumentManager:
 
         # Validate structure after edit
         if not self._validate_structure():
-            log.error(
+            failure_msg = (
                 f"Edit broke document structure, rolling back: {edit.reason[:100]}"
             )
+            log.error(failure_msg)
             self._content = old_content
-            return False
+            return False, EditFailure(
+                edit=edit,
+                failure_type="broke_structure",
+                failure_message=failure_msg,
+                timestamp=timestamp,
+            )
 
         log.debug(f"Applied edit: {edit.reason}")
-        return True
+        return True, None
 
     def get_content(self) -> str:
         """Get the current document content."""
@@ -649,6 +697,64 @@ def extract_issue_insights(
     )
 
 
+def log_edit_failure(issue_id: str, failure: EditFailure) -> None:
+    """Log edit failure to structured log file."""
+    log_entry = {
+        "timestamp": failure.timestamp,
+        "issue_id": issue_id,
+        "failure_type": failure.failure_type,
+        "failure_message": failure.failure_message,
+        "edit_reason": failure.edit.reason,
+        "search_text_preview": failure.edit.search_text[:200],
+        "replace_text_preview": failure.edit.replace_text[:200],
+    }
+
+    with open(FAILURES_LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+
+
+def format_failures_feedback(failures: list[EditFailure]) -> str:
+    """Format list of edit failures into feedback string for the model."""
+    if not failures:
+        return ""
+
+    feedback_lines = ["Previous attempt had these failures:"]
+    for i, failure in enumerate(failures, 1):
+        feedback_lines.append(
+            f"{i}. [{failure.failure_type}] {failure.failure_message}\n"
+            f"   Reason: {failure.edit.reason}\n"
+            f"   Search: {failure.edit.search_text[:150]}..."
+        )
+
+    return "\n".join(feedback_lines)
+
+
+def check_token_reduction(
+    old_tokens: int,
+    new_tokens: int,
+    target_tokens: int,
+    issue_id: str,
+) -> bool:
+    """Check if token reduction is drastic and confirm with model if intentional.
+
+    Returns True if reduction is acceptable, False if it seems wrong.
+    """
+    # Calculate how much we reduced
+    reduction = old_tokens - new_tokens
+
+    # If we're still far from target and reduced by more than 1000 tokens, check
+    if new_tokens < target_tokens - 2000 and reduction > 1000:
+        log.warning(
+            f"{issue_id}: Large token reduction detected "
+            f"({old_tokens} → {new_tokens}, -{reduction} tokens). "
+            f"Still {target_tokens - new_tokens} tokens below target."
+        )
+        # This is suspicious - we should be growing toward target, not shrinking
+        return False
+
+    return True
+
+
 def update_profile_with_retry(
     updater: dspy.Module,
     doc_manager: SimpleDocumentManager,
@@ -658,9 +764,13 @@ def update_profile_with_retry(
     """Update profile with insights, with retry logic for failed edits."""
     current_content = doc_manager.get_content()
     current_tokens = count_tokens(current_content)
+    previous_failures: list[EditFailure] = []
 
     for attempt in range(MAX_RETRIES):
         try:
+            # Build feedback from previous failures
+            failures_feedback = format_failures_feedback(previous_failures)
+
             # Get update edits from the model
             pred = updater(
                 current_profile=current_content,
@@ -673,19 +783,32 @@ def update_profile_with_retry(
                 relationship_insights=insights.relationship_insights,
                 best_dialogue_examples=insights.best_dialogue_examples,
                 capabilities_shown=insights.capabilities_shown,
+                previous_failures=failures_feedback,
             )
 
             # Try to apply all edits
             all_successful = True
-            failed_edits = []
+            current_failures: list[EditFailure] = []
 
             for edit in pred.edits:
-                if not doc_manager.apply_edit(edit):
+                success, failure = doc_manager.apply_edit(edit)
+                if not success and failure is not None:
                     all_successful = False
-                    failed_edits.append(edit)
+                    current_failures.append(failure)
+                    # Log to file
+                    log_edit_failure(issue_id, failure)
 
             if all_successful:
                 new_tokens = count_tokens(doc_manager.get_content())
+
+                # Check for drastic token reduction
+                if not check_token_reduction(
+                    current_tokens, new_tokens, TARGET_MAX_TOKENS, issue_id
+                ):
+                    log.error(
+                        f"{issue_id}: Drastic token reduction detected - may indicate model error"
+                    )
+
                 log.info(
                     f"{issue_id}: Applied {len(pred.edits)} edits. "
                     f"Tokens: {current_tokens} → {new_tokens}. "
@@ -696,17 +819,19 @@ def update_profile_with_retry(
             # If some edits failed and we have retries left
             if attempt < MAX_RETRIES - 1:
                 log.warning(
-                    f"{issue_id}: {len(failed_edits)} edits failed, "
+                    f"{issue_id}: {len(current_failures)} edits failed, "
                     f"retrying (attempt {attempt + 2}/{MAX_RETRIES})"
                 )
-                # Update current_content for retry
+                # Update for retry
                 current_content = doc_manager.get_content()
+                current_tokens = count_tokens(current_content)
+                previous_failures = current_failures
             else:
                 log.error(
-                    f"{issue_id}: {len(failed_edits)} edits failed after "
+                    f"{issue_id}: {len(current_failures)} edits failed after "
                     f"{MAX_RETRIES} attempts"
                 )
-                return False, f"Partial update - {len(failed_edits)} edits failed"
+                return False, f"Partial update - {len(current_failures)} edits failed"
 
         except Exception as e:
             log.error(f"{issue_id}: Error during processing: {e}")
@@ -821,7 +946,7 @@ def save_checkpoint_with_diff(
 
 def main() -> None:
     """Main function to build condensed character profile."""
-    console.print("\n[bold cyan]Condensed Character Profile Builder (v4)[/bold cyan]\n")
+    console.print(f"\n[bold cyan]Condensed Character Profile Builder ({VERSION_TAG})[/bold cyan]\n")
 
     # Setup
     configure_lm()
