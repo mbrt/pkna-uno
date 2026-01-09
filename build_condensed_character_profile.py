@@ -18,6 +18,8 @@ Key differences from build_character_profile.py:
 import json
 import logging
 import os
+import subprocess
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +55,7 @@ BASE_DIR = Path(__file__).parent
 INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
 OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / "v5"
 CHECKPOINTS_DIR = OUTPUT_DIR / "checkpoints"
+DIFFS_DIR = OUTPUT_DIR / "diffs"
 
 # Global progress bar
 PROGRESS = Progress(
@@ -715,18 +718,105 @@ def update_profile_with_retry(
     return False, "Max retries exceeded"
 
 
-def save_checkpoint(doc_manager: SimpleDocumentManager, checkpoint_num: int) -> None:
-    """Save checkpoint after processing an issue.
+def generate_and_save_diff(
+    old_content: str, new_content: str, diff_path: Path, version_num: int
+) -> None:
+    """Generate unified diff and save to file using diff -u command.
+
+    Args:
+        old_content: Previous version content
+        new_content: Current version content
+        diff_path: Path where diff file should be saved
+        version_num: Current version number
+    """
+    # Write contents to temporary files
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", delete=False, encoding="utf-8"
+    ) as old_file:
+        old_file.write(old_content)
+        old_path = old_file.name
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", delete=False, encoding="utf-8"
+    ) as new_file:
+        new_file.write(new_content)
+        new_path = new_file.name
+
+    try:
+        # Run diff -u (returns exit code 1 when files differ, which is expected)
+        result = subprocess.run(
+            [
+                "diff",
+                "-u",
+                "--label",
+                f"a/checkpoint_{version_num - 1:03d}.md",
+                "--label",
+                f"b/checkpoint_{version_num:03d}.md",
+                old_path,
+                new_path,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        diff_output = result.stdout
+
+        # Save diff to file
+        diff_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(diff_path, "w", encoding="utf-8") as f:
+            f.write(diff_output)
+
+        log.debug(f"Saved diff to {diff_path}")
+    finally:
+        # Cleanup temp files
+        Path(old_path).unlink()
+        Path(new_path).unlink()
+
+
+def save_checkpoint_with_diff(
+    doc_manager: SimpleDocumentManager,
+    checkpoint_num: int,
+    previous_content: str | None,
+) -> str:
+    """Save checkpoint as both diff and full document (for last 3).
 
     Args:
         doc_manager: Document manager with current state
         checkpoint_num: Sequential checkpoint number (1, 2, 3, ...)
+        previous_content: Content of previous version (None for first checkpoint)
+
+    Returns:
+        Current document content for next iteration
     """
+    current_content = doc_manager.get_content()
     checkpoint_path = CHECKPOINTS_DIR / f"checkpoint_{checkpoint_num:03d}.md"
+    diff_path = DIFFS_DIR / f"checkpoint_{checkpoint_num:03d}.diff"
+
+    # Always save the diff
+    if previous_content is not None:
+        generate_and_save_diff(
+            previous_content, current_content, diff_path, checkpoint_num
+        )
+    else:
+        # First checkpoint - diff from seed
+        generate_and_save_diff(
+            SEED_DOCUMENT, current_content, diff_path, checkpoint_num
+        )
+
+    # Always save full document (will be cleaned up later if not in last 3)
     doc_manager.save(checkpoint_path)
 
-    tokens = count_tokens(doc_manager.get_content())
-    log.debug(f"Saved checkpoint: {checkpoint_path} ({tokens} tokens)")
+    # Cleanup old full documents (keep last 3)
+    if checkpoint_num > 3:
+        old_checkpoint = CHECKPOINTS_DIR / f"checkpoint_{checkpoint_num - 3:03d}.md"
+        if old_checkpoint.exists():
+            old_checkpoint.unlink()
+            log.debug(f"Deleted old checkpoint: {old_checkpoint}")
+
+    tokens = count_tokens(current_content)
+    log.debug(f"Saved checkpoint {checkpoint_num}: {checkpoint_path} ({tokens} tokens)")
+
+    return current_content
 
 
 def main() -> None:
@@ -737,6 +827,7 @@ def main() -> None:
     configure_lm()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
+    DIFFS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Save seed document
     seed_path = OUTPUT_DIR / "seed_document.md"
@@ -768,6 +859,7 @@ def main() -> None:
     # Process each issue
     successful_count = 0
     total_issues = len(scenes_by_issue)
+    previous_content = None  # Track previous version for diffs
 
     with open(log_path, "w", encoding="utf-8") as log_file:
         with PROGRESS as progress:
@@ -791,8 +883,10 @@ def main() -> None:
                 if success:
                     successful_count += 1
 
-                # Save checkpoint with sequential number
-                save_checkpoint(doc_manager, i)
+                # Save checkpoint with diff and update previous_content
+                previous_content = save_checkpoint_with_diff(
+                    doc_manager, i, previous_content
+                )
 
                 # Log entry with issue information
                 log_entry = {
