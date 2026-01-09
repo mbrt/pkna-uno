@@ -197,6 +197,7 @@ class ConversationHistory:
         self.model_name = model_name
         self.start_time = datetime.now(timezone.utc)
         self.messages: list[dict[str, str]] = []
+        self.annotation: str | None = None
 
     def add_user_message(self, content: str) -> None:
         """Add a user message to the history."""
@@ -218,6 +219,14 @@ class ConversationHistory:
             }
         )
 
+    def set_annotation(self, annotation: str) -> None:
+        """Set annotation/notes for this conversation.
+
+        Args:
+            annotation: User's notes about the conversation quality
+        """
+        self.annotation = annotation.strip() if annotation else None
+
     def save(self, output_dir: Path) -> Path:
         """Save conversation history to a JSON file.
 
@@ -233,15 +242,21 @@ class ConversationHistory:
         output_path = output_dir / filename
 
         # Prepare data
+        metadata = {
+            "character": self.character_name,
+            "profile_path": self.profile_path,
+            "model": self.model_name,
+            "timestamp_start": self.start_time.isoformat(),
+            "timestamp_end": end_time.isoformat(),
+            "message_count": len(self.messages),
+        }
+
+        # Add annotation if present
+        if self.annotation:
+            metadata["annotation"] = self.annotation
+
         data = {
-            "metadata": {
-                "character": self.character_name,
-                "profile_path": self.profile_path,
-                "model": self.model_name,
-                "timestamp_start": self.start_time.isoformat(),
-                "timestamp_end": end_time.isoformat(),
-                "message_count": len(self.messages),
-            },
+            "metadata": metadata,
             "messages": self.messages,
         }
 
@@ -250,6 +265,44 @@ class ConversationHistory:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
         return output_path
+
+
+def collect_annotation(history: ConversationHistory) -> None:
+    """Prompt user to add annotations to the conversation.
+
+    Args:
+        history: Conversation history to annotate
+    """
+    console.print()
+    console.print("[bold cyan]Conversation Annotation[/bold cyan]")
+    console.print(
+        "[dim]Add notes about this conversation (quality, hallucinations, issues, etc.)[/dim]"
+    )
+    console.print("[dim]Press Enter on empty line to finish, or Ctrl+C to skip[/dim]")
+    console.print()
+
+    try:
+        lines = []
+        while True:
+            try:
+                line = console.input("[dim]>[/dim] ")
+                if not line:
+                    # Empty line - finish input
+                    break
+                lines.append(line)
+            except EOFError:
+                # Ctrl+D - finish input
+                break
+
+        if lines:
+            annotation = "\n".join(lines)
+            history.set_annotation(annotation)
+            console.print("[green]✓ Annotation saved[/green]")
+        else:
+            console.print("[dim]No annotation added[/dim]")
+
+    except KeyboardInterrupt:
+        console.print("\n[dim]Annotation skipped[/dim]")
 
 
 def run_test_questions(
@@ -326,6 +379,9 @@ def run_test_questions(
             history.messages.pop()
 
     console.print("[bold green]✓ Test completed[/bold green]\n")
+
+    # Collect annotation after test
+    collect_annotation(history)
 
 
 def chat_loop(
@@ -423,6 +479,10 @@ def chat_loop(
     except KeyboardInterrupt:
         # Ctrl+C - graceful exit
         console.print("\n")
+
+    # Collect annotation after chat
+    if history.messages:
+        collect_annotation(history)
 
 
 # Predefined test questions for non-interactive mode

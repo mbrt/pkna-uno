@@ -87,6 +87,14 @@ Interactive chat using the generated profile.
 **Input**: `output/character-profile/uno/v3/uno_profile_tier1.md` (default)
 **Output**: `output/test-conversations/*.json`
 
+**Conversation annotations**: After each conversation (interactive or test), you'll be prompted to add notes about:
+- Quality issues or hallucinations observed
+- Character consistency
+- Specific problems or successes
+- Any other observations
+
+Annotations are saved in the conversation JSON under `metadata.annotation`.
+
 ## Character Profile Optimization
 
 ### The Problem
@@ -426,6 +434,29 @@ A good test run should show:
 - ✅ Character-consistent personality (sarcastic, witty, protective)
 - ✅ Proper Italian expression usage
 - ✅ Inline translations for English conversations
+
+### Tracking Quality with Annotations
+
+After each conversation, you'll be prompted to add notes:
+
+```
+Conversation Annotation
+Add notes about this conversation (quality, hallucinations, issues, etc.)
+Press Enter on empty line to finish, or Ctrl+C to skip
+
+> Good character consistency
+> Properly said "Non lo so" for Highclean
+> One minor hallucination about physical appearance
+>
+```
+
+**Example annotations**:
+- "Hallucinated company name 'XYZ Corp'"
+- "Perfect character consistency, no issues"
+- "Over-elaborate response on question 3"
+- "Mixed English in Italian conversation"
+
+Annotations are saved in the JSON metadata for easy tracking of quality improvements across versions.
 
 ## Project Structure
 

@@ -176,7 +176,10 @@ streamlit run review-extract-eval.py
   - Character consistency rules
 - Supports interactive chat or automated testing
 - Tiered profile loading (core/extended/full)
-- Output: `output/test-conversations/` (JSON conversation logs)
+- **Conversation annotations**: Prompts for quality notes after each session
+  - Track hallucinations, character consistency, issues
+  - Saved in JSON metadata for quality tracking over time
+- Output: `output/test-conversations/` (JSON conversation logs with annotations)
 
 ### Data Flow
 
