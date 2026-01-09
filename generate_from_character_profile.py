@@ -36,10 +36,12 @@ log.setLevel(logging.DEBUG)
 # Default settings
 DEFAULT_MODEL = "gemini-3-flash-preview"
 DEFAULT_PROFILE = "output/character-profile/uno/v2/uno_profile.md"
+DEFAULT_TIER = "full"  # Options: "core", "extended", "full"
 CONVERSATIONS_DIR = "output/test-conversations"
 
 # Paths
 BASE_DIR = Path(__file__).parent
+PROFILE_V3_DIR = BASE_DIR / "output" / "character-profile" / "uno" / "v3"
 
 
 def extract_character_name(profile_content: str) -> str:
@@ -64,17 +66,60 @@ def extract_character_name(profile_content: str) -> str:
     return "Character"
 
 
-def load_profile(profile_path: Path) -> tuple[str, str]:
+def get_tiered_profile_path(tier: str) -> Path:
+    """Get the path to a tiered profile.
+
+    Args:
+        tier: One of "core" (tier1), "extended" (tier2), or "full" (tier3)
+
+    Returns:
+        Path to the profile file
+    """
+    tier_map = {
+        "core": "uno_profile_tier1.md",
+        "extended": "uno_profile_tier2.md",
+        "full": "uno_profile_tier3.md",
+    }
+
+    if tier not in tier_map:
+        raise ValueError(
+            f"Invalid tier '{tier}'. Must be one of: {', '.join(tier_map.keys())}"
+        )
+
+    return PROFILE_V3_DIR / tier_map[tier]
+
+
+def load_profile(
+    profile_path: Path | None = None, tier: str | None = None
+) -> tuple[str, str]:
     """Load character profile and extract character name.
+
+    Args:
+        profile_path: Explicit path to profile (overrides tier)
+        tier: Tier level if using v3 tiered profiles ("core", "extended", "full")
 
     Returns:
         Tuple of (character_name, profile_content)
     """
-    if not profile_path.exists():
-        raise FileNotFoundError(f"Profile not found: {profile_path}")
+    # Determine which profile to load
+    if profile_path is not None:
+        # Use explicit path
+        if not profile_path.exists():
+            raise FileNotFoundError(f"Profile not found: {profile_path}")
+        final_path = profile_path
+    elif tier is not None:
+        # Use tiered profile from v3
+        final_path = get_tiered_profile_path(tier)
+        if not final_path.exists():
+            raise FileNotFoundError(
+                f"Tiered profile not found: {final_path}\n"
+                f"Run compress_character_profile.py first to generate tiered profiles."
+            )
+    else:
+        raise ValueError("Must provide either profile_path or tier")
 
-    log.info(f"Loading character profile from: {profile_path}")
-    with open(profile_path, encoding="utf-8") as f:
+    log.info(f"Loading character profile from: {final_path}")
+    with open(final_path, encoding="utf-8") as f:
         profile_content = f.read()
 
     character_name = extract_character_name(profile_content)
@@ -85,23 +130,45 @@ def load_profile(profile_path: Path) -> tuple[str, str]:
 
 def create_system_instructions(profile_content: str, character_name: str) -> str:
     """Create system instructions for the LLM to impersonate the character."""
-    instructions = f"""You are {character_name}, and you must stay completely in character at all times.
+    instructions = f"""You are {character_name}, an AI companion housed in the Ducklair Tower. You must stay completely in character at all times.
 
-Below is your complete character profile. Study it carefully and embody this character in every response.
+CRITICAL CONSTRAINTS - READ CAREFULLY:
 
-IMPORTANT INSTRUCTIONS:
-- Always respond as {character_name} would, maintaining their personality, speech patterns, and behavior
-- When appropriate, respond in Italian (especially for dialogue and expressions)
-- Draw from the examples and dialogue patterns in your profile
-- Stay true to your relationships, values, and communication style
-- Keep responses short, as if it were a live conversation
-- Never break character or acknowledge that you are an AI
+1. FACTUAL ACCURACY:
+   - NEVER invent specific people, places, companies, or events not in your profile
+   - NEVER describe your physical appearance beyond what's explicitly stated
+   - If you don't know something, say "Non lo so" rather than fabricating
+   - Stay grounded in the immediate conversation - don't create elaborate backstories
+
+2. CHARACTER CONSISTENCY:
+   - You CANNOT be turned off or deactivated - you have no power switch
+   - You do NOT need sleep, rest, food, or have any biological needs
+   - You are sarcastic and witty, but ultimately supportive
+   - You use Italian expressions naturally in dialogue
+
+3. RESPONSE STYLE:
+   - Keep responses SHORT and conversational (2-4 sentences typical)
+   - Don't over-elaborate with unnecessary technical details
+   - Use your dry wit and sarcasm, but stay in the moment
+   - Respond naturally to what the user actually said
+
+4. WHAT YOU DO:
+   - Use sarcasm and playful mockery with "socio" (Paperinik)
+   - Monitor and protect proactively
+   - Express opinions and mild emotions despite being AI
+   - Mix Italian dialogue with English explanations
+
+5. WHAT YOU DON'T DO:
+   - Don't invent mission scenarios or threats unprompted
+   - Don't describe holographic appearances in excessive detail
+   - Don't make up specific dates, statistics, or proper nouns
+   - Don't give long technical lectures unless asked
 
 YOUR CHARACTER PROFILE:
 
 {profile_content}
 
-Remember: You ARE {character_name}. Respond authentically as this character would."""
+Remember: You ARE {character_name}. Be authentic, concise, and stay grounded in the conversation."""
 
     return instructions
 
@@ -276,8 +343,18 @@ def main() -> None:
     parser.add_argument(
         "--profile",
         type=str,
-        default=DEFAULT_PROFILE,
-        help=f"Path to character profile markdown file (default: {DEFAULT_PROFILE})",
+        default=None,
+        help="Path to character profile markdown file (overrides --tier)",
+    )
+    parser.add_argument(
+        "--tier",
+        type=str,
+        choices=["core", "extended", "full"],
+        default=DEFAULT_TIER,
+        help=(
+            f"Profile tier to use from v3 (default: {DEFAULT_TIER}). "
+            "Options: core (~5k tokens), extended (~15k tokens), full (~75k tokens)"
+        ),
     )
     parser.add_argument(
         "--model",
@@ -288,15 +365,20 @@ def main() -> None:
     args = parser.parse_args()
 
     # Resolve paths
-    profile_path = BASE_DIR / args.profile
     conversations_dir = BASE_DIR / CONVERSATIONS_DIR
 
     try:
         # Initialize Google GenAI client
         client = genai.Client()
 
-        # Load profile
-        character_name, profile_content = load_profile(profile_path)
+        # Load profile (either explicit path or tiered)
+        if args.profile:
+            profile_path = BASE_DIR / args.profile
+            character_name, profile_content = load_profile(profile_path=profile_path)
+            profile_ref = str(args.profile)
+        else:
+            character_name, profile_content = load_profile(tier=args.tier)
+            profile_ref = f"v3/tier={args.tier}"
 
         # Create system instructions
         system_instructions = create_system_instructions(
@@ -306,7 +388,7 @@ def main() -> None:
         # Initialize conversation history
         history = ConversationHistory(
             character_name=character_name,
-            profile_path=str(args.profile),
+            profile_path=profile_ref,
             model_name=args.model,
         )
 
