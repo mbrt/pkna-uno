@@ -3,12 +3,13 @@ unsloth_compiled_cache
 llama.cpp
 
 # generated and input
-/input
-/output
+/input/
+/output/
 
 # Backup files
 pkna-llm-backup.tar*
 input-files.txt
+/tmp/
 
 # Python-generated files
 __pycache__/

@@ -4,13 +4,13 @@
 Build a condensed character profile directly from scenes without intermediate bloat.
 
 This script processes scenes grouped by issue and uses DSPy to extract generalized
-patterns rather than scene-by-scene details. The result is a compact ~2k token
-profile similar to Tier 2 quality, without needing a separate compression step.
+patterns rather than scene-by-scene details. The result is a compact ~7k token
+profile, without needing a separate compression step.
 
 Key differences from build_character_profile.py:
 - Groups scenes by issue (~50 batches instead of ~hundreds of individual scenes)
 - Extracts patterns and generalizations, not granular details
-- Maintains size constraints throughout (targets ~2k tokens)
+- Maintains size constraints throughout (targets ~7k tokens)
 - Single script (no separate compression needed)
 - Uses simple search-and-replace edits instead of complex hierarchical editing
 """
@@ -44,14 +44,14 @@ log = logging.getLogger(__name__)
 # Settings
 MODEL_NAME = "vertex_ai/gemini-3-flash-preview"
 CHARACTER_NAME = "Uno"
-TARGET_MAX_TOKENS = 2000  # Tier 2 target
+TARGET_MAX_TOKENS = 7000  # Target profile size
 ENCODING_NAME = "cl100k_base"  # GPT-4 tokenizer as approximation
 MAX_RETRIES = 3
 
 # Paths
 BASE_DIR = Path(__file__).parent
 INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
-OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / "v4"
+OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / "v5"
 CHECKPOINTS_DIR = OUTPUT_DIR / "checkpoints"
 
 # Global progress bar
@@ -85,29 +85,114 @@ def count_tokens(text: str) -> int:
     return len(encoding.encode(text))
 
 
-# Condensed seed document with Behavioral Guidelines structure
-CONDENSED_SEED_DOCUMENT = """# Uno - Character Profile
+# ============================================================================
+# Profile Structure Definition (Single Source of Truth)
+# ============================================================================
 
-## Essential Identity
-To be developed based on observed core facts and constraints.
 
-## Core Personality
-To be developed with 15-25 most distinctive traits.
+@dataclass
+class SectionDefinition:
+    """Definition of a profile section."""
 
-## Communication Style
-To be developed with speech patterns, linguistic markers, and visual interface details.
+    header: str  # Full header with markdown symbols (e.g., "## Essential Identity")
+    placeholder: str  # Initial placeholder content
+    purpose: str  # What should go in this section (used in DSPy instructions)
+    is_subsection: bool = False  # True for ### subsections
 
-## Behavioral Guidelines
 
-### What Uno Does
-To be developed with characteristic behaviors and capabilities.
+# Define profile structure - this is the ONLY place to edit section structure
+PROFILE_STRUCTURE = [
+    SectionDefinition(
+        header="# Uno - Character Profile",
+        placeholder="",
+        purpose="Main document title",
+    ),
+    SectionDefinition(
+        header="## Essential Identity",
+        placeholder="To be developed based on observed core facts and constraints.",
+        purpose="Core facts: what Uno is (AI, not biological), physical constraints (no off switch, power source), origin (created by Everett), capabilities that define identity",
+    ),
+    SectionDefinition(
+        header="## Core Personality",
+        placeholder="To be developed with 30-40 most distinctive traits.",
+        purpose="30-40 distinctive personality traits. Format: **Trait Name:** Description with examples. Focus on patterns, not individual scenes.",
+    ),
+    SectionDefinition(
+        header="## Communication Style",
+        placeholder="To be developed with speech patterns, linguistic markers, and visual interface details.",
+        purpose="How Uno communicates: visual interface (hologram colors), speech patterns (calls PK 'socio'), linguistic markers, Italian expressions, tone shifts",
+    ),
+    SectionDefinition(
+        header="## Behavioral Guidelines",
+        placeholder="",
+        purpose="Section containing What Uno Does and What Uno Doesn't Do subsections",
+    ),
+    SectionDefinition(
+        header="### What Uno Does",
+        placeholder="To be developed with characteristic behaviors and capabilities.",
+        purpose="Characteristic behaviors and capabilities. Bullet list format. Actions Uno regularly takes.",
+        is_subsection=True,
+    ),
+    SectionDefinition(
+        header="### What Uno Doesn't Do",
+        placeholder="To be developed with explicit constraints and limitations.",
+        purpose="Explicit constraints and limitations. Bullet list format. Things Uno cannot or will not do.",
+        is_subsection=True,
+    ),
+    SectionDefinition(
+        header="## Key Relationships",
+        placeholder="To be developed for major characters (Paperinik, Everett, Due, Lyla, etc.).",
+        purpose="Relationship dynamics with key characters. Can add subsections like '### With Paperinik' for major relationships. Describe interaction patterns.",
+    ),
+]
 
-### What Uno Doesn't Do
-To be developed with explicit constraints and limitations.
 
-## Key Relationships
-To be developed for major characters (Paperinik, Everett, Due, Lyla, etc.).
-"""
+def generate_seed_document() -> str:
+    """Generate seed document from structure definition.
+
+    This ensures the seed document always matches the defined structure.
+    """
+    parts = []
+    for section in PROFILE_STRUCTURE:
+        parts.append(section.header)
+        if section.placeholder:
+            parts.append("")
+            parts.append(section.placeholder)
+        parts.append("")
+
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def get_required_sections() -> list[str]:
+    """Get list of required section headers for validation.
+
+    Returns:
+        List of all section headers that must be present
+    """
+    return [section.header for section in PROFILE_STRUCTURE]
+
+
+def get_structure_description() -> str:
+    """Generate structure description for DSPy prompt.
+
+    Returns:
+        Formatted structure description with purposes
+    """
+    lines = ["The document MUST keep this exact structure:"]
+    for section in PROFILE_STRUCTURE:
+        if section.header.startswith("#"):
+            indent = "  " * (section.header.count("#") - 1)
+            marker = "* " if not section.is_subsection else "- "
+            lines.append(f"{indent}{marker}{section.header}")
+            if section.purpose and section.purpose != "Main document title":
+                purpose_indent = indent + "  "
+                lines.append(f"{purpose_indent}Purpose: {section.purpose}")
+    return "\n".join(lines)
+
+
+# Generate seed document and validation list from structure
+SEED_DOCUMENT = generate_seed_document()
+REQUIRED_SECTIONS = get_required_sections()
 
 
 # ============================================================================
@@ -223,94 +308,120 @@ class ProfileEdit(BaseModel):
             "Can be a full section like 'To be developed...' or specific text to update."
         )
     )
-    replace_text: str = Field(
-        description="New text to replace the search_text with"
-    )
-    reason: str = Field(
-        description="Brief explanation of why this edit is being made"
-    )
+    replace_text: str = Field(description="New text to replace the search_text with")
+    reason: str = Field(description="Brief explanation of why this edit is being made")
 
 
-class CondensedProfileUpdater(dspy.Signature):
-    """Update condensed character profile with new insights using search-and-replace.
+def create_profile_updater_signature() -> type[dspy.Signature]:
+    """Create CondensedProfileUpdater signature with structure description injected.
+
+    Returns:
+        Dynamically created signature class with current structure
+    """
+    structure_desc = get_structure_description()
+
+    # Build docstring with structure injected
+    docstring = f"""Update condensed character profile with new insights using search-and-replace.
 
     CRITICAL INSTRUCTIONS:
 
-    1. EDITING APPROACH - SEARCH AND REPLACE:
+    1. STRUCTURE PRESERVATION (MOST CRITICAL):
+       - NEVER change section headers (##) or subsection headers (###)
+       - NEVER add new top-level sections
+       - NEVER merge or rename existing sections
+       - ONLY replace content WITHIN existing sections
+
+       {structure_desc}
+
+    2. EDITING APPROACH - SEARCH AND REPLACE:
        - Find exact text in the current document
        - Replace it with updated/enhanced text
        - Each search_text must be UNIQUE in the document
        - Use multi-line text blocks for section replacements
 
-    2. SIZE MANAGEMENT (MOST IMPORTANT):
-       - Current document is {current_token_count} tokens
-       - Target max: {target_max_tokens} tokens
+    3. SIZE MANAGEMENT:
+       - Current document is {{current_token_count}} tokens
+       - Target max: {{target_max_tokens}} tokens
        - If approaching target, CONSOLIDATE:
          * Replace multiple similar traits with one generalized statement
          * Remove weaker examples, keep only the best
-         * Merge redundant sections
+         * Merge redundant content WITHIN sections (not across)
 
-    3. WHAT TO EDIT:
+    4. WHAT TO EDIT:
        - Replace "To be developed..." placeholders with actual content
-       - Add new traits to existing sections (replace the whole section)
+       - Add new traits to existing sections (replace section content)
        - Update sections to add new insights
        - Consolidate redundant content
 
-    4. EDIT EXAMPLES:
+    5. EDIT EXAMPLES:
 
-       Example 1 - Replace placeholder:
+       Example 1 - Replace placeholder (preserves section header):
        search_text: "To be developed based on observed core facts and constraints."
-       replace_text: "Uno is an artificial intelligence housed in Ducklair Tower..."
+       replace_text: "Uno is an artificial intelligence housed in Ducklair Tower. He has no off switch and is powered by ergogeo-dynamic flows from Earth's crust."
 
-       Example 2 - Add to existing section:
-       search_text: "**Protective Caretaker:** Acts as a guardian for Paperinik."
-       replace_text: "**Protective Caretaker:** Acts as a guardian for Paperinik.\\n**Sharp Sarcasm:** Uses dry wit to deflate egos."
+       Example 2 - Add to existing content (preserves section header):
+       search_text: "**Protective:** Acts as a guardian for Paperinik."
+       replace_text: "**Protective:** Acts as a guardian for Paperinik.\\n**Sarcastic:** Uses dry wit to deflate egos."
 
-       Example 3 - Consolidate traits:
-       search_text: "**Trait A:** Description.\\n**Trait B:** Similar description.\\n**Trait C:** Also similar."
-       replace_text: "**General Pattern:** Consolidated description covering A, B, and C."
+       Example 3 - Update subsection content (preserves subsection header):
+       search_text: "To be developed with characteristic behaviors and capabilities."
+       replace_text: "Monitors city-wide communications proactively\\nRestructures tower architecture at will\\nCreates personality backups as failsafes"
 
-    5. QUALITY OVER QUANTITY:
+       FORBIDDEN - DO NOT DO THIS:
+       search_text: "## Essential Identity"
+       replace_text: "## Essential Identity & Personality"  # NEVER change headers!
+
+    6. QUALITY OVER QUANTITY:
        - Add insights ONLY if they're truly new and distinctive
-       - Better to have 15 well-defined traits than 30 vague ones
+       - Better to have 30 well-defined traits than 50 vague ones
        - Each edit should meaningfully improve the profile
 
-    6. LANGUAGE:
+    7. LANGUAGE:
        - Write all descriptions in English
        - Preserve Italian dialogue examples with English translations in parentheses
     """
 
-    current_profile: str = dspy.InputField(desc="Current condensed profile content")
-    current_token_count: int = dspy.InputField(desc="Current profile size in tokens")
-    target_max_tokens: int = dspy.InputField(
-        desc="Target maximum tokens (typically 2000)"
-    )
-    issue_id: str = dspy.InputField(desc="Issue being processed")
-    personality_patterns: list[str] = dspy.InputField(
-        desc="New personality patterns from IssueInsightExtractor"
-    )
-    communication_patterns: list[str] = dspy.InputField(
-        desc="New communication patterns"
-    )
-    behavioral_patterns: list[str] = dspy.InputField(desc="New behavioral patterns")
-    relationship_insights: dict[str, str] = dspy.InputField(
-        desc="New relationship insights"
-    )
-    best_dialogue_examples: list[dict] = dspy.InputField(
-        desc="Best dialogue examples from issue"
-    )
-    capabilities_shown: list[str] = dspy.InputField(desc="Capabilities demonstrated")
-
-    edits: list[ProfileEdit] = dspy.OutputField(
-        desc=(
-            "List of search-and-replace edits to apply. "
-            "Each search_text must be unique in the document. "
-            "Empty list if no updates needed."
+    class CondensedProfileUpdater(dspy.Signature):
+        current_profile: str = dspy.InputField(desc="Current condensed profile content")
+        current_token_count: int = dspy.InputField(
+            desc="Current profile size in tokens"
         )
-    )
-    insights_summary: str = dspy.OutputField(
-        desc="Brief summary of what was added/updated/consolidated"
-    )
+        target_max_tokens: int = dspy.InputField(
+            desc="Target maximum tokens (typically 7000)"
+        )
+        issue_id: str = dspy.InputField(desc="Issue being processed")
+        personality_patterns: list[str] = dspy.InputField(
+            desc="New personality patterns from IssueInsightExtractor"
+        )
+        communication_patterns: list[str] = dspy.InputField(
+            desc="New communication patterns"
+        )
+        behavioral_patterns: list[str] = dspy.InputField(desc="New behavioral patterns")
+        relationship_insights: dict[str, str] = dspy.InputField(
+            desc="New relationship insights"
+        )
+        best_dialogue_examples: list[dict] = dspy.InputField(
+            desc="Best dialogue examples from issue"
+        )
+        capabilities_shown: list[str] = dspy.InputField(
+            desc="Capabilities demonstrated"
+        )
+
+        edits: list[ProfileEdit] = dspy.OutputField(
+            desc=(
+                "List of search-and-replace edits to apply. "
+                "Each search_text must be unique in the document. "
+                "Empty list if no updates needed."
+            )
+        )
+        insights_summary: str = dspy.OutputField(
+            desc="Brief summary of what was added/updated/consolidated"
+        )
+
+    # Assign the dynamically generated docstring
+    CondensedProfileUpdater.__doc__ = docstring
+
+    return CondensedProfileUpdater
 
 
 # ============================================================================
@@ -324,12 +435,18 @@ class SimpleDocumentManager:
     def __init__(self, initial_content: str):
         self._content = initial_content
 
+    def _validate_structure(self) -> bool:
+        """Validate that document structure matches required sections."""
+        for section in REQUIRED_SECTIONS:
+            if section not in self._content:
+                log.error(f"Structure validation failed: Missing section '{section}'")
+                return False
+        return True
+
     def apply_edit(self, edit: ProfileEdit) -> bool:
         """Apply a search-and-replace edit. Returns True if successful."""
         if edit.search_text not in self._content:
-            log.warning(
-                f"Search text not found: '{edit.search_text[:100]}...'"
-            )
+            log.warning(f"Search text not found: '{edit.search_text[:100]}...'")
             return False
 
         # Count occurrences to ensure uniqueness
@@ -340,8 +457,20 @@ class SimpleDocumentManager:
             )
             return False
 
+        # Save old content for rollback
+        old_content = self._content
+
         # Apply replacement
         self._content = self._content.replace(edit.search_text, edit.replace_text)
+
+        # Validate structure after edit
+        if not self._validate_structure():
+            log.error(
+                f"Edit broke document structure, rolling back: {edit.reason[:100]}"
+            )
+            self._content = old_content
+            return False
+
         log.debug(f"Applied edit: {edit.reason}")
         return True
 
@@ -586,9 +715,14 @@ def update_profile_with_retry(
     return False, "Max retries exceeded"
 
 
-def save_checkpoint(doc_manager: SimpleDocumentManager, issue_id: str) -> None:
-    """Save checkpoint after processing an issue."""
-    checkpoint_path = CHECKPOINTS_DIR / f"{issue_id}.md"
+def save_checkpoint(doc_manager: SimpleDocumentManager, checkpoint_num: int) -> None:
+    """Save checkpoint after processing an issue.
+
+    Args:
+        doc_manager: Document manager with current state
+        checkpoint_num: Sequential checkpoint number (1, 2, 3, ...)
+    """
+    checkpoint_path = CHECKPOINTS_DIR / f"checkpoint_{checkpoint_num:03d}.md"
     doc_manager.save(checkpoint_path)
 
     tokens = count_tokens(doc_manager.get_content())
@@ -607,15 +741,18 @@ def main() -> None:
     # Save seed document
     seed_path = OUTPUT_DIR / "seed_document.md"
     with open(seed_path, "w", encoding="utf-8") as f:
-        f.write(CONDENSED_SEED_DOCUMENT)
+        f.write(SEED_DOCUMENT)
     log.info(f"Saved seed document to {seed_path}")
 
     # Initialize document manager
-    doc_manager = SimpleDocumentManager(CONDENSED_SEED_DOCUMENT)
+    doc_manager = SimpleDocumentManager(SEED_DOCUMENT)
 
     # Initialize DSPy modules
     log.info("Initializing DSPy modules...")
     insight_extractor = dspy.ChainOfThought(IssueInsightExtractor)
+
+    # Create profile updater with structure description injected
+    CondensedProfileUpdater = create_profile_updater_signature()
     profile_updater = dspy.ChainOfThought(CondensedProfileUpdater)
 
     # Collect scenes grouped by issue
@@ -654,13 +791,13 @@ def main() -> None:
                 if success:
                     successful_count += 1
 
-                # Save checkpoint
-                save_checkpoint(doc_manager, issue_id)
+                # Save checkpoint with sequential number
+                save_checkpoint(doc_manager, i)
 
-                # Log entry
+                # Log entry with issue information
                 log_entry = {
+                    "checkpoint": i,
                     "issue": issue_id,
-                    "issue_number": i,
                     "scene_count": len(scenes),
                     "success": success,
                     "summary": summary,
@@ -685,7 +822,7 @@ def main() -> None:
     console.print()
     console.print(f"[bold]Final profile:[/bold] {final_path}")
     console.print(f"  Size: {final_tokens:,} tokens (~{final_words:,} words)")
-    console.print(f"  Target: {TARGET_MAX_TOKENS:,} tokens (Tier 2)")
+    console.print(f"  Target: {TARGET_MAX_TOKENS:,} tokens")
     if final_tokens <= TARGET_MAX_TOKENS:
         console.print("  [green]✓ Within target[/green]")
     else:
@@ -694,17 +831,6 @@ def main() -> None:
 
     console.print(f"\nProcessing log: {log_path}")
     console.print(f"Checkpoints: {CHECKPOINTS_DIR}/")
-    console.print()
-    console.print("[dim]Next steps:[/dim]")
-    console.print(
-        "[dim]1. Review profile: cat output/character-profile/uno/v4/uno_profile.md[/dim]"
-    )
-    console.print(
-        "[dim]2. Test quality: ./generate_from_character_profile.py --tier v4[/dim]"
-    )
-    console.print(
-        "[dim]3. Compare to Tier 2: diff output/character-profile/uno/v3/uno_profile_tier2.md output/character-profile/uno/v4/uno_profile.md[/dim]"
-    )
 
 
 if __name__ == "__main__":
