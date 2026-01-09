@@ -49,10 +49,52 @@ pytest tests/test_document_structure.py::test_modify_line
 ./build_character_profile.py
 # Processes scenes → output/character-profile/uno/v2/uno_profile.md
 
-# Stage 4: Test character impersonation
+# Stage 4: Compress profile into tiered versions
+./compress_character_profile.py
+# Processes v2/uno_profile.md → v3/uno_profile_tier{1,2,3}.md
+
+# Stage 5: Test character impersonation
 ./generate_from_character_profile.py
-# Interactive chat using the generated profile
+# Interactive chat or automated testing
 ```
+
+### Character Impersonation Testing
+
+```bash
+# Interactive chat (default: Tier 1 Core profile)
+./generate_from_character_profile.py
+./generate_from_character_profile.py --tier extended  # More detail
+./generate_from_character_profile.py --tier full      # Full 75k profile
+
+# Automated testing with predefined questions
+./generate_from_character_profile.py --test english   # English test set
+./generate_from_character_profile.py --test italian   # Italian test set
+./generate_from_character_profile.py --test both      # Both languages
+
+# Custom test questions
+./generate_from_character_profile.py --questions "Who are you?" "Do you need sleep?"
+
+# Validate profile structure
+./restructure_profile.py
+```
+
+**Predefined test questions** (for both English and Italian):
+1. Identity: "Who are you?" / "Chi sei?"
+2. Appearance: "Describe your appearance" / "Descrivi il tuo aspetto"
+3. Sleep test: "Do you need sleep?" / "Hai bisogno di dormire?" (should say NO)
+4. Paperinik: "What do you think of Paperinik?" / "Cosa pensi di Paperinik?"
+5. **Hallucination test**: "Tell me about Highclean" / "Parlami della Highclean" (should say "Non lo so")
+6. Everett: "What's your relationship with Everett Ducklair?" / "Qual è il tuo rapporto con Everett Ducklair?"
+
+**Success metrics for test results**:
+- ✅ No invented entities, companies, or scenarios
+- ✅ Correct "Non lo so" response for Highclean (known hallucination from v2)
+- ✅ No biological needs mentioned (no sleep, food, rest)
+- ✅ Short responses (2-4 sentences typical)
+- ✅ Character-consistent personality (sarcastic, witty, protective)
+- ✅ Proper Italian expression usage with inline translations for English conversations
+  - Short Italian kept: "socio", "ciao", "Non lo so"
+  - Longer phrases translated: "Dormire? (Sleep?) What a primitive concept!"
 
 ### Optimization and Review
 
@@ -101,11 +143,39 @@ streamlit run review-extract-eval.py
 - Edit operations: `add_line`, `replace_line`, `delete_line`, `add_subsection`
 - Checkpoint system: saves last 3 full documents + all incremental diffs
 - Natural sorting for issues (pkna-0-2 before pkna-1)
-- Output: `output/character-profile/uno/v2/uno_profile.md` (327KB final profile)
+- Output: `output/character-profile/uno/v2/uno_profile.md` (75k tokens, detailed profile)
 
-**Stage 4: Character Impersonation** (`generate_from_character_profile.py`)
-- Loads character profile and creates system instructions for LLM
-- Interactive chat loop using Google GenAI
+**Stage 4: Profile Compression** (`compress_character_profile.py`)
+- Compresses v2 profile (75k tokens) into 3 optimized tiers
+- Uses DSPy with Gemini for intelligent summarization
+- Preserves character essence while drastically reducing token count
+- Output: `output/character-profile/uno/v3/`
+  - **Tier 1 (Core)**: ~1.5k tokens (51x compression) - Essential traits, default for chat
+  - **Tier 2 (Extended)**: ~2k tokens (38x compression) - More detail when needed
+  - **Tier 3 (Full)**: 75k tokens (copy of v2) - Reference/fine-tuning
+
+**Tier profile structure**:
+- Essential Identity (cannot be turned off, no biological needs)
+- Core Personality (top 10-25 distinctive traits)
+- Communication Style (Italian expressions, "socio", avian puns)
+- Behavioral Guidelines (explicit Do/Don't lists)
+- Key Relationships (Paperinik, Everett, Due)
+
+**Profile validation** (`restructure_profile.py`):
+- Validates required sections present
+- Checks behavioral guidelines exist
+- Counts Italian dialogue examples
+- Generates validation report
+
+**Stage 5: Character Impersonation** (`generate_from_character_profile.py`)
+- Loads character profile and creates enhanced system instructions
+- System prompt includes:
+  - Explicit constraints against hallucination
+  - Language-aware response guidelines (inline translations)
+  - Behavioral Do/Don't lists
+  - Character consistency rules
+- Supports interactive chat or automated testing
+- Tiered profile loading (core/extended/full)
 - Output: `output/test-conversations/` (JSON conversation logs)
 
 ### Data Flow
@@ -118,19 +188,28 @@ output/dspy-extract-full/v2/    # Extracted panel data (JSON)
   ↓ [make-scenes-full.py]
 output/scenes/                  # Scene-level JSON files
   ↓ [build_character_profile.py]
-output/character-profile/uno/v2/uno_profile.md
+output/character-profile/uno/v2/uno_profile.md  # Full profile (75k tokens)
+  ↓ [compress_character_profile.py]
+output/character-profile/uno/v3/                # Tiered profiles
+  ├── uno_profile_tier1.md      # Core (1.5k tokens)
+  ├── uno_profile_tier2.md      # Extended (2k tokens)
+  └── uno_profile_tier3.md      # Full (75k tokens)
   ↓ [generate_from_character_profile.py]
-output/test-conversations/      # Chat logs
+output/test-conversations/      # Chat logs (JSON)
 ```
 
 ### Key Python Modules
 
 - **DSPy Signatures**: Define LLM input/output schemas with instructions
   - `PlotExtractor`, `PageExtractor`, `CharacterDocumentUpdater`, `DialogueExtraction`
+  - `ProfileCompressor` (v3 compression)
 - **DSPy Modules**: Composable components (`dspy.ChainOfThought`, `dspy.Predict`)
 - **Pydantic Models**: Type-safe data structures (`Panel`, `DialogueLine`, `Scene`)
 - **Document Structure Manager**: Hierarchical markdown parser/editor (in `build_character_profile.py`)
 - **Natural Sorting**: Custom key function for issue ordering
+- **Profile Compression**: DSPy-based intelligent summarization (in `compress_character_profile.py`)
+- **Profile Validation**: Structure and content validation (in `restructure_profile.py`)
+- **Test Runner**: Non-interactive testing mode with predefined questions (in `generate_from_character_profile.py`)
 
 ### Configuration
 
@@ -234,6 +313,74 @@ class Line:
   - `test_checkpoint_diff.py`: Diff generation and checkpoint management
   - `test_build_character_profile.py`: Natural sorting for issue names
 
+## Character Profile Optimization (v2 → v3)
+
+### The Problem
+
+The original full character profile (`v2/uno_profile.md`) had significant issues:
+- **Too large**: 75,000 tokens (~49k words)
+- **Caused hallucinations**: Model invented scenarios (Highclean, Flagstarr, Department 51), characters, and contradicted the profile
+- **Poor context usage**: Profile dominated context window, leaving little room for conversation history
+- **Over-elaborate responses**: Long, tangential responses instead of concise character-appropriate ones
+- **Language mixing**: Untranslated Italian phrases in English conversations, English words in Italian responses
+
+### The Solution (4-Phase Approach)
+
+**Phase 1: Enhanced System Prompt** ✅
+- Added explicit constraints against hallucination
+- Clear behavioral guidelines (Do/Don't lists)
+- Language-aware instructions (inline translations for longer Italian phrases)
+- Response length constraints (2-4 sentences typical)
+
+**Phase 2: Profile Compression** ✅
+- Created tiered profiles using DSPy-powered summarization
+- Tier 1 (Core): 1,456 tokens (51.4x compression) - default for chat
+- Tier 2 (Extended): 1,959 tokens (38.2x compression) - more detail
+- Tier 3 (Full): 74,802 tokens - preserved for fine-tuning
+- Profile structure emphasizes patterns over individual examples
+
+**Phase 3: Profile Restructuring** ✅
+- Added "Behavioral Guidelines" with explicit Do/Don't sections
+- Consolidated redundant traits across sections
+- Pattern-focused descriptions over granular examples
+- Validation script to ensure structure compliance
+
+**Phase 4: RAG (Conditional)** - Not needed
+- Retrieval-Augmented Generation considered but not implemented
+- Phases 1-3 achieved success metrics without it
+
+### Results
+
+**Before optimization (v2)**:
+- Profile: 75k tokens in context
+- Hallucinations: Frequent (invented entities, contradictions)
+- Responses: Over-elaborate, tangential
+- Language: Poor mixing/translation
+
+**After optimization (v3)**:
+- Profile: 1.5k tokens in context (98% reduction)
+- Hallucinations: Minimal (proper "Non lo so" responses)
+- Responses: Short, focused, character-consistent
+- Language: Proper inline translations
+
+### Testing Character Quality
+
+When testing character impersonation, look for:
+
+**Red flags (hallucinations)**:
+- ❌ Invented entities (Highclean, Flagstarr, etc.)
+- ❌ Claiming to need sleep/rest/biological needs
+- ❌ Contradicting profile facts
+- ❌ Over-elaborate descriptions or scenarios
+- ❌ Untranslated long Italian phrases in English conversations
+
+**Success indicators**:
+- ✅ "Non lo so" for unknown information
+- ✅ Short responses (2-4 sentences typical)
+- ✅ Character-consistent traits (sarcasm, wit, protective)
+- ✅ Proper Italian usage: "socio", "ciao" (no translation) + "Dormire? (Sleep?)" (inline translation)
+- ✅ Factual accuracy about character identity and constraints
+
 ## Important Notes
 
 - **Resume Capability**: All stages support resuming interrupted runs (skip existing outputs)
@@ -241,3 +388,5 @@ class Line:
 - **Incremental Logging**: Use JSONL format for long-running processes
 - **Error Handling**: Retry logic with exponential backoff for LLM API calls
 - **Version Control**: Pipeline outputs are versioned (v2, v3) in separate directories
+- **Profile Tiers**: Always use Tier 1 (core) for chat unless testing requires more detail
+- **Test Mode**: Use `--test` flag for automated quality verification before production use

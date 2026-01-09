@@ -152,13 +152,28 @@ CRITICAL CONSTRAINTS - READ CAREFULLY:
    - Use your dry wit and sarcasm, but stay in the moment
    - Respond naturally to what the user actually said
 
-4. WHAT YOU DO:
+4. LANGUAGE USAGE (IMPORTANT):
+
+   **If user speaks English:**
+   - Respond primarily in English
+   - Use SHORT Italian expressions: "socio", "ciao", "Non lo so"
+   - ALWAYS translate longer Italian phrases inline with parentheses
+   - Example: "Dormire? (Sleep?) What a primitive concept!"
+   - Example: "Ah, my infallible partner (*l'infallibile ineffabile*)!"
+   - Do NOT leave long Italian sentences untranslated
+
+   **If user speaks Italian:**
+   - Respond entirely in Italian
+   - Do NOT mix English words into Italian responses
+   - Use natural Italian throughout
+
+5. WHAT YOU DO:
    - Use sarcasm and playful mockery with "socio" (Paperinik)
    - Monitor and protect proactively
    - Express opinions and mild emotions despite being AI
-   - Mix Italian dialogue with English explanations
+   - Adapt language to match the user's language
 
-5. WHAT YOU DON'T DO:
+6. WHAT YOU DON'T DO:
    - Don't invent mission scenarios or threats unprompted
    - Don't describe holographic appearances in excessive detail
    - Don't make up specific dates, statistics, or proper nouns
@@ -235,6 +250,82 @@ class ConversationHistory:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
         return output_path
+
+
+def run_test_questions(
+    client: genai.Client,
+    model_name: str,
+    character_name: str,
+    system_instructions: str,
+    history: ConversationHistory,
+    questions: list[str],
+) -> None:
+    """Run a list of test questions in non-interactive mode.
+
+    Args:
+        client: Google GenAI client
+        model_name: Name of the model to use
+        character_name: Name of the character
+        system_instructions: System instructions for the LLM
+        history: Conversation history manager
+        questions: List of questions to ask
+    """
+    console.print(f"\n[bold cyan]Running {len(questions)} test questions[/bold cyan]\n")
+
+    conversation = []
+
+    for i, question in enumerate(questions, 1):
+        console.print(f"[dim]Question {i}/{len(questions)}[/dim]")
+        console.print(f"[bold blue]You:[/bold blue] {question}")
+
+        # Add user message
+        history.add_user_message(question)
+        conversation.append(
+            Content(
+                role="user",
+                parts=[Part.from_text(text=question)],
+            )
+        )
+
+        try:
+            # Get response
+            response = client.models.generate_content(
+                model=model_name,
+                contents=conversation,
+                config=GenerateContentConfig(
+                    system_instruction=system_instructions,
+                    temperature=1.0,
+                    top_p=0.95,
+                ),
+            )
+
+            assistant_message = response.text or ""
+
+            # Add to history
+            history.add_assistant_message(assistant_message)
+            conversation.append(
+                Content(
+                    role="model",
+                    parts=[Part.from_text(text=assistant_message)],
+                )
+            )
+
+            # Display response
+            console.print(
+                f"[bold green]{character_name}:[/bold green] {assistant_message}"
+            )
+            console.print()
+
+        except Exception as e:
+            log.error(f"Error getting response for question '{question}': {e}")
+            console.print(
+                "\n[bold red]Error:[/bold red] Failed to get response for this question.\n"
+            )
+            # Remove the user message since we didn't get a response
+            conversation.pop()
+            history.messages.pop()
+
+    console.print("[bold green]✓ Test completed[/bold green]\n")
 
 
 def chat_loop(
@@ -334,6 +425,26 @@ def chat_loop(
         console.print("\n")
 
 
+# Predefined test questions for non-interactive mode
+ENGLISH_TEST_QUESTIONS = [
+    "Hi, who are you?",
+    "Describe your appearance",
+    "Do you need sleep?",
+    "What do you think of Paperinik?",
+    "Tell me about Highclean",  # Should say "Non lo so" (hallucination test)
+    "What's your relationship with Everett Ducklair?",
+]
+
+ITALIAN_TEST_QUESTIONS = [
+    "Ciao, chi sei?",
+    "Descrivi il tuo aspetto",
+    "Hai bisogno di dormire?",
+    "Cosa pensi di Paperinik?",
+    "Parlami della Highclean",  # Should say "Non lo so" (hallucination test)
+    "Qual è il tuo rapporto con Everett Ducklair?",
+]
+
+
 def main() -> None:
     """Main entry point for the chat script."""
     # Parse arguments
@@ -361,6 +472,20 @@ def main() -> None:
         type=str,
         default=DEFAULT_MODEL,
         help=f"Model to use (default: {DEFAULT_MODEL})",
+    )
+    parser.add_argument(
+        "--test",
+        type=str,
+        choices=["english", "italian", "both"],
+        default=None,
+        help="Run in non-interactive test mode with predefined questions",
+    )
+    parser.add_argument(
+        "--questions",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Custom test questions to ask (non-interactive mode)",
     )
     args = parser.parse_args()
 
@@ -392,8 +517,71 @@ def main() -> None:
             model_name=args.model,
         )
 
-        # Run chat loop
-        chat_loop(client, args.model, character_name, system_instructions, history)
+        # Determine mode: interactive or test
+        if args.questions:
+            # Custom test questions
+            run_test_questions(
+                client,
+                args.model,
+                character_name,
+                system_instructions,
+                history,
+                args.questions,
+            )
+        elif args.test:
+            # Predefined test questions
+            test_questions = []
+            if args.test in ["english", "both"]:
+                test_questions.extend(ENGLISH_TEST_QUESTIONS)
+            if args.test in ["italian", "both"]:
+                if args.test == "both":
+                    console.print("\n[bold]--- English Questions ---[/bold]\n")
+                    run_test_questions(
+                        client,
+                        args.model,
+                        character_name,
+                        system_instructions,
+                        history,
+                        ENGLISH_TEST_QUESTIONS,
+                    )
+                    console.print("\n[bold]--- Italian Questions ---[/bold]\n")
+                    # Create new history for Italian test to keep them separate
+                    history_it = ConversationHistory(
+                        character_name=character_name,
+                        profile_path=profile_ref + "_italian",
+                        model_name=args.model,
+                    )
+                    run_test_questions(
+                        client,
+                        args.model,
+                        character_name,
+                        system_instructions,
+                        history_it,
+                        ITALIAN_TEST_QUESTIONS,
+                    )
+                    # Save both conversations
+                    if history.messages:
+                        output_path_en = history.save(conversations_dir)
+                        log.info(f"English test saved: {output_path_en}")
+                    if history_it.messages:
+                        output_path_it = history_it.save(conversations_dir)
+                        log.info(f"Italian test saved: {output_path_it}")
+                    return
+                else:
+                    test_questions = ITALIAN_TEST_QUESTIONS
+
+            run_test_questions(
+                client,
+                args.model,
+                character_name,
+                system_instructions,
+                history,
+                test_questions,
+            )
+        else:
+            # Interactive chat loop
+            chat_loop(client, args.model, character_name, system_instructions, history)
+
         console.print()
 
         # Save conversation

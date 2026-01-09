@@ -1,12 +1,152 @@
 # PKNA Uno
 
-## Character Profile Builder
+Multi-stage ML pipeline for extracting structured data from Italian comic books (PKNA - Paperinik New Adventures), building a comprehensive character profile for "Uno" (an AI character), and enabling AI-powered character impersonation using Google Vertex AI (Gemini models) with DSPy.
 
-This script builds a comprehensive character profile document for Uno by iteratively analyzing all scenes from the PKNA comics where Uno appears.
+## Quick Start
 
-### Overview
+### Character Impersonation (Interactive Chat)
 
-The script:
+```bash
+# Interactive chat with Tier 1 (core) profile (default)
+./generate_from_character_profile.py
+
+# Try different profile tiers
+./generate_from_character_profile.py --tier extended  # More detail
+./generate_from_character_profile.py --tier full      # Full 75k token profile
+```
+
+### Automated Testing
+
+```bash
+# Run predefined English test questions
+./generate_from_character_profile.py --test english
+
+# Run Italian test questions
+./generate_from_character_profile.py --test italian
+
+# Run both English and Italian tests
+./generate_from_character_profile.py --test both
+
+# Custom test questions
+./generate_from_character_profile.py --questions "Who are you?" "Do you need sleep?"
+```
+
+## Pipeline Stages
+
+### Stage 1: Comic Data Extraction
+Extract structured panel data from comic page images.
+
+```bash
+./dspy-extract-full.py
+```
+
+**Input**: `input/pkna/pkna-{N}/` (page images)
+**Output**: `output/dspy-extract-full/v2/pkna-{N}/page_*.json`
+
+### Stage 2: Scene Grouping
+Group panels into scenes and filter for character appearance.
+
+```bash
+./make-scenes-full.py         # Individual scene JSON files
+./make-scenes-dataset.py      # CSV dataset for ML
+```
+
+**Input**: `output/dspy-extract-full/v2/`
+**Output**: `output/scenes/` (JSON), `output/dataset/dataset-2.csv`
+
+### Stage 3: Character Profile Building
+Build comprehensive character profile from scenes.
+
+```bash
+./build_character_profile.py
+```
+
+**Input**: `output/scenes/`
+**Output**: `output/character-profile/uno/v2/uno_profile.md` (75k tokens)
+
+### Stage 4: Profile Compression (NEW)
+Compress large profile into tiered versions optimized for chat.
+
+```bash
+./compress_character_profile.py
+```
+
+**Input**: `output/character-profile/uno/v2/uno_profile.md`
+**Output**: Three tiered profiles in `output/character-profile/uno/v3/`:
+- **Tier 1 (Core)**: ~1.5k tokens - Essential identity, core traits, key relationships
+- **Tier 2 (Extended)**: ~2k tokens - More detail, additional nuances
+- **Tier 3 (Full)**: 75k tokens - Original profile (for fine-tuning)
+
+### Stage 5: Character Impersonation
+Interactive chat using the generated profile.
+
+```bash
+./generate_from_character_profile.py
+```
+
+**Input**: `output/character-profile/uno/v3/uno_profile_tier1.md` (default)
+**Output**: `output/test-conversations/*.json`
+
+## Character Profile Optimization
+
+### The Problem
+
+The original full character profile (`v2/uno_profile.md`) was:
+- **Too large**: 75,000 tokens (~49k words)
+- **Caused hallucinations**: Model invented scenarios, characters, and contradicted the profile
+- **Poor context usage**: Profile dominated context window, leaving little room for conversation
+
+### The Solution
+
+We implemented a **4-phase optimization** to reduce hallucinations while preserving character quality:
+
+#### Phase 1: Enhanced System Prompt ✅
+Added explicit constraints and behavioral guidelines:
+- Never invent people, places, or events not in profile
+- Never describe appearance beyond what's stated
+- Keep responses short (2-4 sentences)
+- Language-aware responses (translate Italian phrases in English conversations)
+
+#### Phase 2: Profile Compression ✅
+Created tiered profiles using DSPy-powered summarization:
+
+| Tier | Tokens | Compression | Use Case |
+|------|--------|-------------|----------|
+| **Tier 1 (Core)** | 1,456 | 51.4x | Default for chat - essential traits only |
+| **Tier 2 (Extended)** | 1,959 | 38.2x | More detail when needed |
+| **Tier 3 (Full)** | 74,802 | 1x | Reference/fine-tuning |
+
+**Profile structure includes**:
+- Essential Identity (cannot be turned off, no biological needs)
+- Core Personality (top 10-25 most distinctive traits)
+- Communication Style (Italian expressions, "socio", avian puns)
+- Behavioral Guidelines (explicit Do/Don't lists)
+- Key Relationships (Paperinik, Everett, Due)
+
+#### Phase 3: Profile Restructuring ✅
+Reorganized profiles with:
+- "What Uno Does" / "What Uno Doesn't Do" sections
+- Pattern-focused descriptions over individual examples
+- Consolidated redundant traits
+
+#### Phase 4: RAG (Conditional)
+Retrieval-Augmented Generation - only if Phases 1-3 don't meet success metrics.
+
+### Results
+
+**Before optimization**:
+- Profile: 75k tokens
+- Hallucinations: Frequent (invented companies, characters, scenarios)
+- Responses: Over-elaborate, contradictory
+
+**After optimization**:
+- Profile: 1.5k tokens (98% reduction)
+- Hallucinations: Minimal (properly says "Non lo so" for unknown entities)
+- Responses: Short, focused, character-consistent
+
+## Character Profile Builder (Legacy - Stage 3)
+
+The profile builder script:
 1. Scans all extracted comic data from `output/dspy-extract-full/v2/`
 2. Identifies and groups scenes containing Uno's dialogue
 3. Uses a DSPy model to iteratively update a character profile document
@@ -182,11 +322,178 @@ Estimated runtime: 1-3 hours depending on model and scene count.
 - `make-scenes-full.py` - Groups panels into scenes and filters for character
 - `make-scenes-dataset.py` - Creates datasets from scenes
 
-### Future Enhancements
+## New Scripts
 
-Potential improvements:
-- Resume from specific scene number via CLI argument
-- Parallel processing of scenes (with careful document merging)
-- Interactive mode to review/approve edits
-- Comparison mode to track profile changes over time
-- Multi-character profiles in a single run
+### `compress_character_profile.py`
+Compress the full character profile into tiered versions.
+
+```bash
+./compress_character_profile.py
+```
+
+**Features**:
+- Uses DSPy with Gemini for intelligent summarization
+- Preserves character essence while reducing token count
+- Generates 3 tiers: Core (1.5k), Extended (2k), Full (75k)
+- Saves metadata with compression ratios and preserved traits
+
+**Output**: `output/character-profile/uno/v3/`
+
+### `restructure_profile.py`
+Validate profile structure and organization.
+
+```bash
+./restructure_profile.py
+```
+
+**Features**:
+- Validates required sections are present
+- Checks for behavioral guidelines (Do/Don't lists)
+- Counts Italian dialogue examples
+- Generates validation report
+
+**Output**: `output/character-profile/uno/v3/validation_report.md`
+
+### `generate_from_character_profile.py`
+Chat with the character using their profile.
+
+**Interactive mode** (default):
+```bash
+./generate_from_character_profile.py [--tier core|extended|full]
+```
+
+**Test mode** (non-interactive):
+```bash
+# Predefined test questions
+./generate_from_character_profile.py --test english
+./generate_from_character_profile.py --test italian
+./generate_from_character_profile.py --test both
+
+# Custom test questions
+./generate_from_character_profile.py --questions "Question 1" "Question 2"
+```
+
+**Predefined test questions**:
+- English: Identity, appearance, sleep, Paperinik, Highclean (hallucination test), Everett
+- Italian: Same questions in Italian
+
+**Output**: `output/test-conversations/conversation_uno_*.json`
+
+## Configuration
+
+### Environment Variables
+
+Create a `.env` file with your Vertex AI credentials:
+
+```bash
+VERTEX_AI_CREDS=/path/to/credentials.json
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_CLOUD_LOCATION=us-central1  # or your preferred region
+```
+
+### Model Settings
+
+All scripts use `gemini-3-flash-preview` by default. You can modify:
+- `MODEL_NAME` in each script
+- Or pass `--model` argument to `generate_from_character_profile.py`
+
+## Testing Character Quality
+
+### Hallucination Tests
+
+The test questions include known hallucinations from earlier versions:
+- **Highclean**: A company that was invented by the model (should say "Non lo so")
+- **Sleep/Rest**: Uno claimed to need sleep (should say he doesn't have biological needs)
+- **Appearance**: Over-elaborate descriptions (should be brief and match profile)
+
+### Language Handling
+
+**English conversations**:
+- Short Italian: "socio", "ciao", "Non lo so" (no translation)
+- Longer phrases: "Dormire? (Sleep?) What a primitive concept!"
+- Avoids untranslated Italian sentences
+
+**Italian conversations**:
+- Entirely in Italian
+- No English words mixed in
+
+### Success Metrics
+
+A good test run should show:
+- ✅ No invented entities, companies, or scenarios
+- ✅ Correct "Non lo so" for unknown information
+- ✅ Short responses (2-4 sentences typical)
+- ✅ Character-consistent personality (sarcastic, witty, protective)
+- ✅ Proper Italian expression usage
+- ✅ Inline translations for English conversations
+
+## Project Structure
+
+```
+pkna-uno/
+├── input/
+│   ├── pkna/                        # Comic page images
+│   └── wiki/fandom/                 # Issue summaries
+├── output/
+│   ├── dspy-extract-full/v2/        # Extracted panel data
+│   ├── scenes/                      # Grouped scenes
+│   ├── dataset/                     # ML datasets
+│   ├── character-profile/
+│   │   └── uno/
+│   │       ├── v2/                  # Full profile (75k tokens)
+│   │       │   └── uno_profile.md
+│   │       └── v3/                  # Tiered profiles (NEW)
+│   │           ├── uno_profile_tier1.md  # Core (1.5k)
+│   │           ├── uno_profile_tier2.md  # Extended (2k)
+│   │           ├── uno_profile_tier3.md  # Full (75k)
+│   │           └── *_metadata.json       # Tier metadata
+│   └── test-conversations/          # Chat logs
+├── build_character_profile.py       # Stage 3: Build profile
+├── compress_character_profile.py    # Stage 4: Compress profile (NEW)
+├── restructure_profile.py           # Validation script (NEW)
+├── generate_from_character_profile.py  # Stage 5: Chat with character
+├── dspy-extract-full.py             # Stage 1: Extract comic data
+├── make-scenes-full.py              # Stage 2: Group scenes
+└── make-scenes-dataset.py           # Stage 2: Create dataset
+```
+
+## Troubleshooting
+
+### "Profile not found" Error
+
+If you get tier profile not found errors:
+```bash
+# Generate tiered profiles first
+./compress_character_profile.py
+```
+
+### Poor Character Quality
+
+Try different tiers:
+- **Tier 1 (core)**: Best for avoiding hallucinations, minimal profile
+- **Tier 2 (extended)**: More detail, still compact
+- **Tier 3 (full)**: Maximum detail, but may cause hallucinations
+
+### API Errors
+
+Check your `.env` file and Vertex AI credentials:
+```bash
+# Test connection
+./vertex-test.py
+```
+
+## Future Enhancements
+
+### Implemented ✅
+- ✅ Tiered profile system with compression
+- ✅ Non-interactive test mode
+- ✅ Language-aware translations
+- ✅ Behavioral guidelines and constraints
+- ✅ Profile validation
+
+### Potential Improvements
+- RAG (Retrieval-Augmented Generation) for dynamic context
+- Fine-tuning with the full profile
+- Multi-character profiles
+- Automated hallucination detection in test results
+- Conversation quality scoring
