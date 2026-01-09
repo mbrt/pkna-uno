@@ -12,14 +12,14 @@ Key differences from build_character_profile.py:
 - Extracts patterns and generalizations, not granular details
 - Maintains size constraints throughout (targets ~2k tokens)
 - Single script (no separate compression needed)
+- Uses simple search-and-replace edits instead of complex hierarchical editing
 """
 
 import json
 import logging
 import os
 from collections import defaultdict
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
 from pathlib import Path
 
 import dspy
@@ -92,16 +92,17 @@ CONDENSED_SEED_DOCUMENT = """# Uno - Character Profile
 To be developed based on observed core facts and constraints.
 
 ## Core Personality
-To be developed with 15-25 most distinctive traits (Tier 2 allows more than Tier 1).
+To be developed with 15-25 most distinctive traits.
 
 ## Communication Style
 To be developed with speech patterns, linguistic markers, and visual interface details.
 
 ## Behavioral Guidelines
-### What Uno Does:
+
+### What Uno Does
 To be developed with characteristic behaviors and capabilities.
 
-### What Uno Doesn't Do:
+### What Uno Doesn't Do
 To be developed with explicit constraints and limitations.
 
 ## Key Relationships
@@ -110,342 +111,7 @@ To be developed for major characters (Paperinik, Everett, Due, Lyla, etc.).
 
 
 # ============================================================================
-# Document Structure Classes (Reused from build_character_profile.py)
-# ============================================================================
-
-
-@dataclass
-class Line:
-    """A single line of text in the document."""
-
-    content: str
-
-
-@dataclass
-class Section:
-    """A section in the document with optional subsections."""
-
-    header: str  # Full header including markdown symbols (e.g., "## Personality")
-    level: int  # Header level (1 for #, 2 for ##, etc.)
-    lines: list[Line] = field(default_factory=list)
-    subsections: list["Section"] = field(default_factory=list)
-
-
-class DocumentStructure:
-    """Manages hierarchical document structure with parsing and editing."""
-
-    @staticmethod
-    def parse_markdown(text: str) -> Section:
-        """Parse markdown text into a hierarchical Section structure.
-
-        Returns a root section (level 0) containing the document structure.
-
-        Multi-line paragraphs (consecutive non-empty lines) are preserved as single
-        Line objects. Empty lines separate paragraphs.
-        """
-        lines = text.split("\n")
-        root = Section(header="", level=0)
-        stack: list[Section] = [root]
-        current_paragraph: list[str] = []
-
-        def flush_paragraph() -> None:
-            """Flush accumulated paragraph lines to current section."""
-            if current_paragraph:
-                # Join lines with newlines to preserve multi-line paragraphs
-                content = "\n".join(current_paragraph)
-                stack[-1].lines.append(Line(content=content))
-                current_paragraph.clear()
-
-        for line in lines:
-            # Check if this is a header
-            stripped = line.strip()
-            if stripped.startswith("#"):
-                # Flush any accumulated paragraph before starting new section
-                flush_paragraph()
-
-                # Count the number of # symbols
-                level = 0
-                for char in stripped:
-                    if char == "#":
-                        level += 1
-                    else:
-                        break
-
-                # Create new section
-                new_section = Section(header=stripped, level=level)
-
-                # Pop stack until we find the parent (section with level < current)
-                while len(stack) > 1 and stack[-1].level >= level:
-                    stack.pop()
-
-                # Add to parent's subsections
-                stack[-1].subsections.append(new_section)
-                stack.append(new_section)
-            else:
-                # Regular line - accumulate into paragraph or flush on empty line
-                if stripped:
-                    # Non-empty line - add to current paragraph
-                    current_paragraph.append(stripped)
-                else:
-                    # Empty line - flush paragraph
-                    flush_paragraph()
-
-        # Don't forget to flush the final paragraph
-        flush_paragraph()
-
-        return root
-
-    @staticmethod
-    def to_markdown(root: Section) -> str:
-        """Convert Section structure back to markdown text."""
-        lines: list[str] = []
-
-        def write_section(section: Section) -> None:
-            # Write header (skip for root)
-            if section.level > 0:
-                lines.append(section.header)
-
-            # Write lines
-            for line in section.lines:
-                lines.append(line.content)
-
-            # Write subsections
-            for subsection in section.subsections:
-                write_section(subsection)
-
-        write_section(root)
-
-        # Join and clean up trailing newlines
-        result = "\n\n".join(lines)
-        return result.rstrip() + "\n" if result else ""
-
-    @staticmethod
-    def find_section(root: Section, section_name: str) -> Section | None:
-        """Find a section by name anywhere in the document tree.
-
-        The section name is matched case-insensitively against section headers
-        (without the # symbols). Returns the first matching section found.
-        """
-        if not section_name:
-            return root
-
-        section_name_lower = section_name.strip().lower()
-
-        def search_recursive(section: Section) -> Section | None:
-            # Check current section's subsections
-            for subsection in section.subsections:
-                # Extract header text without # symbols
-                header_text = subsection.header.lstrip("#").strip()
-                if header_text.lower() == section_name_lower:
-                    return subsection
-
-                # Recursively search in subsections
-                result = search_recursive(subsection)
-                if result is not None:
-                    return result
-
-            return None
-
-        return search_recursive(root)
-
-    @staticmethod
-    def find_line_in_section(section: Section, search: str) -> tuple[Line | None, bool]:
-        """Find a line in a section by partial case-insensitive match.
-
-        Returns: (Line | None, is_unique: bool)
-        - (Line, True) if exactly one match found
-        - (None, False) if no matches found
-        - (Line, False) if multiple matches found (returns first)
-        """
-        search_lower = search.lower()
-        matches: list[Line] = []
-
-        for line in section.lines:
-            if search_lower in line.content.lower():
-                matches.append(line)
-
-        if len(matches) == 0:
-            return None, False
-        elif len(matches) == 1:
-            return matches[0], True
-        else:
-            # Multiple matches - not unique
-            return matches[0], False
-
-
-class EditOperation(str, Enum):
-    """Types of edit operations on the document."""
-
-    ADD_LINE = "add_line"
-    REPLACE_LINE = "replace_line"
-    DELETE_LINE = "delete_line"
-    ADD_SUBSECTION = "add_subsection"
-
-
-class DocumentEdit(BaseModel):
-    """A single edit operation on the character document.
-
-    Operations:
-    - add_line: Add a new line to a section (at the end)
-    - replace_line: Replace an existing line (found via partial search)
-    - delete_line: Delete a line (found via partial search)
-    - add_subsection: Add a new subsection to an existing section
-    """
-
-    operation: EditOperation = Field(description="Type of edit operation to perform")
-    section_path: str = Field(
-        description=(
-            "Name of the target section. "
-            "Example: 'Core Identity' or 'Core Personality' or 'With Paperinik'. "
-            "Matching is case-insensitive and searches the entire document."
-        )
-    )
-    search_text: str | None = Field(
-        default=None,
-        description=(
-            "Partial text to find the target line (for replace_line and delete_line). "
-            "Matching is case-insensitive and can match anywhere in the line. "
-            "Must uniquely identify a single line."
-        ),
-    )
-    new_content: str | None = Field(
-        default=None,
-        description=(
-            "New content to add or replace with (for add_line, replace_line, add_subsection)"
-        ),
-    )
-    subsection_header: str | None = Field(
-        default=None,
-        description=(
-            "Header for new subsection (for add_subsection). "
-            "Example: '### With Lyla' (include ## or ### symbols)"
-        ),
-    )
-
-
-class DocumentManager:
-    """Manages the character profile document using structured editing."""
-
-    def __init__(self, initial_content: str):
-        self._root = DocumentStructure.parse_markdown(initial_content)
-
-    def apply_edit(self, edit: DocumentEdit) -> bool:
-        """Apply a single edit to the document. Returns True if successful."""
-        # Find the target section
-        section = DocumentStructure.find_section(self._root, edit.section_path)
-        if section is None:
-            log.warning(f"Section not found: '{edit.section_path}'")
-            return False
-
-        if edit.new_content is not None:
-            edit.new_content = edit.new_content.strip()
-
-        if edit.operation == EditOperation.ADD_LINE:
-            # Add a new line at the end of the section
-            if edit.new_content is None:
-                log.error("add_line requires new_content")
-                return False
-            section.lines.append(Line(content=edit.new_content))
-            return True
-
-        elif edit.operation == EditOperation.REPLACE_LINE:
-            # Find and replace a line
-            if not edit.search_text:
-                log.error("replace_line requires search_text")
-                return False
-            if not edit.new_content:
-                log.error("replace_line requires new_content")
-                return False
-
-            line, is_unique = DocumentStructure.find_line_in_section(
-                section, edit.search_text
-            )
-            if line is None:
-                log.warning(
-                    f"Line not found in section '{edit.section_path}': "
-                    f"'{edit.search_text[:50]}...'"
-                )
-                return False
-            if not is_unique:
-                log.warning(
-                    f"Multiple lines match in section '{edit.section_path}': "
-                    f"'{edit.search_text[:50]}...'. Please be more specific."
-                )
-                return False
-
-            # Replace the line content
-            line.content = edit.new_content
-            return True
-
-        elif edit.operation == EditOperation.DELETE_LINE:
-            # Find and delete a line
-            if not edit.search_text:
-                log.error("delete_line requires search_text")
-                return False
-
-            line, is_unique = DocumentStructure.find_line_in_section(
-                section, edit.search_text
-            )
-            if line is None:
-                log.warning(
-                    f"Line not found in section '{edit.section_path}': "
-                    f"'{edit.search_text[:50]}...'"
-                )
-                return False
-            if not is_unique:
-                log.warning(
-                    f"Multiple lines match in section '{edit.section_path}': "
-                    f"'{edit.search_text[:50]}...'. Please be more specific."
-                )
-                return False
-
-            # Remove the line
-            section.lines.remove(line)
-            return True
-
-        elif edit.operation == EditOperation.ADD_SUBSECTION:
-            # Add a new subsection
-            if edit.subsection_header is None:
-                log.error("add_subsection requires subsection_header")
-                return False
-            if edit.new_content is None:
-                log.error("add_subsection requires new_content")
-                return False
-
-            # Determine the level of the new subsection
-            level = section.level + 1
-            if edit.subsection_header.startswith("#"):
-                # Count # symbols in the provided header
-                level = len(edit.subsection_header) - len(
-                    edit.subsection_header.lstrip("#")
-                )
-                header = edit.subsection_header.strip()
-            else:
-                # Generate header with appropriate level
-                header = "#" * level + " " + edit.subsection_header
-
-            # Create new subsection with content
-            new_section = Section(header=header, level=level)
-            new_section.lines.append(Line(content=edit.new_content))
-            section.subsections.append(new_section)
-            return True
-
-        log.error(f"Unknown operation: {edit.operation}")
-        return False
-
-    def get_content(self) -> str:
-        """Get the current document content as markdown."""
-        return DocumentStructure.to_markdown(self._root)
-
-    def save(self, path: Path) -> None:
-        """Save the document to a file."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(self.get_content())
-
-
-# ============================================================================
-# Scene Data Structures (Reused from build_character_profile.py)
+# Scene Data Structures
 # ============================================================================
 
 
@@ -462,7 +128,7 @@ class Scene:
 
 
 # ============================================================================
-# NEW: DSPy Signatures for Condensed Profile Building
+# DSPy Signatures - Simplified with Search/Replace
 # ============================================================================
 
 
@@ -548,42 +214,70 @@ class IssueInsightExtractor(dspy.Signature):
     )
 
 
+class ProfileEdit(BaseModel):
+    """A single search-and-replace edit operation."""
+
+    search_text: str = Field(
+        description=(
+            "Exact text to find in the document. Must be unique. "
+            "Can be a full section like 'To be developed...' or specific text to update."
+        )
+    )
+    replace_text: str = Field(
+        description="New text to replace the search_text with"
+    )
+    reason: str = Field(
+        description="Brief explanation of why this edit is being made"
+    )
+
+
 class CondensedProfileUpdater(dspy.Signature):
-    """Update condensed character profile with new insights while maintaining compact size.
+    """Update condensed character profile with new insights using search-and-replace.
 
     CRITICAL INSTRUCTIONS:
 
-    1. SIZE MANAGEMENT (MOST IMPORTANT):
-       - Target max: 2000 tokens total
-       - If current profile is approaching target, CONSOLIDATE before adding
-       - Merge similar traits into generalized statements
-       - Replace weaker examples with stronger ones (don't just accumulate)
-       - If at token limit, DELETE less distinctive content to make room
+    1. EDITING APPROACH - SEARCH AND REPLACE:
+       - Find exact text in the current document
+       - Replace it with updated/enhanced text
+       - Each search_text must be UNIQUE in the document
+       - Use multi-line text blocks for section replacements
 
-    2. QUALITY OVER QUANTITY:
+    2. SIZE MANAGEMENT (MOST IMPORTANT):
+       - Current document is {current_token_count} tokens
+       - Target max: {target_max_tokens} tokens
+       - If approaching target, CONSOLIDATE:
+         * Replace multiple similar traits with one generalized statement
+         * Remove weaker examples, keep only the best
+         * Merge redundant sections
+
+    3. WHAT TO EDIT:
+       - Replace "To be developed..." placeholders with actual content
+       - Add new traits to existing sections (replace the whole section)
+       - Update sections to add new insights
+       - Consolidate redundant content
+
+    4. EDIT EXAMPLES:
+
+       Example 1 - Replace placeholder:
+       search_text: "To be developed based on observed core facts and constraints."
+       replace_text: "Uno is an artificial intelligence housed in Ducklair Tower..."
+
+       Example 2 - Add to existing section:
+       search_text: "**Protective Caretaker:** Acts as a guardian for Paperinik."
+       replace_text: "**Protective Caretaker:** Acts as a guardian for Paperinik.\\n**Sharp Sarcasm:** Uses dry wit to deflate egos."
+
+       Example 3 - Consolidate traits:
+       search_text: "**Trait A:** Description.\\n**Trait B:** Similar description.\\n**Trait C:** Also similar."
+       replace_text: "**General Pattern:** Consolidated description covering A, B, and C."
+
+    5. QUALITY OVER QUANTITY:
        - Add insights ONLY if they're truly new and distinctive
-       - Each trait should be specific and actionable
        - Better to have 15 well-defined traits than 30 vague ones
-       - Avoid redundancy across sections
+       - Each edit should meaningfully improve the profile
 
-    3. CONSOLIDATION EDITS:
-       - Use replace_line to merge similar observations
-       - Use delete_line to remove redundant or weak content
-       - Combine multiple specific examples into pattern descriptions
-
-    4. LANGUAGE:
+    6. LANGUAGE:
        - Write all descriptions in English
-       - Preserve Italian for selected dialogue examples (with translations)
-
-    5. BEHAVIORAL GUIDELINES:
-       - Maintain "What Uno Does" and "What Uno Doesn't Do" subsections
-       - These are critical for character consistency
-
-    6. EDIT OPERATIONS:
-       - add_line: Add new content to a section
-       - replace_line: Replace existing content (use for consolidation)
-       - delete_line: Remove redundant/weak content
-       - add_subsection: Create new character relationship subsection
+       - Preserve Italian dialogue examples with English translations in parentheses
     """
 
     current_profile: str = dspy.InputField(desc="Current condensed profile content")
@@ -607,16 +301,59 @@ class CondensedProfileUpdater(dspy.Signature):
     )
     capabilities_shown: list[str] = dspy.InputField(desc="Capabilities demonstrated")
 
-    edits: list[DocumentEdit] = dspy.OutputField(
+    edits: list[ProfileEdit] = dspy.OutputField(
         desc=(
-            "List of edit operations to apply. "
-            "Include consolidation edits (replace/delete) if approaching token limit. "
+            "List of search-and-replace edits to apply. "
+            "Each search_text must be unique in the document. "
             "Empty list if no updates needed."
         )
     )
     insights_summary: str = dspy.OutputField(
         desc="Brief summary of what was added/updated/consolidated"
     )
+
+
+# ============================================================================
+# Simple Document Manager with Search/Replace
+# ============================================================================
+
+
+class SimpleDocumentManager:
+    """Manages document with simple search-and-replace operations."""
+
+    def __init__(self, initial_content: str):
+        self._content = initial_content
+
+    def apply_edit(self, edit: ProfileEdit) -> bool:
+        """Apply a search-and-replace edit. Returns True if successful."""
+        if edit.search_text not in self._content:
+            log.warning(
+                f"Search text not found: '{edit.search_text[:100]}...'"
+            )
+            return False
+
+        # Count occurrences to ensure uniqueness
+        count = self._content.count(edit.search_text)
+        if count > 1:
+            log.warning(
+                f"Search text appears {count} times (not unique): '{edit.search_text[:100]}...'"
+            )
+            return False
+
+        # Apply replacement
+        self._content = self._content.replace(edit.search_text, edit.replace_text)
+        log.debug(f"Applied edit: {edit.reason}")
+        return True
+
+    def get_content(self) -> str:
+        """Get the current document content."""
+        return self._content
+
+    def save(self, path: Path) -> None:
+        """Save the document to a file."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self._content)
 
 
 # ============================================================================
@@ -782,7 +519,7 @@ def extract_issue_insights(
 
 def update_profile_with_retry(
     updater: dspy.Module,
-    doc_manager: DocumentManager,
+    doc_manager: SimpleDocumentManager,
     issue_id: str,
     insights: dspy.Prediction,
 ) -> tuple[bool, str]:
@@ -830,6 +567,8 @@ def update_profile_with_retry(
                     f"{issue_id}: {len(failed_edits)} edits failed, "
                     f"retrying (attempt {attempt + 2}/{MAX_RETRIES})"
                 )
+                # Update current_content for retry
+                current_content = doc_manager.get_content()
             else:
                 log.error(
                     f"{issue_id}: {len(failed_edits)} edits failed after "
@@ -847,7 +586,7 @@ def update_profile_with_retry(
     return False, "Max retries exceeded"
 
 
-def save_checkpoint(doc_manager: DocumentManager, issue_id: str) -> None:
+def save_checkpoint(doc_manager: SimpleDocumentManager, issue_id: str) -> None:
     """Save checkpoint after processing an issue."""
     checkpoint_path = CHECKPOINTS_DIR / f"{issue_id}.md"
     doc_manager.save(checkpoint_path)
@@ -872,7 +611,7 @@ def main() -> None:
     log.info(f"Saved seed document to {seed_path}")
 
     # Initialize document manager
-    doc_manager = DocumentManager(CONDENSED_SEED_DOCUMENT)
+    doc_manager = SimpleDocumentManager(CONDENSED_SEED_DOCUMENT)
 
     # Initialize DSPy modules
     log.info("Initializing DSPy modules...")

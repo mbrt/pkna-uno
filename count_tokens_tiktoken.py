@@ -1,11 +1,4 @@
-#!/usr/bin/env -S uv run
-
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#     "tiktoken",
-# ]
-# ///
+#!/usr/bin/env python3
 
 import sys
 import tiktoken

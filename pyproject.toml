@@ -22,6 +22,7 @@ dependencies = [
     "scikit-learn>=1.7.0",
     "streamlit>=1.45.1",
     "synthetic-data-kit>=0.0.5",
+    "tiktoken>=0.11.0",
     "torch>=2.6.0",
     "unsloth>=2025.7.8",
     "vllm>=0.8.3",
