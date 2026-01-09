@@ -63,16 +63,20 @@ pytest tests/test_document_structure.py::test_modify_line
 ```bash
 # Interactive chat (default: Tier 1 Core profile)
 ./generate_from_character_profile.py
-./generate_from_character_profile.py --tier extended  # More detail
-./generate_from_character_profile.py --tier full      # Full 75k profile
+
+# Use different profile
+./generate_from_character_profile.py output/character-profile/uno/v3/uno_profile_tier2.md
+./generate_from_character_profile.py output/character-profile/uno/v4/uno_profile.md
 
 # Automated testing with predefined questions
 ./generate_from_character_profile.py --test english   # English test set
 ./generate_from_character_profile.py --test italian   # Italian test set
-./generate_from_character_profile.py --test both      # Both languages
 
 # Custom test questions
 ./generate_from_character_profile.py --questions "Who are you?" "Do you need sleep?"
+
+# Test with different profile
+./generate_from_character_profile.py output/character-profile/uno/v3/uno_profile_tier3.md --test english
 
 # Validate profile structure
 ./restructure_profile.py
@@ -175,7 +179,7 @@ streamlit run review-extract-eval.py
   - Behavioral Do/Don't lists
   - Character consistency rules
 - Supports interactive chat or automated testing
-- Tiered profile loading (core/extended/full)
+- Profile path as argument (defaults to Tier 1 Core profile)
 - **Conversation annotations**: Prompts for quality notes after each session
   - Track hallucinations, character consistency, issues
   - Saved in JSON metadata for quality tracking over time

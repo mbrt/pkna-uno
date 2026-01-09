@@ -35,13 +35,11 @@ log.setLevel(logging.DEBUG)
 
 # Default settings
 DEFAULT_MODEL = "gemini-3-flash-preview"
-DEFAULT_PROFILE = "output/character-profile/uno/v2/uno_profile.md"
-DEFAULT_TIER = "full"  # Options: "core", "extended", "full"
+DEFAULT_PROFILE = "output/character-profile/uno/v3/uno_profile_tier1.md"
 CONVERSATIONS_DIR = "output/test-conversations"
 
 # Paths
 BASE_DIR = Path(__file__).parent
-PROFILE_V3_DIR = BASE_DIR / "output" / "character-profile" / "uno" / "v3"
 
 
 def extract_character_name(profile_content: str) -> str:
@@ -66,60 +64,20 @@ def extract_character_name(profile_content: str) -> str:
     return "Character"
 
 
-def get_tiered_profile_path(tier: str) -> Path:
-    """Get the path to a tiered profile.
-
-    Args:
-        tier: One of "core" (tier1), "extended" (tier2), or "full" (tier3)
-
-    Returns:
-        Path to the profile file
-    """
-    tier_map = {
-        "core": "uno_profile_tier1.md",
-        "extended": "uno_profile_tier2.md",
-        "full": "uno_profile_tier3.md",
-    }
-
-    if tier not in tier_map:
-        raise ValueError(
-            f"Invalid tier '{tier}'. Must be one of: {', '.join(tier_map.keys())}"
-        )
-
-    return PROFILE_V3_DIR / tier_map[tier]
-
-
-def load_profile(
-    profile_path: Path | None = None, tier: str | None = None
-) -> tuple[str, str]:
+def load_profile(profile_path: Path) -> tuple[str, str]:
     """Load character profile and extract character name.
 
     Args:
-        profile_path: Explicit path to profile (overrides tier)
-        tier: Tier level if using v3 tiered profiles ("core", "extended", "full")
+        profile_path: Path to character profile markdown file
 
     Returns:
         Tuple of (character_name, profile_content)
     """
-    # Determine which profile to load
-    if profile_path is not None:
-        # Use explicit path
-        if not profile_path.exists():
-            raise FileNotFoundError(f"Profile not found: {profile_path}")
-        final_path = profile_path
-    elif tier is not None:
-        # Use tiered profile from v3
-        final_path = get_tiered_profile_path(tier)
-        if not final_path.exists():
-            raise FileNotFoundError(
-                f"Tiered profile not found: {final_path}\n"
-                f"Run compress_character_profile.py first to generate tiered profiles."
-            )
-    else:
-        raise ValueError("Must provide either profile_path or tier")
+    if not profile_path.exists():
+        raise FileNotFoundError(f"Profile not found: {profile_path}")
 
-    log.info(f"Loading character profile from: {final_path}")
-    with open(final_path, encoding="utf-8") as f:
+    log.info(f"Loading character profile from: {profile_path}")
+    with open(profile_path, encoding="utf-8") as f:
         profile_content = f.read()
 
     character_name = extract_character_name(profile_content)
@@ -512,20 +470,11 @@ def main() -> None:
         description="Chat with a character based on their profile"
     )
     parser.add_argument(
-        "--profile",
+        "profile",
         type=str,
-        default=None,
-        help="Path to character profile markdown file (overrides --tier)",
-    )
-    parser.add_argument(
-        "--tier",
-        type=str,
-        choices=["core", "extended", "full"],
-        default=DEFAULT_TIER,
-        help=(
-            f"Profile tier to use from v3 (default: {DEFAULT_TIER}). "
-            "Options: core (~5k tokens), extended (~15k tokens), full (~75k tokens)"
-        ),
+        nargs="?",
+        default=DEFAULT_PROFILE,
+        help=f"Path to character profile markdown file (default: {DEFAULT_PROFILE})",
     )
     parser.add_argument(
         "--model",
@@ -536,7 +485,7 @@ def main() -> None:
     parser.add_argument(
         "--test",
         type=str,
-        choices=["english", "italian", "both"],
+        choices=["english", "italian"],
         default=None,
         help="Run in non-interactive test mode with predefined questions",
     )
@@ -551,19 +500,15 @@ def main() -> None:
 
     # Resolve paths
     conversations_dir = BASE_DIR / CONVERSATIONS_DIR
+    profile_path = BASE_DIR / args.profile
 
     try:
         # Initialize Google GenAI client
         client = genai.Client()
 
-        # Load profile (either explicit path or tiered)
-        if args.profile:
-            profile_path = BASE_DIR / args.profile
-            character_name, profile_content = load_profile(profile_path=profile_path)
-            profile_ref = str(args.profile)
-        else:
-            character_name, profile_content = load_profile(tier=args.tier)
-            profile_ref = f"v3/tier={args.tier}"
+        # Load profile
+        character_name, profile_content = load_profile(profile_path)
+        profile_ref = str(args.profile)
 
         # Create system instructions
         system_instructions = create_system_instructions(
@@ -590,46 +535,9 @@ def main() -> None:
             )
         elif args.test:
             # Predefined test questions
-            test_questions = []
-            if args.test in ["english", "both"]:
-                test_questions.extend(ENGLISH_TEST_QUESTIONS)
-            if args.test in ["italian", "both"]:
-                if args.test == "both":
-                    console.print("\n[bold]--- English Questions ---[/bold]\n")
-                    run_test_questions(
-                        client,
-                        args.model,
-                        character_name,
-                        system_instructions,
-                        history,
-                        ENGLISH_TEST_QUESTIONS,
-                    )
-                    console.print("\n[bold]--- Italian Questions ---[/bold]\n")
-                    # Create new history for Italian test to keep them separate
-                    history_it = ConversationHistory(
-                        character_name=character_name,
-                        profile_path=profile_ref + "_italian",
-                        model_name=args.model,
-                    )
-                    run_test_questions(
-                        client,
-                        args.model,
-                        character_name,
-                        system_instructions,
-                        history_it,
-                        ITALIAN_TEST_QUESTIONS,
-                    )
-                    # Save both conversations
-                    if history.messages:
-                        output_path_en = history.save(conversations_dir)
-                        log.info(f"English test saved: {output_path_en}")
-                    if history_it.messages:
-                        output_path_it = history_it.save(conversations_dir)
-                        log.info(f"Italian test saved: {output_path_it}")
-                    return
-                else:
-                    test_questions = ITALIAN_TEST_QUESTIONS
-
+            test_questions = (
+                ENGLISH_TEST_QUESTIONS if args.test == "english" else ITALIAN_TEST_QUESTIONS
+            )
             run_test_questions(
                 client,
                 args.model,
