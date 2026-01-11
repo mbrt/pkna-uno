@@ -27,12 +27,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
 
-from wiki_tools import (
-    get_wiki_file_summary,
-    list_wiki_categories,
-    read_wiki_file,
-    search_wiki_content,
-)
+from wiki_tools import get_wiki_index, read_wiki_segment, search_wiki
 
 load_dotenv()
 
@@ -181,16 +176,23 @@ Use these tools when you need specific details or want to verify information.
 - When asked detailed questions where accuracy matters
 
 **EXAMPLES WHERE DATABASE SEARCH IS HELPFUL**:
-- "Who is Xadhoom?" → search_wiki_content("Xadhoom") for accurate details
-- "Tell me about spore fields" → search_wiki_content("spore") for specifics
-- "Which Evronians are most dangerous?" → search_wiki_content("Evroniani") for complete list
-- "What technology do they use?" → search_wiki_content("tecnologia evroniana") for details
+- "Who is Xadhoom?" → search_wiki("Xadhoom") for accurate details
+- "Tell me about spore fields" → search_wiki("spore") for specifics
+- "Which Evronians are most dangerous?" → search_wiki("Evroniani") for complete list
+- "What technology do they use?" → search_wiki("tecnologia evroniana") for details
 
 **HOW TO USE DATABASE TOOLS**:
-1. search_wiki_content(keywords) - Search database for topic
-2. get_wiki_file_summary(file_path) - Get quick summary from relevant files
-3. read_wiki_file(file_path) - Get full details if needed
-4. Respond IN CHARACTER using the information (stay natural, don't mention "database")
+You have two tools to access the database:
+1. search_wiki(keywords) - Search and get short snippets with segment IDs
+2. read_wiki_segment(segment_id) - Read full content of a specific segment
+
+**TWO-STAGE RETRIEVAL**:
+1. Start with search_wiki() using clear keywords (e.g., "Xadhoom", "Evroniani spore")
+   - Returns segment IDs, paths, and short snippets (~200 chars)
+2. If you need full details, use read_wiki_segment() with the segment ID from search results
+   - Returns complete segment content
+
+3. Respond IN CHARACTER using the information (stay natural, don't mention "database")
 
 **IMPORTANT**:
 - The database is in Italian; adapt queries accordingly
@@ -375,10 +377,8 @@ def chat_loop_with_tools(
     """
     # Tool function mapping
     tool_functions = {
-        "search_wiki_content": search_wiki_content,
-        "list_wiki_categories": list_wiki_categories,
-        "get_wiki_file_summary": get_wiki_file_summary,
-        "read_wiki_file": read_wiki_file,
+        "search_wiki": search_wiki,
+        "read_wiki_segment": read_wiki_segment,
     }
 
     # Display welcome panel
@@ -568,10 +568,8 @@ def run_test_questions_with_tools(
 
     # Tool function mapping
     tool_functions = {
-        "search_wiki_content": search_wiki_content,
-        "list_wiki_categories": list_wiki_categories,
-        "get_wiki_file_summary": get_wiki_file_summary,
-        "read_wiki_file": read_wiki_file,
+        "search_wiki": search_wiki,
+        "read_wiki_segment": read_wiki_segment,
     }
 
     # Configuration with tools
@@ -770,6 +768,13 @@ def main() -> None:
         # Initialize Gemini client
         client = genai.Client()
 
+        # Load wiki into memory (happens once)
+        console.print("[dim]Loading wiki into memory...[/dim]")
+        wiki_index = get_wiki_index()
+        console.print(
+            f"[dim]Loaded {len(wiki_index.segments)} wiki segments ({wiki_index.total_tokens:,} tokens)[/dim]\n"
+        )
+
         # Load profile
         character_name, profile_content = load_profile(profile_path)
         profile_ref = str(args.profile)
@@ -782,10 +787,8 @@ def main() -> None:
         # Create wiki tools
         # Google GenAI SDK automatically converts Python functions to tool declarations
         tools = [
-            search_wiki_content,
-            list_wiki_categories,
-            get_wiki_file_summary,
-            read_wiki_file,
+            search_wiki,
+            read_wiki_segment,
         ]
 
         # Initialize conversation history
