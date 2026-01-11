@@ -38,7 +38,7 @@ log.setLevel(logging.DEBUG)
 
 # Default settings
 DEFAULT_MODEL = "gemini-3-flash-preview"
-DEFAULT_PROFILE = "output/character-profile/uno/v3/uno_profile_tier1.md"
+DEFAULT_PROFILE = "output/character-profile/uno/v6/uno_profile.md"
 CONVERSATIONS_DIR = "output/test-conversations"
 
 # Paths

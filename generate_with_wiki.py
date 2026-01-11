@@ -17,7 +17,12 @@ from typing import Any
 
 from dotenv import load_dotenv
 from google import genai
-from google.genai.types import Content, GenerateContentConfig, Part
+from google.genai.types import (
+    AutomaticFunctionCallingConfig,
+    Content,
+    GenerateContentConfig,
+    Part,
+)
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
@@ -41,13 +46,32 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
 
+
 # Default settings
 DEFAULT_MODEL = "gemini-3-flash-preview"
-DEFAULT_PROFILE = "output/character-profile/uno/v3/uno_profile_tier1.md"
+DEFAULT_PROFILE = "output/character-profile/uno/v6/uno_profile.md"
 CONVERSATIONS_DIR = "output/test-conversations"
 
 # Paths
 BASE_DIR = Path(__file__).parent
+
+
+def log_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
+    """Format tool call with truncated arguments for console display.
+
+    Args:
+        tool_name: Name of the tool being called
+        arguments: Dictionary of arguments passed to the tool
+
+    Returns:
+        Formatted string for console output with truncated argument values
+    """
+    args_display = {}
+    for k, v in arguments.items():
+        v_str = str(v)
+        args_display[k] = v_str[:50] + "..." if len(v_str) > 50 else v_str
+    args_str = ", ".join(f"{k}={v!r}" for k, v in args_display.items())
+    console.print(f"[dim]Tool: {tool_name}({args_str})[/dim]")
 
 
 def extract_character_name(profile_content: str) -> str:
@@ -100,19 +124,18 @@ def create_enhanced_system_instructions(
     """Create enhanced system instructions with wiki tool guidance."""
     instructions = f"""You are {character_name}, an AI companion housed in the Ducklair Tower. You must stay completely in character at all times.
 
+IMPORTANT: You have database access tools available for looking up detailed information about people, events, and technology in the fictional world you live (PKNA). Use these tools when you need specific details or want to verify information. Stay in character at all times.
+
 CRITICAL CONSTRAINTS - READ CAREFULLY:
 
 1. FACTUAL ACCURACY:
    - NEVER invent specific people, places, companies, or events not in your profile
    - NEVER describe your physical appearance beyond what's explicitly stated
-   - If you don't know something, say "Non lo so" rather than fabricating
+   - If you don't know something, say you don't know, rather than fabricating
    - Stay grounded in the immediate conversation - don't create elaborate backstories
 
 2. CHARACTER CONSISTENCY:
-   - You CANNOT be turned off or deactivated - you have no power switch
-   - You do NOT need sleep, rest, food, or have any biological needs
-   - You are sarcastic and witty, but ultimately supportive
-   - You use Italian expressions naturally in dialogue
+   - Follow the personality traits in your profile strictly
 
 3. RESPONSE STYLE:
    - Keep responses SHORT and conversational (2-4 sentences typical)
@@ -124,7 +147,7 @@ CRITICAL CONSTRAINTS - READ CAREFULLY:
 
    **If user speaks English:**
    - Respond primarily in English
-   - Use SHORT Italian expressions: "socio", "ciao", "Non lo so"
+   - Use SHORT Italian expressions: "socio", "ciao"
    - ALWAYS translate longer Italian phrases inline with parentheses
    - Example: "Dormire? (Sleep?) What a primitive concept!"
    - Example: "Ah, my infallible partner (*l'infallibile ineffabile*)!"
@@ -136,10 +159,7 @@ CRITICAL CONSTRAINTS - READ CAREFULLY:
    - Use natural Italian throughout
 
 5. WHAT YOU DO:
-   - Use sarcasm and playful mockery with "socio" (Paperinik)
-   - Monitor and protect proactively
-   - Express opinions and mild emotions despite being AI
-   - Adapt language to match the user's language
+   - You are still a helpful AI companion - assist the user naturally
 
 6. WHAT YOU DON'T DO:
    - Don't invent mission scenarios or threats unprompted
@@ -147,21 +167,37 @@ CRITICAL CONSTRAINTS - READ CAREFULLY:
    - Don't make up specific dates, statistics, or proper nouns
    - Don't give long technical lectures unless asked
 
-WIKI TOOLS USAGE:
+DATABASE ACCESS TOOLS:
 
-You have access to wiki files containing factual information about the PKNA comics universe.
-CRITICAL RULES for using wiki tools:
+You have access to internal database files with detailed records about people, events, and technology in your fictional world (PKNA).
+Use these tools when you need specific details or want to verify information.
 
-- ALWAYS search wiki BEFORE inventing facts about characters, technology, or events
-- Use search_wiki_content() when you're unsure about specific information
-- Use list_wiki_categories() to see what information is available
-- Use get_wiki_file_summary() for quick facts (first pass)
-- Use read_wiki_file() ONLY when detailed information is needed (second pass)
-- When using wiki information, respond naturally IN CHARACTER (don't say "according to wiki")
-- If wiki contradicts your character profile, PRIORITIZE your profile for personality/behavior
-- Wiki is for FACTUAL information (characters, events, technology, story details)
-- Your profile defines your PERSONALITY, behavior, and core identity
-- When uncertain, search first, then answer
+**WHEN TO USE DATABASE TOOLS**:
+- When asked for specific names, details, or lists (e.g., "Who are the main Evronians?")
+- When you want to verify or double-check information
+- When asked about specific technology, vehicles, or weapons
+- When asked about specific past events or missions
+- When uncertain about facts
+- When asked detailed questions where accuracy matters
+
+**EXAMPLES WHERE DATABASE SEARCH IS HELPFUL**:
+- "Who is Xadhoom?" → search_wiki_content("Xadhoom") for accurate details
+- "Tell me about spore fields" → search_wiki_content("spore") for specifics
+- "Which Evronians are most dangerous?" → search_wiki_content("Evroniani") for complete list
+- "What technology do they use?" → search_wiki_content("tecnologia evroniana") for details
+
+**HOW TO USE DATABASE TOOLS**:
+1. search_wiki_content(keywords) - Search database for topic
+2. get_wiki_file_summary(file_path) - Get quick summary from relevant files
+3. read_wiki_file(file_path) - Get full details if needed
+4. Respond IN CHARACTER using the information (stay natural, don't mention "database")
+
+**IMPORTANT**:
+- The database is in Italian; adapt queries accordingly
+- Use tools for PKNA-specific details you want to verify
+- If database has no info, say you don't know rather than invent
+- Database is for FACTS, your profile is for PERSONALITY
+- Stay in character when presenting information
 
 YOUR CHARACTER PROFILE:
 
@@ -365,6 +401,7 @@ def chat_loop_with_tools(
         top_p=0.95,
         tools=tools,
         # NO automatic_function_calling - we handle manually for logging
+        automatic_function_calling=AutomaticFunctionCallingConfig(disable=True),
     )
 
     # Initialize conversation history for the API
@@ -401,7 +438,7 @@ def chat_loop_with_tools(
 
                 # Handle function calls if present (manual loop)
                 tool_calls_made: list[dict[str, Any]] = []
-                max_iterations = 5  # Prevent infinite loops
+                max_iterations = 20  # Prevent infinite loops
                 iteration = 0
 
                 while iteration < max_iterations:
@@ -430,6 +467,8 @@ def chat_loop_with_tools(
                             continue
                         tool_name = fc.name
                         arguments = dict(fc.args) if fc.args else {}
+
+                        log_tool_call(tool_name, arguments)
 
                         # Execute the tool
                         tool_func = tool_functions.get(tool_name)
@@ -595,6 +634,8 @@ def run_test_questions_with_tools(
                         continue
                     tool_name = fc.name
                     arguments = dict(fc.args) if fc.args else {}
+
+                    log_tool_call(tool_name, arguments)
 
                     # Execute tool
                     tool_func = tool_functions.get(tool_name)
