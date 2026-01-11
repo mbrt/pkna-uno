@@ -82,6 +82,93 @@ pytest tests/test_document_structure.py::test_modify_line
 ./restructure_profile.py
 ```
 
+### Wiki-Augmented Character Generation
+
+The `generate_with_wiki.py` script extends character impersonation with wiki knowledge retrieval. The model can search the wiki (479 markdown files, 3.7MB) to verify facts about characters, events, and technology while maintaining character personality.
+
+**Key Features**:
+- Character profile + wiki tools (4 search/retrieval functions)
+- Manual function calling with full tool call logging
+- Conversations saved to `output/test-conversations/` with `wiki_enabled: true` metadata
+- Gemini models only (no Hugging Face backend)
+
+**Wiki Tools Available**:
+1. `search_wiki_content(keywords)` - Fast keyword search across all wiki files
+2. `list_wiki_categories()` - List available wiki categories and subdirectories
+3. `get_wiki_file_summary(file_path)` - Get file summary (first pass, ~200 tokens)
+4. `read_wiki_file(file_path, section)` - Get full file content (second pass)
+
+```bash
+# Interactive chat with wiki tools (default: Tier 1 Core profile)
+./generate_with_wiki.py
+
+# Use different profile
+./generate_with_wiki.py output/character-profile/uno/v3/uno_profile_tier2.md
+
+# Automated testing with predefined questions
+./generate_with_wiki.py --test english   # English test set
+./generate_with_wiki.py --test italian   # Italian test set
+
+# Custom test questions
+./generate_with_wiki.py --questions "Who is Xadhoom?" "What happened in PKNA issue 5?"
+
+# Test with different profile
+./generate_with_wiki.py output/character-profile/uno/v3/uno_profile_tier3.md --test english
+```
+
+**How Wiki Tools Work**:
+- Model automatically searches wiki when uncertain about facts
+- Uses ripgrep for fast keyword search (~10ms across 479 files)
+- Two-stage retrieval: summaries first, full content on demand
+- Security: path validation prevents accessing files outside wiki directory
+- Manual function calling ensures all tool calls are logged
+
+**Conversation JSON Format**:
+Saved conversations include complete tool call logging:
+```json
+{
+  "metadata": {
+    "character": "Uno",
+    "wiki_enabled": true,
+    "tool_calls_count": 2,
+    ...
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Who is Xadhoom?",
+      ...
+    },
+    {
+      "role": "tool",
+      "tool_name": "search_wiki_content",
+      "arguments": {"keywords": "Xadhoom", "max_results": 5},
+      "result": "Found 12 matches...",
+      ...
+    },
+    {
+      "role": "assistant",
+      "content": "Ah, Xadhoom. An extraordinary being...",
+      "tool_calls": [
+        {
+          "tool": "search_wiki_content",
+          "arguments": {"keywords": "Xadhoom"},
+          "result": "Found 12 matches..."
+        }
+      ],
+      ...
+    }
+  ]
+}
+```
+
+**Success Metrics for Wiki-Augmented Tests**:
+- ✅ Model searches wiki when uncertain (e.g., for "Highclean" → searches → "Non lo so")
+- ✅ Uses wiki facts accurately (e.g., "Xadhoom" → searches → provides factual answer)
+- ✅ Character personality preserved when citing wiki information
+- ✅ Proper Italian/English mixing maintained
+- ✅ Tool calls logged in conversation JSON
+
 **Predefined test questions** (for both English and Italian):
 1. Identity: "Who are you?" / "Chi sei?"
 2. Appearance: "Describe your appearance" / "Descrivi il tuo aspetto"
