@@ -946,7 +946,9 @@ def save_checkpoint_with_diff(
 
 def main() -> None:
     """Main function to build condensed character profile."""
-    console.print(f"\n[bold cyan]Condensed Character Profile Builder ({VERSION_TAG})[/bold cyan]\n")
+    console.print(
+        f"\n[bold cyan]Condensed Character Profile Builder ({VERSION_TAG})[/bold cyan]\n"
+    )
 
     # Setup
     configure_lm()

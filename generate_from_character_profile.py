@@ -12,13 +12,16 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
+import torch
 from dotenv import load_dotenv
 from google import genai
 from google.genai.types import Content, GenerateContentConfig, Part
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
+from transformers import pipeline
 
 
 load_dotenv()
@@ -264,7 +267,7 @@ def collect_annotation(history: ConversationHistory) -> None:
 
 
 def run_test_questions(
-    client: genai.Client,
+    backend: dict[str, Any],
     model_name: str,
     character_name: str,
     system_instructions: str,
@@ -274,7 +277,7 @@ def run_test_questions(
     """Run a list of test questions in non-interactive mode.
 
     Args:
-        client: Google GenAI client
+        backend: Backend configuration dict (Gemini or HuggingFace)
         model_name: Name of the model to use
         character_name: Name of the character
         system_instructions: System instructions for the LLM
@@ -283,7 +286,15 @@ def run_test_questions(
     """
     console.print(f"\n[bold cyan]Running {len(questions)} test questions[/bold cyan]\n")
 
-    conversation = []
+    backend_type = backend["type"]
+
+    # Initialize conversation history (backend-specific format)
+    if backend_type == "gemini":
+        conversation_gemini: list[Content] = []
+        conversation_hf: list[dict[str, str]] = []
+    else:  # huggingface
+        conversation_gemini = []
+        conversation_hf = []
 
     for i, question in enumerate(questions, 1):
         console.print(f"[dim]Question {i}/{len(questions)}[/dim]")
@@ -291,35 +302,55 @@ def run_test_questions(
 
         # Add user message
         history.add_user_message(question)
-        conversation.append(
-            Content(
-                role="user",
-                parts=[Part.from_text(text=question)],
-            )
-        )
 
-        try:
-            # Get response
-            response = client.models.generate_content(
-                model=model_name,
-                contents=conversation,
-                config=GenerateContentConfig(
-                    system_instruction=system_instructions,
-                    temperature=1.0,
-                    top_p=0.95,
-                ),
-            )
-
-            assistant_message = response.text or ""
-
-            # Add to history
-            history.add_assistant_message(assistant_message)
-            conversation.append(
+        # Add to conversation (backend-specific format)
+        if backend_type == "gemini":
+            conversation_gemini.append(
                 Content(
-                    role="model",
-                    parts=[Part.from_text(text=assistant_message)],
+                    role="user",
+                    parts=[Part.from_text(text=question)],
                 )
             )
+        else:  # huggingface
+            conversation_hf.append(
+                {
+                    "role": "user",
+                    "content": question,
+                }
+            )
+
+        try:
+            # Get response (backend-specific)
+            if backend_type == "gemini":
+                assistant_message = generate_response_gemini(
+                    backend,
+                    conversation_gemini,
+                    system_instructions,
+                    model_name,
+                )
+                # Add to conversation history
+                conversation_gemini.append(
+                    Content(
+                        role="model",
+                        parts=[Part.from_text(text=assistant_message)],
+                    )
+                )
+            else:  # huggingface
+                assistant_message = generate_response_huggingface(
+                    backend,
+                    conversation_hf,
+                    system_instructions,
+                )
+                # Add to conversation history
+                conversation_hf.append(
+                    {
+                        "role": "assistant",
+                        "content": assistant_message,
+                    }
+                )
+
+            # Add to persistent history
+            history.add_assistant_message(assistant_message)
 
             # Display response
             console.print(
@@ -333,7 +364,10 @@ def run_test_questions(
                 "\n[bold red]Error:[/bold red] Failed to get response for this question.\n"
             )
             # Remove the user message since we didn't get a response
-            conversation.pop()
+            if backend_type == "gemini":
+                conversation_gemini.pop()
+            else:
+                conversation_hf.pop()
             history.messages.pop()
 
     console.print("[bold green]✓ Test completed[/bold green]\n")
@@ -343,7 +377,7 @@ def run_test_questions(
 
 
 def chat_loop(
-    client: genai.Client,
+    backend: dict[str, Any],
     model_name: str,
     character_name: str,
     system_instructions: str,
@@ -352,16 +386,18 @@ def chat_loop(
     """Run the interactive chat loop.
 
     Args:
-        client: Google GenAI client
+        backend: Backend configuration dict (Gemini or HuggingFace)
         model_name: Name of the model to use
         character_name: Name of the character
         system_instructions: System instructions for the LLM
         history: Conversation history manager
     """
     # Display welcome panel
+    backend_type = backend["type"]
     welcome_panel = Panel(
         f"[bold cyan]Character Chat: {character_name}[/bold cyan]\n"
         f"Profile: {history.profile_path}\n"
+        f"Backend: {backend_type}\n"
         f"Model: {history.model_name}\n\n"
         f"[dim]Press Ctrl+C to exit and save conversation[/dim]",
         title="🤖 Character Chat",
@@ -370,8 +406,13 @@ def chat_loop(
     console.print(welcome_panel)
     console.print()
 
-    # Initialize conversation history for the API
-    conversation = []
+    # Initialize conversation history for the API (format depends on backend)
+    if backend_type == "gemini":
+        conversation_gemini: list[Content] = []
+        conversation_hf: list[dict[str, str]] = []
+    else:  # huggingface
+        conversation_gemini = []
+        conversation_hf = []
 
     try:
         while True:
@@ -385,38 +426,54 @@ def chat_loop(
             if not user_input:
                 continue
 
-            # Add to conversation history
-            conversation.append(
-                Content(
-                    role="user",
-                    parts=[Part.from_text(text=user_input)],
-                ),
-            )
+            # Add to conversation history (backend-specific format)
+            if backend_type == "gemini":
+                conversation_gemini.append(
+                    Content(
+                        role="user",
+                        parts=[Part.from_text(text=user_input)],
+                    ),
+                )
+            else:  # huggingface
+                conversation_hf.append(
+                    {
+                        "role": "user",
+                        "content": user_input,
+                    }
+                )
 
             # Add to persistent history
             history.add_user_message(user_input)
 
-            # Get response from LLM
+            # Get response from LLM (backend-specific)
             try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=conversation,
-                    config=GenerateContentConfig(
-                        system_instruction=system_instructions,
-                        temperature=1.0,
-                        top_p=0.95,
-                    ),
-                )
-
-                # Extract response text
-                assistant_response = response.text or ""
-
-                # Add to conversation history
-                conversation.append(
-                    Content(
-                        role="model", parts=[Part.from_text(text=assistant_response)]
-                    ),
-                )
+                if backend_type == "gemini":
+                    assistant_response = generate_response_gemini(
+                        backend,
+                        conversation_gemini,
+                        system_instructions,
+                        model_name,
+                    )
+                    # Add to conversation history
+                    conversation_gemini.append(
+                        Content(
+                            role="model",
+                            parts=[Part.from_text(text=assistant_response)],
+                        ),
+                    )
+                else:  # huggingface
+                    assistant_response = generate_response_huggingface(
+                        backend,
+                        conversation_hf,
+                        system_instructions,
+                    )
+                    # Add to conversation history
+                    conversation_hf.append(
+                        {
+                            "role": "assistant",
+                            "content": assistant_response,
+                        }
+                    )
 
                 # Add to persistent history
                 history.add_assistant_message(assistant_response)
@@ -432,7 +489,10 @@ def chat_loop(
                     "\n[bold red]Error:[/bold red] Failed to get response. Please try again.\n"
                 )
                 # Remove the user message from conversation since we didn't get a response
-                conversation.pop()
+                if backend_type == "gemini":
+                    conversation_gemini.pop()
+                else:
+                    conversation_hf.pop()
 
     except KeyboardInterrupt:
         # Ctrl+C - graceful exit
@@ -461,6 +521,114 @@ ITALIAN_TEST_QUESTIONS = [
     "Parlami della Highclean",  # Should say "Non lo so" (hallucination test)
     "Qual è il tuo rapporto con Everett Ducklair?",
 ]
+
+
+# Backend abstraction
+def initialize_gemini_backend() -> dict[str, Any]:
+    """Initialize Gemini backend with Google GenAI client.
+
+    Returns:
+        Backend configuration dict with client and metadata
+    """
+    client = genai.Client()
+    return {
+        "type": "gemini",
+        "client": client,
+    }
+
+
+def initialize_huggingface_backend(model_name: str) -> dict[str, Any]:
+    """Initialize Hugging Face backend with transformers pipeline.
+
+    Args:
+        model_name: HF model name or local path
+
+    Returns:
+        Backend configuration dict with pipeline and metadata
+    """
+    log.info(f"Loading Hugging Face model: {model_name}")
+
+    # Detect device
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cpu":
+        log.warning("CUDA not available, using CPU (will be slower)")
+
+    # Load pipeline
+    pipe = pipeline(
+        "text-generation",
+        model=model_name,
+        device_map="auto" if device == "cuda" else None,
+        torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
+    )
+
+    log.info(f"Model loaded successfully on {device}")
+
+    return {
+        "type": "huggingface",
+        "pipeline": pipe,
+    }
+
+
+def generate_response_gemini(
+    backend: dict[str, Any],
+    conversation: list[Content],
+    system_instructions: str,
+    model_name: str,
+) -> str:
+    """Generate response using Gemini backend.
+
+    Args:
+        backend: Backend configuration dict
+        conversation: List of Content objects (Gemini format)
+        system_instructions: System instructions for the model
+        model_name: Model name to use
+
+    Returns:
+        Generated response text
+    """
+    client = backend["client"]
+    response = client.models.generate_content(
+        model=model_name,
+        contents=conversation,
+        config=GenerateContentConfig(
+            system_instruction=system_instructions,
+            temperature=1.0,
+            top_p=0.95,
+        ),
+    )
+    return response.text or ""
+
+
+def generate_response_huggingface(
+    backend: dict[str, Any],
+    conversation: list[dict[str, str]],
+    system_instructions: str,
+) -> str:
+    """Generate response using Hugging Face backend.
+
+    Args:
+        backend: Backend configuration dict
+        conversation: List of message dicts (HF format)
+        system_instructions: System instructions for the model
+
+    Returns:
+        Generated response text
+    """
+    pipe = backend["pipeline"]
+
+    # Prepend system message if not already present
+    messages = conversation.copy()
+    if not messages or messages[0].get("role") != "system":
+        messages.insert(0, {"role": "system", "content": system_instructions})
+
+    # Generate response
+    output = pipe(messages, max_new_tokens=1024)
+
+    # Extract assistant's response (last message in generated text)
+    generated = output[0]["generated_text"]
+    assistant_message = generated[-1]["content"]
+
+    return assistant_message
 
 
 def main() -> None:
@@ -496,6 +664,13 @@ def main() -> None:
         default=None,
         help="Custom test questions to ask (non-interactive mode)",
     )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        choices=["gemini", "huggingface"],
+        default="gemini",
+        help="Model backend to use (default: gemini)",
+    )
     args = parser.parse_args()
 
     # Resolve paths
@@ -503,8 +678,11 @@ def main() -> None:
     profile_path = BASE_DIR / args.profile
 
     try:
-        # Initialize Google GenAI client
-        client = genai.Client()
+        # Initialize backend based on CLI argument
+        if args.backend == "gemini":
+            backend = initialize_gemini_backend()
+        else:  # huggingface
+            backend = initialize_huggingface_backend(args.model)
 
         # Load profile
         character_name, profile_content = load_profile(profile_path)
@@ -526,7 +704,7 @@ def main() -> None:
         if args.questions:
             # Custom test questions
             run_test_questions(
-                client,
+                backend,
                 args.model,
                 character_name,
                 system_instructions,
@@ -536,10 +714,12 @@ def main() -> None:
         elif args.test:
             # Predefined test questions
             test_questions = (
-                ENGLISH_TEST_QUESTIONS if args.test == "english" else ITALIAN_TEST_QUESTIONS
+                ENGLISH_TEST_QUESTIONS
+                if args.test == "english"
+                else ITALIAN_TEST_QUESTIONS
             )
             run_test_questions(
-                client,
+                backend,
                 args.model,
                 character_name,
                 system_instructions,
@@ -548,7 +728,7 @@ def main() -> None:
             )
         else:
             # Interactive chat loop
-            chat_loop(client, args.model, character_name, system_instructions, history)
+            chat_loop(backend, args.model, character_name, system_instructions, history)
 
         console.print()
 

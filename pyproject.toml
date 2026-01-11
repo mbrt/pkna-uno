@@ -5,6 +5,7 @@ description = "Export PKNA dataset"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "accelerate>=1.10.0",
     "docling-core>=2.25.0",
     "dspy>=3.0.1",
     "google-genai>=1.8.0",
@@ -24,6 +25,7 @@ dependencies = [
     "synthetic-data-kit>=0.0.5",
     "tiktoken>=0.11.0",
     "torch>=2.6.0",
+    "transformers>=4.55.4",
     "unsloth>=2025.7.8",
     "vllm>=0.8.3",
 ]
