@@ -23,17 +23,14 @@ class UnoDetection(dspy.Signature):
     )
 
 
-Character = Literal['uno', 'pk', 'other']
+Character = Literal["uno", "pk", "other"]
 
 
 class ExtractedLine(BaseModel):
     """A line of dialogue extracted from a comic book page."""
-    character: Character = Field(
-        description="The character who said the line."
-    )
-    text: str = Field(
-        description="The text of the dialogue line."
-    )
+
+    character: Character = Field(description="The character who said the line.")
+    text: str = Field(description="The text of the dialogue line.")
 
 
 class DialogueExtraction(dspy.Signature):
@@ -49,18 +46,18 @@ class DialogueExtraction(dspy.Signature):
 
 class ComicBookPage(BaseModel):
     """A class representing a comic book page."""
+
     uno_present: bool = False
     dialogue: list[ExtractedLine] = Field(default_factory=list)
 
 
 class ComicBookExtractor(dspy.Module):
-
     def __init__(self):
         self.detect_uno = dspy.ChainOfThought(UnoDetection)
         self.extractor = dspy.ChainOfThought(DialogueExtraction)
         self.normalize = dspy.Predict(
             dspy.make_signature(
-                signature='text -> normalized',
+                signature="text -> normalized",
                 instructions="Normalize text by using normal caps instead of all caps, remove line-break hyphens, and accented letters instead of apostrophes when appropriate.",
             )
         )
@@ -70,10 +67,7 @@ class ComicBookExtractor(dspy.Module):
             return ComicBookPage(uno_present=False)
 
         extracted = self.extractor(page=img).dialogue
-        normalized = [
-            self.normalize(text=line.text).normalized
-            for line in extracted
-        ]
+        normalized = [self.normalize(text=line.text).normalized for line in extracted]
         return ComicBookPage(
             uno_present=True,
             dialogue=[
@@ -81,14 +75,13 @@ class ComicBookExtractor(dspy.Module):
                 for line, normalized_text in zip(extracted, normalized)
             ],
         )
-        
 
 
 load_dotenv()
 
 lm = dspy.LM(
-    model='vertex_ai/gemini-2.5-flash',
-    vertex_credentials=os.getenv('VERTEX_AI_CREDS'),
+    model="vertex_ai/gemini-2.5-flash",
+    vertex_credentials=os.getenv("VERTEX_AI_CREDS"),
     temperature=1.0,
     max_tokens=65535,
 )
@@ -98,19 +91,19 @@ extractor = ComicBookExtractor()
 
 examples = [
     dspy.Example(
-        img=dspy.Image.from_file('input/pkna/pkna-0/pkna-0-029.jpg'),
+        img=dspy.Image.from_file("input/pkna/pkna-0/pkna-0-029.jpg"),
         output=ComicBookPage(
             uno_present=False,
             dialogue=[],
-        )
-    ).with_inputs('img'),
+        ),
+    ).with_inputs("img"),
     dspy.Example(
-        img=dspy.Image.from_file('input/pkna/pkna-0/pkna-0-030.jpg'),
+        img=dspy.Image.from_file("input/pkna/pkna-0/pkna-0-030.jpg"),
         output=ComicBookPage(
             uno_present=True,
             dialogue=[],
-        )
-    ).with_inputs('img'),
+        ),
+    ).with_inputs("img"),
 ]
 
 
@@ -126,13 +119,13 @@ class Score:
         return self.value / self.max
 
     @overload
-    def add(self, score: bool, weight: float = 1.0) -> 'Score': ...
+    def add(self, score: bool, weight: float = 1.0) -> "Score": ...
     @overload
-    def add(self, score: float|int, weight: float = 1.0) -> 'Score': ...
+    def add(self, score: float | int, weight: float = 1.0) -> "Score": ...
     @overload
-    def add(self, score: list[bool], weight: float = 1.0) -> 'Score': ...
+    def add(self, score: list[bool], weight: float = 1.0) -> "Score": ...
 
-    def add(self, score, weight: float = 1.0) -> 'Score':
+    def add(self, score, weight: float = 1.0) -> "Score":
         """Add a score to the current score."""
         if isinstance(score, bool):
             return self._add_bool(score, weight)
@@ -143,19 +136,21 @@ class Score:
         else:
             raise TypeError(f"Unsupported score type: {type(score)}")
 
-    def _add_bool(self, score: bool, weight: float = 1.0) -> 'Score':
+    def _add_bool(self, score: bool, weight: float = 1.0) -> "Score":
         if score:
             self.value += weight
         self.max += weight
         return self
 
-    def _add_list(self, score: list[bool], weight: float = 1.0) -> 'Score':
+    def _add_list(self, score: list[bool], weight: float = 1.0) -> "Score":
         """Add a list of boolean scores to the current score."""
         for s in score:
             self._add_bool(s, weight / len(score))
         return self
 
-    def _add_float(self, score: float|int, max_score: float, weight: float = 1.0) -> 'Score':
+    def _add_float(
+        self, score: float | int, max_score: float, weight: float = 1.0
+    ) -> "Score":
         """Add a normalized score to the current score."""
         if max_score == 0:
             max_score = 1.0
@@ -185,50 +180,61 @@ def check_text(a: ExtractedLine | None, b: ExtractedLine | None) -> bool:
     return a.text.lower() == b.text.lower()
 
 
-def validate_answer(example: dspy.Example, pred: ComicBookPage, trace=None) -> float | bool:
+def validate_answer(
+    example: dspy.Example, pred: ComicBookPage, trace=None
+) -> float | bool:
     must_score = Score()
     may_score = Score()
 
-    gold_characters = {
-        line.character for line in example.output.dialogue
-    }
-    have_characters = {
-        line.character for line in pred.dialogue
-    }
+    gold_characters = {line.character for line in example.output.dialogue}
+    have_characters = {line.character for line in pred.dialogue}
 
-    must_score.add([
-        # Same prediction about Uno
-        pred.uno_present == example.output.uno_present,
-        # Same number of dialogue lines
-        len(pred.dialogue) == len(example.output.dialogue),
-        # Same characters in the dialogue
-        gold_characters == have_characters,
-    ])
+    must_score.add(
+        [
+            # Same prediction about Uno
+            pred.uno_present == example.output.uno_present,
+            # Same number of dialogue lines
+            len(pred.dialogue) == len(example.output.dialogue),
+            # Same characters in the dialogue
+            gold_characters == have_characters,
+        ]
+    )
 
     if example.output.uno_present:
         # Same text in the dialogue lines, but not the order
-        must_score.add([
-            any(line.text.lower() == example_line.text.lower()
-                for line in pred.dialogue)
-            for example_line in example.output.dialogue
-        ])
+        must_score.add(
+            [
+                any(
+                    line.text.lower() == example_line.text.lower()
+                    for line in pred.dialogue
+                )
+                for example_line in example.output.dialogue
+            ]
+        )
 
         # Same order of dialogue lines
-        may_score.add([
-            check_text(pred_line, example_line)
-            for pred_line, example_line in zip_longest(pred.dialogue, example.output.dialogue)
-        ])
+        may_score.add(
+            [
+                check_text(pred_line, example_line)
+                for pred_line, example_line in zip_longest(
+                    pred.dialogue, example.output.dialogue
+                )
+            ]
+        )
         # Same order of characters in the dialogue
-        may_score.add([
-            check_character(pred_line, example_line)
-            for pred_line, example_line in zip_longest(pred.dialogue, example.output.dialogue)
-        ], weight=3)
+        may_score.add(
+            [
+                check_character(pred_line, example_line)
+                for pred_line, example_line in zip_longest(
+                    pred.dialogue, example.output.dialogue
+                )
+            ],
+            weight=3,
+        )
     else:
         # If Uno is not present, we don't care about the dialogue lines.
         # Just check that the number of lines is zero.
-        may_score.add([
-            len(pred.dialogue) == 0
-        ])
+        may_score.add([len(pred.dialogue) == 0])
 
     if trace is None:
         # We're doing optimization or evaluation.
@@ -241,8 +247,8 @@ def validate_answer(example: dspy.Example, pred: ComicBookPage, trace=None) -> f
 
 
 train_lm = dspy.LM(
-    model='vertex_ai/gemini-2.5-flash',
-    vertex_credentials=os.getenv('VERTEX_AI_CREDS'),
+    model="vertex_ai/gemini-2.5-flash",
+    vertex_credentials=os.getenv("VERTEX_AI_CREDS"),
     max_tokens=65535,
     temperature=1.0,
 )

@@ -25,21 +25,18 @@ def setup_logging() -> logging.Logger:
     os.makedirs(LOG_DIR, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = os.path.join(LOG_DIR, f"dspy_extract_optimize_{timestamp}.log")
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    ))
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    )
 
     rich_handler = RichHandler(console=console, rich_tracebacks=True)
     rich_handler.setLevel(logging.INFO)
-    logging.basicConfig(
-        level=logging.INFO,
-        handlers=[file_handler, rich_handler]
-    )
+    logging.basicConfig(level=logging.INFO, handlers=[file_handler, rich_handler])
 
     logger = logging.getLogger(__name__)
-    dspy_logger = logging.getLogger('dspy')
+    dspy_logger = logging.getLogger("dspy")
     dspy_logger.addHandler(file_handler)
     dspy_logger.setLevel(logging.INFO)
     return logger
@@ -48,24 +45,20 @@ def setup_logging() -> logging.Logger:
 # Initialize logging
 logger = setup_logging()
 
-Character = Literal['uno', 'paperinik', 'other']
+Character = Literal["uno", "paperinik", "other"]
 
 
 class ExtractedLine(BaseModel):
     """A line of dialogue extracted from a comic book page."""
-    character: Character = Field(
-        description="The character who said the line."
-    )
-    text: str = Field(
-        description="The text of the dialogue line."
-    )
+
+    character: Character = Field(description="The character who said the line.")
+    text: str = Field(description="The text of the dialogue line.")
 
 
 class CharacterDescription(BaseModel):
     """Description of a character in the comic."""
-    name: Character = Field(
-        description="The name of the character."
-    )
+
+    name: Character = Field(description="The name of the character.")
     description: str = Field(
         description="A description and biography of the character."
     )
@@ -96,18 +89,14 @@ class ExtractorModule(dspy.Module):
         self.extractor = dspy.ChainOfThought(DialogueExtraction)
         self.normalize = dspy.Predict(
             dspy.make_signature(
-                signature='text -> normalized',
+                signature="text -> normalized",
                 instructions="Normalize text by using normal caps instead of all caps, remove line-break hyphens, and accented letters instead of apostrophes when appropriate.",
             )
         )
 
     def forward(self, page: dspy.Image) -> dspy.Prediction:
-        extracted = self.extractor(
-            characters=self.characters, page=page).dialogue
-        normalized = [
-            self.normalize(text=line.text).normalized
-            for line in extracted
-        ]
+        extracted = self.extractor(characters=self.characters, page=page).dialogue
+        normalized = [self.normalize(text=line.text).normalized for line in extracted]
         return dspy.Prediction(
             dialogue=[
                 ExtractedLine(character=line.character, text=normalized_text)
@@ -118,8 +107,8 @@ class ExtractorModule(dspy.Module):
 
 def make_gemini_llm(name: str) -> dspy.LM:
     return dspy.LM(
-        model=f'vertex_ai/{name}',
-        vertex_credentials=os.getenv('VERTEX_AI_CREDS'),
+        model=f"vertex_ai/{name}",
+        vertex_credentials=os.getenv("VERTEX_AI_CREDS"),
         temperature=1.0,
         top_p=0.95,
         top_k=64,
@@ -129,18 +118,17 @@ def make_gemini_llm(name: str) -> dspy.LM:
 
 def init_llms() -> tuple[dspy.LM, dspy.LM]:
     load_dotenv()
-    task_lm = make_gemini_llm('gemini-2.5-flash')
-    prompt_lm = make_gemini_llm('gemini-2.5-pro')
+    task_lm = make_gemini_llm("gemini-2.5-flash")
+    prompt_lm = make_gemini_llm("gemini-2.5-pro")
     dspy.configure(lm=task_lm, track_usage=True)
-    logger.info(
-        "LLMs initialized - Task: gemini-2.5-flash, Prompt: gemini-2.5-pro")
+    logger.info("LLMs initialized - Task: gemini-2.5-flash, Prompt: gemini-2.5-pro")
     return task_lm, prompt_lm
 
 
 def load_character(name: Character) -> CharacterDescription:
     """Load a character description from the environment variable."""
-    p = os.path.join('input/bios', f'{name}.md')
-    with open(p, 'r', encoding='utf-8') as f:
+    p = os.path.join("input/bios", f"{name}.md")
+    with open(p, "r", encoding="utf-8") as f:
         description = f.read()
     return CharacterDescription(name=name, description=description)
 
@@ -158,46 +146,40 @@ def validate(example: dspy.Example, pred: dspy.Prediction, trace=None) -> float 
             # Return precise score.
             return fscore
         return fscore >= 0.99
-    
+
     # Full score for exact match.
     if example.dialogue == pred.dialogue:
         return score_it(True)
 
     # Partial scoring.
     length = score_it(len(example.dialogue) == len(pred.dialogue))
-    characters = score_it(set(
-        line.character for line in example.dialogue) == set(
-        line.character for line in pred.dialogue
-    ))
+    characters = score_it(
+        set(line.character for line in example.dialogue)
+        == set(line.character for line in pred.dialogue)
+    )
     # Count correct lines.
-    correct_lines = sum(
-        1 for line in pred.dialogue
-        if line in example.dialogue
-    ) / len(example.dialogue)
+    correct_lines = sum(1 for line in pred.dialogue if line in example.dialogue) / len(
+        example.dialogue
+    )
     # Correct attribution.
     attribution = sum(
-        1 for e, p in zip(example.dialogue, pred.dialogue)
-        if e.character == p.character
+        1 for e, p in zip(example.dialogue, pred.dialogue) if e.character == p.character
     ) / len(example.dialogue)
 
     # Average score.
-    return score_it(
-        (length + characters + correct_lines + attribution) / 4.0
-    )
-
+    return score_it((length + characters + correct_lines + attribution) / 4.0)
 
 
 def optimize(
-        examples: list[dspy.Example],
-        training_mode: Literal["light", "medium"],
+    examples: list[dspy.Example],
+    training_mode: Literal["light", "medium"],
 ) -> dspy.Module:
     task_lm, prompt_lm = init_llms()
     characters = [
-        load_character('uno'),
-        load_character('paperinik'),
+        load_character("uno"),
+        load_character("paperinik"),
         CharacterDescription(
-            name='other',
-            description='Any other character in the comic book.'
+            name="other", description="Any other character in the comic book."
         ),
     ]
     extractor = ExtractorModule(characters=characters)
@@ -220,38 +202,38 @@ def optimize(
 def classify_character(character: str) -> Character:
     """Classify the character based on the text."""
     match character.lower():
-        case 'uno':
-            return 'uno'
-        case 'pk' | 'paperinik':
-            return 'paperinik'
+        case "uno":
+            return "uno"
+        case "pk" | "paperinik":
+            return "paperinik"
         case _:
-            return 'other'
+            return "other"
 
 
 def parse_reviewed(line: str) -> dspy.Example | None:
     """Parse a line from the reviewed dataset."""
     data = json.loads(line)
-    dialogue = data['ocr']['dialogue']
+    dialogue = data["ocr"]["dialogue"]
 
     if not dialogue or len(dialogue) == 0:
         return None
 
     return dspy.Example(
-        page=dspy.Image.from_file(data['image']),
+        page=dspy.Image.from_file(data["image"]),
         dialogue=[
             ExtractedLine(
-                character=classify_character(line['character']),
-                text=line['text'],
+                character=classify_character(line["character"]),
+                text=line["text"],
             )
             for line in dialogue
-        ]
-    ).with_inputs('page')
+        ],
+    ).with_inputs("page")
 
 
 def build_dataset(examples_path: str) -> list[dspy.Example]:
     res = []
 
-    with open(examples_path, 'r') as f:
+    with open(examples_path, "r") as f:
         for line in f:
             example = parse_reviewed(line)
             if example:
@@ -269,9 +251,13 @@ def save_model(model: dspy.Module, output_path: str) -> None:
 
 
 def run_eval(model: dspy.Module, examples: list[dspy.Example]) -> None:
-    evaluator = Evaluate(devset=examples, num_threads=4,
-                         display_progress=True, display_table=True,
-                         return_outputs=True)
+    evaluator = Evaluate(
+        devset=examples,
+        num_threads=4,
+        display_progress=True,
+        display_table=True,
+        return_outputs=True,
+    )
     evaluator(model, metric=validate)
 
 

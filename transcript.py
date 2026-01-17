@@ -20,9 +20,9 @@ import PIL.ImageFile
 load_dotenv()
 
 # Flags
-default_model = 'gemini-2.5-flash-preview-04-17'
-#model_name = 'gemini-2.0-flash'
-#model_name = 'gemini-2.5-pro-exp-03-25'
+default_model = "gemini-2.5-flash-preview-04-17"
+# model_name = 'gemini-2.0-flash'
+# model_name = 'gemini-2.5-pro-exp-03-25'
 max_batch_size = 10
 min_default_batch_size = 8
 min_batch_size = 6
@@ -34,17 +34,19 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
     datefmt="[%X]",
-    handlers=[RichHandler(show_time=True, show_path=False)]
+    handlers=[RichHandler(show_time=True, show_path=False)],
 )
-log = logging.getLogger('rich')
+log = logging.getLogger("rich")
 
 
 class Caption(BaseModel):
     text: str
 
+
 class Bubble(BaseModel):
     text: str
     character: str
+
 
 class Frame(BaseModel):
     page: int | None
@@ -53,16 +55,17 @@ class Frame(BaseModel):
     bubbles: list[Bubble]
     description: str = Field(description="One sentence description of the frame")
 
+
 class Scene(BaseModel):
     frames: list[Frame]
     summary: str = Field(description="Brief summary of the scene")
+
 
 class Response(BaseModel):
     scenes: list[Scene]
 
 
 class ImageLoader:
-
     def __init__(self, pattern: str):
         self.paths = glob(pattern)
         self.paths.sort()
@@ -77,7 +80,7 @@ class ImageLoader:
     def get_batch(self) -> list[PIL.ImageFile.ImageFile]:
         if self.curr_index >= len(self.images):
             return []
-        batch = self.images[self.curr_index:self.curr_index + self.curr_batch_size]
+        batch = self.images[self.curr_index : self.curr_index + self.curr_batch_size]
         # Do not increment the index, wait for advance_batch
         return batch
 
@@ -90,11 +93,15 @@ class ImageLoader:
 
         self.curr_index += num_pages
         self.num_batch += 1
-        self.curr_batch_size = self._compute_batch_size(len(self.images) - self.curr_index)
+        self.curr_batch_size = self._compute_batch_size(
+            len(self.images) - self.curr_index
+        )
 
     def decrease_batch_size(self) -> None:
         if self.curr_batch_size <= min_batch_size:
-            raise ValueError(f"Batch size is already at minimum: {self.curr_batch_size}")
+            raise ValueError(
+                f"Batch size is already at minimum: {self.curr_batch_size}"
+            )
         self.curr_batch_size -= 1
 
     def _compute_batch_size(self, num_images: int) -> int:
@@ -113,12 +120,11 @@ class ImageLoader:
         return candidate
 
 
-
 # Load prompts
-with open('prompt.md', 'r') as f:
+with open("prompt.md", "r") as f:
     prompt = f.read().strip()
 prompt_version = hashlib.sha1(prompt.encode()).hexdigest()
-with open('output/characters/characters.json', 'r') as f:
+with open("output/characters/characters.json", "r") as f:
     characters = f.read().strip()
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
@@ -127,22 +133,22 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 class OverloadException(Exception):
     pass
 
+
 class BatchTooLargeException(Exception):
     pass
 
 
 def process_batch(model: str, batch: list[PIL.ImageFile.ImageFile]) -> Any:
-
     try:
         response = client.models.generate_content(
             model=model,
             config=types.GenerateContentConfig(
-                response_mime_type='application/json',
+                response_mime_type="application/json",
                 response_schema=Response.model_json_schema(),
                 max_output_tokens=65536,
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
-            contents=[prompt, characters] + batch, # type: ignore
+            contents=[prompt, characters] + batch,
         )
     except ServerError as e:
         log.error(f"Server error: {e}")
@@ -196,13 +202,15 @@ def process_all(images_pattern: str, model: str, output_dir: str) -> None:
             break
 
         log.info(f"Processing batch of {len(batch)} images...")
-        out_file = os.path.join(root_dir, f'out-{loader.get_num_batch()}.part.json')
+        out_file = os.path.join(root_dir, f"out-{loader.get_num_batch()}.part.json")
 
         if os.path.exists(out_file):
-            with open(out_file, 'r') as f:
+            with open(out_file, "r") as f:
                 resp = json.loads(f.read())
             num_pages = resp["metadata"]["num_pages"]
-            log.info(f"Batch {loader.get_num_batch()} ({num_pages} pages) already processed, skipping...")
+            log.info(
+                f"Batch {loader.get_num_batch()} ({num_pages} pages) already processed, skipping..."
+            )
             loader.advance_batch(num_pages)
             continue
 
@@ -224,16 +232,18 @@ def process_all(images_pattern: str, model: str, output_dir: str) -> None:
             continue
 
         # Write the response to a file
-        with open(out_file, 'w') as out:
+        with open(out_file, "w") as out:
             out.write(json.dumps(resp, indent=2, ensure_ascii=False))
 
         # Update the found pages
-        found_pages.update((
-            f["page"]
-            for s in resp["scenes"]
-            for f in s["frames"]
-            if f["page"] is not None
-        ))
+        found_pages.update(
+            (
+                f["page"]
+                for s in resp["scenes"]
+                for f in s["frames"]
+                if f["page"] is not None
+            )
+        )
 
         log.info(f"Response written to file: {out_file}")
         loader.advance_batch()
@@ -252,11 +262,15 @@ def process_all(images_pattern: str, model: str, output_dir: str) -> None:
 
 
 @click.command()
-@click.option('--model', default=default_model, help='Name of the model to use')
-@click.option('--images-pattern', default='*.jp*g', help='Pattern to load images from')
-@click.option('--output-dir', default='output', help='Directory to save the output files')
-@click.argument('directories', nargs=-1)
-def main(model: str, images_pattern: str, output_dir: str, directories: tuple[str, ...]):
+@click.option("--model", default=default_model, help="Name of the model to use")
+@click.option("--images-pattern", default="*.jp*g", help="Pattern to load images from")
+@click.option(
+    "--output-dir", default="output", help="Directory to save the output files"
+)
+@click.argument("directories", nargs=-1)
+def main(
+    model: str, images_pattern: str, output_dir: str, directories: tuple[str, ...]
+):
     try:
         for dir in directories:
             pattern = os.path.join(dir, images_pattern)

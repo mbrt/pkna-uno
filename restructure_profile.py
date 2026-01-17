@@ -15,6 +15,7 @@ this mainly serves as a validation and minor refinement step.
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from rich.logging import RichHandler
@@ -45,7 +46,7 @@ REQUIRED_SECTIONS = [
 ]
 
 
-def validate_profile_structure(content: str, tier_name: str) -> dict:
+def validate_profile_structure(content: str, tier_name: str) -> dict[str, Any]:
     """Validate that profile has required sections.
 
     Args:
@@ -55,7 +56,7 @@ def validate_profile_structure(content: str, tier_name: str) -> dict:
     Returns:
         Validation results dict
     """
-    results = {
+    results: dict[str, Any] = {
         "tier": tier_name,
         "sections_found": [],
         "sections_missing": [],

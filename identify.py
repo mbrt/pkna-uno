@@ -18,9 +18,9 @@ import PIL.ImageFile
 load_dotenv()
 
 # Flags
-images_pattern = 'input/pkna/pkna-0/*.jp*g'
-model_name = 'gemini-2.0-flash'
-#model_name = 'gemini-2.5-pro-exp-03-25'
+images_pattern = "input/pkna/pkna-0/*.jp*g"
+model_name = "gemini-2.0-flash"
+# model_name = 'gemini-2.5-pro-exp-03-25'
 max_retries = 3
 
 
@@ -29,22 +29,23 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
     datefmt="[%X]",
-    handlers=[RichHandler(show_time=True, show_path=False)]
+    handlers=[RichHandler(show_time=True, show_path=False)],
 )
-log = logging.getLogger('rich')
+log = logging.getLogger("rich")
 
 
 class Character(BaseModel):
     name: str
-    description: str = Field(description="Extensive description of the character appearance and personality")
+    description: str = Field(
+        description="Extensive description of the character appearance and personality"
+    )
+
 
 class Response(BaseModel):
     characters: list[Character]
 
-images = [
-    PIL.Image.open(p)
-    for p in glob(images_pattern)
-]
+
+images = [PIL.Image.open(p) for p in glob(images_pattern)]
 
 if len(images) == 0:
     log.error(f"No images found in {images_pattern}")
@@ -53,10 +54,10 @@ if len(images) == 0:
 log.info(f"Loaded {len(images)} images from {images_pattern}")
 
 # Load prompts
-with open('prompt-characters.md', 'r') as f:
+with open("prompt-characters.md", "r") as f:
     prompt = f.read().strip()
 prompt_version = hashlib.sha1(prompt.encode()).hexdigest()
-with open('../export/characters.json', 'r') as f:
+with open("../export/characters.json", "r") as f:
     characters = f.read().strip()
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
@@ -65,20 +66,20 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 class OverloadException(Exception):
     pass
 
+
 class BatchTooLargeException(Exception):
     pass
 
 
 def process_batch(batch: list[PIL.ImageFile.ImageFile]) -> Any:
-
     try:
         response = client.models.generate_content(
             model=model_name,
             config={
-                'response_mime_type': 'application/json',
-                'response_schema': Response,
+                "response_mime_type": "application/json",
+                "response_schema": Response,
             },
-            contents=[prompt, characters] + batch, # type: ignore
+            contents=[prompt, characters] + batch,
         )
     except ServerError as e:
         log.error(f"Server error: {e}")
@@ -104,16 +105,13 @@ def process_batch(batch: list[PIL.ImageFile.ImageFile]) -> Any:
     return parsed
 
 
-root_dir = os.path.join(
-    os.path.dirname(images_pattern),
-    model_name
-)
+root_dir = os.path.join(os.path.dirname(images_pattern), model_name)
 os.makedirs(root_dir, exist_ok=True)
 
 retries = 0
 
 while True:
-    out_file = os.path.join(root_dir, 'characters-id.json')
+    out_file = os.path.join(root_dir, "characters-id.json")
 
     try:
         resp = process_batch(images)
@@ -128,7 +126,7 @@ while True:
         continue
 
     # Write the response to a file
-    with open(out_file, 'w') as out:
+    with open(out_file, "w") as out:
         out.write(json.dumps(resp, indent=2, ensure_ascii=False))
 
     log.info(f"Response written to file: {out_file}")

@@ -31,6 +31,35 @@ Multi-stage ML pipeline for extracting structured data from Italian comic books 
 ./generate_from_character_profile.py --questions "Who are you?" "Do you need sleep?"
 ```
 
+## Development
+
+### Running Tests
+
+The project uses `make` for common development tasks. All commands use `uv run` to execute tools.
+
+```bash
+# Run all checks (format check, lint, typecheck) and tests
+make test
+
+# Format all Python files
+make format
+
+# Run linters only
+make lint
+
+# Clean Python cache files
+make clean
+```
+
+### Code Quality Tools
+
+The project uses the following tools (all run via `uv run`):
+- **ruff**: Code formatting and linting
+- **ty**: Static type checking
+- **pytest**: Test runner
+
+All tools are configured in `pyproject.toml` and run automatically with `make test`.
+
 ## Pipeline Stages
 
 ### Stage 1: Comic Data Extraction

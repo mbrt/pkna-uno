@@ -3,9 +3,10 @@
 import sys
 import tiktoken
 
+
 def count_tokens(file_path: str) -> int:
     """Count tokens in a file using tiktoken (OpenAI's tokenizer)."""
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         content = f.read()
 
     # Use cl100k_base encoding (used by GPT-4, GPT-3.5-turbo)
@@ -14,6 +15,7 @@ def count_tokens(file_path: str) -> int:
     tokens = encoding.encode(content)
 
     return len(tokens)
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

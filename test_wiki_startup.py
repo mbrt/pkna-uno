@@ -31,7 +31,7 @@ def main() -> None:
     results = search_wiki("Xadhoom", max_results=3)
     search_time = time.time() - start
 
-    console.print(f"   ✓ Search completed in {search_time*1000:.1f}ms")
+    console.print(f"   ✓ Search completed in {search_time * 1000:.1f}ms")
     console.print(f"   Results preview:\n{results[:300]}...\n")
 
     # Test 3: Read segment functionality
@@ -42,7 +42,7 @@ def main() -> None:
         content = read_wiki_segment(segment_id)
         read_time = time.time() - start
 
-        console.print(f"   ✓ Read completed in {read_time*1000:.1f}ms")
+        console.print(f"   ✓ Read completed in {read_time * 1000:.1f}ms")
         console.print(f"   Content preview:\n{content[:200]}...\n")
 
     # Test 4: Verify hierarchical structure

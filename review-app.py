@@ -53,7 +53,9 @@ with col1:
 
 with col2:
     st.subheader("Edit OCR JSON")
-    edited_text = st.text_area("OCR JSON", json.dumps(ocr_data, indent=2, ensure_ascii=False), height=400)
+    edited_text = st.text_area(
+        "OCR JSON", json.dumps(ocr_data, indent=2, ensure_ascii=False), height=400
+    )
 
     if st.button("✅ Save & Next"):
         try:

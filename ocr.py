@@ -17,14 +17,14 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Initialize LLM
 llm = LLM(model=MODEL_PATH, limit_mm_per_prompt={"image": 1})
 
-sampling_params = SamplingParams(
-    temperature=0.0,
-    max_tokens=8192)
+sampling_params = SamplingParams(temperature=0.0, max_tokens=8192)
 
 chat_template = f"""<|im_start|>User:<image>{PROMPT_TEXT}<end_of_utterance>
 Assistant:"""
 
-image_files = sorted([f for f in os.listdir(IMAGE_DIR) if f.lower().endswith((".png", ".jpg", ".jpeg"))])
+image_files = sorted(
+    [f for f in os.listdir(IMAGE_DIR) if f.lower().endswith((".png", ".jpg", ".jpeg"))]
+)
 
 start_time = time.time()
 total_tokens = 0
@@ -35,7 +35,7 @@ for idx, img_file in enumerate(image_files, 1):
     image = Image.open(img_path).convert("RGB")
 
     llm_input = {"prompt": chat_template, "multi_modal_data": {"image": image}}
-    output = llm.generate([llm_input], sampling_params=sampling_params)[0]  # type: ignore
+    output = llm.generate([llm_input], sampling_params=sampling_params)[0]
 
     doctags = output.outputs[0].text
     img_fn = os.path.splitext(img_file)[0]

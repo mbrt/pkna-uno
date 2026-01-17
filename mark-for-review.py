@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import os
 import json
 import sys
 
@@ -61,7 +60,7 @@ output_data = []
 try:
     with open(OUTPUT_PATH, "r", encoding="utf-8") as f:
         output_data = json.load(f)
-except:
+except FileNotFoundError:
     pass
 
 
@@ -71,7 +70,7 @@ output_item = {
     "ocr": {
         "dialogue": input_data["extracted"]["dialogue"],
     },
-    "full": input_data["extracted"]
+    "full": input_data["extracted"],
 }
 output_data.append(output_item)
 
