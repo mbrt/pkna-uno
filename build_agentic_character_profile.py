@@ -51,9 +51,8 @@ MODEL_NAME = "gemini-3-flash-preview"
 CHARACTER_NAME = "Uno"
 TARGET_MAX_TOKENS = 7000
 ENCODING_NAME = "cl100k_base"
-MAX_RETRIES = 3
 VERSION_TAG = "v7"
-MAX_TOOL_ITERATIONS = 20
+MAX_TOOL_ITERATIONS = 64
 MAX_CONDENSE_ITERATIONS = 5
 
 # Paths
@@ -116,6 +115,15 @@ def count_tokens(text: str) -> int:
     """Count tokens in text using tiktoken."""
     encoding = tiktoken.get_encoding(ENCODING_NAME)
     return len(encoding.encode(text))
+
+
+def path_str(path: Path) -> str:
+    """Get a pretty string for a Path relative to BASE_DIR."""
+    try:
+        rel_path = path.relative_to(BASE_DIR)
+    except ValueError:
+        rel_path = path
+    return str(rel_path)
 
 
 # ============================================================================
@@ -410,13 +418,41 @@ def save_checkpoint_with_diff(
         old_checkpoint = CHECKPOINTS_DIR / f"checkpoint_{checkpoint_num - 3:03d}.md"
         if old_checkpoint.exists():
             old_checkpoint.unlink()
-            log.debug(f"Deleted old checkpoint: {old_checkpoint}")
 
     tokens = count_tokens(current_content)
-    rel_path = checkpoint_path.relative_to(BASE_DIR)
-    log.debug(f"Saved checkpoint {checkpoint_num}: {rel_path} ({tokens} tokens)")
+    log.debug(
+        f"Saved checkpoint {checkpoint_num}: {path_str(checkpoint_path)} ({tokens} tokens)"
+    )
 
     return current_content
+
+
+def find_latest_checkpoint() -> tuple[int, str] | None:
+    """Find the latest checkpoint and return its number and content.
+
+    Returns:
+        Tuple of (checkpoint_number, content) if a checkpoint exists,
+        None otherwise.
+    """
+    if not CHECKPOINTS_DIR.exists():
+        return None
+
+    checkpoint_files = sorted(CHECKPOINTS_DIR.glob("checkpoint_*.md"))
+    if not checkpoint_files:
+        return None
+
+    # Get the latest checkpoint (highest number)
+    latest = checkpoint_files[-1]
+
+    # Extract checkpoint number from filename (checkpoint_XXX.md)
+    try:
+        checkpoint_num = int(latest.stem.split("_")[1])
+    except (IndexError, ValueError):
+        log.warning(f"Could not parse checkpoint number from {latest}")
+        return None
+
+    content = latest.read_text(encoding="utf-8")
+    return checkpoint_num, content
 
 
 # ============================================================================
@@ -431,7 +467,7 @@ def get_system_prompt(target_tokens: int) -> str:
 You will be given scenes one at a time. For each scene, you should:
 1. Use read_document() to examine the current document
 2. Use edit_document() to update sections with new insights from the scene
-3. When you're done editing for this scene, respond with a brief summary of what you updated
+3. When you're done editing for this scene, respond with a one-line summary of what you updated
 
 ## Available Tools
 
@@ -472,6 +508,7 @@ When the document approaches or exceeds this target:
 - Keep only the most illustrative examples
 - Merge redundant content
 - Remove weaker observations in favor of stronger ones
+- Do not over-condense; aim for a 10-20% reduction per pass
 
 If you're asked to condense the document, focus on preserving the most distinctive and well-supported insights.
 
@@ -717,14 +754,28 @@ def main() -> None:
     CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
     DIFFS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Save seed document
-    seed_path = OUTPUT_DIR / "seed_document.md"
-    with open(seed_path, "w", encoding="utf-8") as f:
-        f.write(SEED_DOCUMENT)
-    log.info(f"Saved seed document to {seed_path}")
+    # Check for existing checkpoint to resume from
+    start_scene = 1
+    previous_content: str | None = None
 
-    # Initialize document and processor
-    document = LineBasedDocument(SEED_DOCUMENT)
+    checkpoint_info = find_latest_checkpoint()
+    if checkpoint_info:
+        checkpoint_num, checkpoint_content = checkpoint_info
+        document = LineBasedDocument(checkpoint_content)
+        start_scene = checkpoint_num + 1
+        previous_content = checkpoint_content
+        log.info(
+            f"Resuming from checkpoint {checkpoint_num} "
+            f"({count_tokens(checkpoint_content)} tokens)"
+        )
+    else:
+        document = LineBasedDocument(SEED_DOCUMENT)
+        # Save seed document only on fresh start
+        seed_path = OUTPUT_DIR / "seed_document.md"
+        with open(seed_path, "w", encoding="utf-8") as f:
+            f.write(SEED_DOCUMENT)
+        log.info(f"Starting fresh, saved seed document to {path_str(seed_path)}")
+
     client = genai.Client()
     processor = SceneProcessor(client, document)
 
@@ -741,20 +792,31 @@ def main() -> None:
 
     log.info(f"Total: {len(all_scenes)} scenes with Uno across all issues")
 
-    # Open processing log file
+    # Check if already complete
+    if start_scene > len(all_scenes):
+        log.info("All scenes already processed!")
+        return
+
+    remaining_scenes = len(all_scenes) - start_scene + 1
+    log.info(
+        f"Processing scenes {start_scene} to {len(all_scenes)} ({remaining_scenes} remaining)"
+    )
+
+    # Open processing log file (append mode for resume support)
     log_path = OUTPUT_DIR / "processing_log.jsonl"
 
     # Process each scene
     successful_count = 0
-    previous_content: str | None = None
 
-    with open(log_path, "w", encoding="utf-8") as log_file:
+    with open(log_path, "a", encoding="utf-8") as log_file:
         with PROGRESS as progress:
-            for i, scene in progress.track(
-                enumerate(all_scenes, 1),
+            task = progress.add_task(
+                "Building character profile...",
                 total=len(all_scenes),
-                description="Building character profile...",
-            ):
+                completed=start_scene - 1,
+            )
+            for i in range(start_scene, len(all_scenes) + 1):
+                scene = all_scenes[i - 1]  # Convert to 0-indexed
                 log.info(f"\nProcessing scene {i}/{len(all_scenes)}: {scene.issue}")
 
                 success, summary = processor.process_scene(scene, i)
@@ -780,6 +842,8 @@ def main() -> None:
                 log_file.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
                 log_file.flush()
 
+                progress.update(task, completed=i)
+
     # Save final document
     final_path = OUTPUT_DIR / "uno_profile.md"
     document.save(final_path)
@@ -788,13 +852,15 @@ def main() -> None:
     final_words = len(document.get_content().split())
 
     # Print summary
+    scenes_this_run = len(all_scenes) - start_scene + 1
     console.print()
     console.print("[bold green]Profile Building Complete![/bold green]\n")
-    console.print(f"Total scenes processed: {len(all_scenes)}")
+    console.print(f"Total scenes: {len(all_scenes)}")
+    console.print(f"Scenes processed this run: {scenes_this_run}")
     console.print(f"Successful updates: {successful_count}")
-    console.print(f"Failed updates: {len(all_scenes) - successful_count}")
+    console.print(f"Failed updates: {scenes_this_run - successful_count}")
     console.print()
-    console.print(f"[bold]Final profile:[/bold] {final_path}")
+    console.print(f"[bold]Final profile:[/bold] {path_str(final_path)}")
     console.print(f"  Size: {final_tokens:,} tokens (~{final_words:,} words)")
     console.print(f"  Target: {TARGET_MAX_TOKENS:,} tokens")
     if final_tokens <= TARGET_MAX_TOKENS:
@@ -803,7 +869,7 @@ def main() -> None:
         overage = final_tokens - TARGET_MAX_TOKENS
         console.print(f"  [yellow]{overage:,} tokens over target[/yellow]")
 
-    console.print(f"\nProcessing log: {log_path}")
+    console.print(f"\nProcessing log: {path_str(log_path)}")
     console.print(f"Checkpoints: {CHECKPOINTS_DIR}/")
 
 
