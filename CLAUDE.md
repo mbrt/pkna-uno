@@ -21,17 +21,7 @@ source .venv/bin/activate
 ### Running Tests
 
 ```bash
-# Run all tests
-pytest
-
-# Run specific test file
-pytest tests/test_document_structure.py
-
-# Run tests with verbose output
-pytest -v
-
-# Run specific test by name
-pytest tests/test_document_structure.py::test_modify_line
+make test
 ```
 
 ### Main Pipeline Scripts

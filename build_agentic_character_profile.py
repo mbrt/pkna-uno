@@ -54,6 +54,7 @@ ENCODING_NAME = "cl100k_base"
 MAX_RETRIES = 3
 VERSION_TAG = "v7"
 MAX_TOOL_ITERATIONS = 20
+MAX_CONDENSE_ITERATIONS = 5
 
 # Paths
 BASE_DIR = Path(__file__).parent
@@ -214,68 +215,6 @@ class LineBasedDocument:
         current_sections = extract_section_headers(self.get_content())
         missing = required_sections - current_sections
         return len(missing) == 0, sorted(missing)
-
-
-# ============================================================================
-# Global Document Reference (for tool functions)
-# ============================================================================
-
-_current_document: LineBasedDocument | None = None
-
-
-def str_info(a: str) -> str:
-    return f"{count_tokens(a)} tokens, {len(a.splitlines())} lines"
-
-
-def read_document(offset: int = 1, limit: int | None = None) -> str:
-    """Read lines from the character profile document.
-
-    Use this to examine the current document content before making edits.
-
-    Args:
-        offset: 1-indexed line number to start reading (default: 1)
-        limit: Number of lines to read (default: all remaining)
-
-    Returns:
-        Document content with numbered lines and stats header:
-        "Total: X lines, Y tokens\\n1: content\\n2: content\\n..."
-    """
-    log.debug(f"[read_document] offset={offset}, limit={limit}")
-    if _current_document is None:
-        return "Error: No document loaded."
-
-    content = _current_document.get_content()
-    total_lines = len(_current_document._lines)
-    total_tokens = count_tokens(content)
-
-    header = f"Total: {total_lines} lines, {total_tokens} tokens\n"
-    lines = _current_document.get_lines(offset, limit)
-
-    return header + lines
-
-
-def edit_document(old_text: str, new_text: str) -> str:
-    """Edit the character profile document by replacing text.
-
-    The old_text must be found exactly once in the document for the edit
-    to succeed. If you need to replace text that appears multiple times,
-    include more surrounding context to make it unique.
-
-    Args:
-        old_text: Exact text to find and replace (must be unique)
-        new_text: Replacement text
-
-    Returns:
-        Success message with new document stats, or error message
-    """
-    log.debug(
-        f"[edit_document] old_text='{str_info(old_text)}', new_text='{str_info(new_text)}'"
-    )
-    if _current_document is None:
-        return "Error: No document loaded."
-
-    _, message = _current_document.edit(old_text, new_text)
-    return message
 
 
 # ============================================================================
@@ -571,73 +510,146 @@ def format_scene_prompt(scene: Scene) -> str:
 Use read_document() to see the current profile, then use edit_document() to add any new insights about Uno's character. When done, provide a brief summary of your updates."""
 
 
-def process_scene(
-    client: genai.Client, document: LineBasedDocument, scene: Scene, scene_number: int
-) -> tuple[bool, str]:
-    """Process a single scene using agentic editing.
+# ============================================================================
+# SceneProcessor Class
+# ============================================================================
 
-    Returns:
-        Tuple of (success, summary_or_error)
+
+def _str_info(a: str) -> str:
+    return f"{count_tokens(a)} tokens, {len(a.splitlines())} lines"
+
+
+class SceneProcessor:
+    """Processes scenes and updates the character profile document.
+
+    Encapsulates the document and provides tool methods as bound methods,
+    eliminating the need for global state.
     """
-    global _current_document
-    _current_document = document
 
-    tools = [read_document, edit_document]
-
-    config = GenerateContentConfig(
-        system_instruction=get_system_prompt(TARGET_MAX_TOKENS),
-        temperature=0.8,
-        top_p=0.95,
-        tools=tools,
-    )
-
-    scene_prompt = format_scene_prompt(scene)
-    conversation: list[Content] = [
-        Content(role="user", parts=[Part.from_text(text=scene_prompt)])
-    ]
-
-    try:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=conversation,  # type: ignore[arg-type]
-            config=config,
+    def __init__(self, client: genai.Client, document: LineBasedDocument):
+        self._client = client
+        self._document = document
+        self._config = GenerateContentConfig(
+            system_instruction=get_system_prompt(TARGET_MAX_TOKENS),
+            temperature=0.8,
+            top_p=0.95,
+            tools=[self.read_document, self.edit_document],
         )
 
-        # The SDK handles automatic function calling
-        # The final response.text contains the model's summary
-        summary = response.text or "No summary provided"
+    def read_document(self, offset: int = 1, limit: int | None = None) -> str:
+        """Read lines from the character profile document.
 
-        # Validate structure after editing
-        is_valid, missing = document.validate_structure(REQUIRED_SECTIONS)
-        if not is_valid:
-            log.error(f"Scene {scene_number}: Structure broken! Missing: {missing}")
-            return False, f"Structure validation failed: missing {missing}"
+        Use this to examine the current document content before making edits.
 
-        log.info(f"Scene {scene_number}: {summary[:100]}...")
-        return True, summary
+        Args:
+            offset: 1-indexed line number to start reading (default: 1)
+            limit: Number of lines to read (default: all remaining)
 
-    except Exception as e:
-        log.error(f"Scene {scene_number}: Error - {e}")
-        return False, str(e)
+        Returns:
+            Document content with numbered lines and stats header:
+            "Total: X lines, Y tokens\\n1: content\\n2: content\\n..."
+        """
+        log.debug(f"[read_document] offset={offset}, limit={limit}")
 
+        content = self._document.get_content()
+        total_lines = len(self._document._lines)
+        total_tokens = count_tokens(content)
 
-def condense_document(
-    client: genai.Client, document: LineBasedDocument, current_tokens: int
-) -> None:
-    """Prompt the model to condense the document."""
-    global _current_document
-    _current_document = document
+        header = f"Total: {total_lines} lines, {total_tokens} tokens\n"
+        lines = self._document.get_lines(offset, limit)
 
-    tools = [read_document, edit_document]
+        return header + lines
 
-    config = GenerateContentConfig(
-        system_instruction=get_system_prompt(TARGET_MAX_TOKENS),
-        temperature=0.8,
-        top_p=0.95,
-        tools=tools,
-    )
+    def edit_document(self, old_text: str, new_text: str) -> str:
+        """Edit the character profile document by replacing text.
 
-    condense_prompt = f"""The document is currently {current_tokens} tokens, which is above the target of {TARGET_MAX_TOKENS} tokens.
+        The old_text must be found exactly once in the document for the edit
+        to succeed. If you need to replace text that appears multiple times,
+        include more surrounding context to make it unique.
+
+        Args:
+            old_text: Exact text to find and replace (must be unique)
+            new_text: Replacement text
+
+        Returns:
+            Success message with new document stats, or error message
+        """
+        log.debug(
+            f"[edit_document] old_text='{_str_info(old_text)}', "
+            f"new_text='{_str_info(new_text)}'"
+        )
+
+        _, message = self._document.edit(old_text, new_text)
+        return message
+
+    def process_scene(self, scene: Scene, scene_number: int) -> tuple[bool, str]:
+        """Process a single scene using agentic editing.
+
+        After processing the scene, checks if the document exceeds the token limit
+        and runs condensation passes (continuing the same conversation) until
+        it's within the target.
+
+        Returns:
+            Tuple of (success, summary_or_error)
+        """
+        scene_prompt = format_scene_prompt(scene)
+        conversation: list[Content] = [
+            Content(role="user", parts=[Part.from_text(text=scene_prompt)])
+        ]
+
+        try:
+            response = self._client.models.generate_content(
+                model=MODEL_NAME,
+                contents=conversation,  # type: ignore[arg-type]
+                config=self._config,
+            )
+
+            # The SDK handles automatic function calling
+            # The final response.text contains the model's summary
+            summary = response.text or "No summary provided"
+
+            # Update conversation with the model's response for potential continuation
+            if response.candidates and response.candidates[0].content:
+                conversation.append(response.candidates[0].content)
+
+            # Validate structure after editing
+            is_valid, missing = self._document.validate_structure(REQUIRED_SECTIONS)
+            if not is_valid:
+                log.error(f"Scene {scene_number}: Structure broken! Missing: {missing}")
+                return False, f"Structure validation failed: missing {missing}"
+
+            log.info(f"Scene {scene_number}: {summary[:100]}...")
+
+            # Condense if over token limit (continues the same conversation)
+            self._condense_if_needed(conversation)
+
+            return True, summary
+
+        except Exception as e:
+            log.error(f"Scene {scene_number}: Error - {e}")
+            return False, str(e)
+
+    def _condense_if_needed(self, conversation: list[Content]) -> None:
+        """Condense the document if it exceeds the token limit.
+
+        Continues the existing conversation with condensation prompts until
+        the document is within TARGET_MAX_TOKENS or MAX_CONDENSE_ITERATIONS
+        is reached.
+
+        Args:
+            conversation: The conversation history to continue.
+        """
+        for iteration in range(MAX_CONDENSE_ITERATIONS):
+            current_tokens = count_tokens(self._document.get_content())
+            if current_tokens <= TARGET_MAX_TOKENS:
+                return
+
+            log.info(
+                f"Document at {current_tokens} tokens "
+                f"(target: {TARGET_MAX_TOKENS}), condensing (pass {iteration + 1})..."
+            )
+
+            condense_prompt = f"""The document is currently {current_tokens} tokens, which is above the target of {TARGET_MAX_TOKENS} tokens.
 
 Please condense the document by:
 1. Consolidating similar traits into broader patterns
@@ -649,23 +661,44 @@ Use read_document() to see the current content, then use edit_document() to make
 
 When done, provide a brief summary of what you condensed."""
 
-    conversation: list[Content] = [
-        Content(role="user", parts=[Part.from_text(text=condense_prompt)])
-    ]
+            # Continue the conversation with the condense prompt
+            conversation.append(
+                Content(role="user", parts=[Part.from_text(text=condense_prompt)])
+            )
 
-    try:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=conversation,  # type: ignore[arg-type]
-            config=config,
-        )
+            try:
+                response = self._client.models.generate_content(
+                    model=MODEL_NAME,
+                    contents=conversation,  # type: ignore[arg-type]
+                    config=self._config,
+                )
 
-        summary = response.text or "No summary"
-        new_tokens = count_tokens(document.get_content())
-        log.info(f"Condensation: {current_tokens} -> {new_tokens} tokens. {summary}")
+                # Update conversation with the model's response
+                if response.candidates and response.candidates[0].content:
+                    conversation.append(response.candidates[0].content)
 
-    except Exception as e:
-        log.error(f"Condensation error: {e}")
+                summary = response.text or "No summary"
+                new_tokens = count_tokens(self._document.get_content())
+                log.info(
+                    f"Condensation: {current_tokens} -> {new_tokens} tokens. {summary}"
+                )
+
+                # If no progress was made, stop trying
+                if new_tokens >= current_tokens:
+                    log.warning("Condensation made no progress, stopping.")
+                    return
+
+            except Exception as e:
+                log.error(f"Condensation error: {e}")
+                return
+
+        # If we exit the loop, we've hit max iterations
+        final_tokens = count_tokens(self._document.get_content())
+        if final_tokens > TARGET_MAX_TOKENS:
+            log.warning(
+                f"Document still at {final_tokens} tokens after "
+                f"{MAX_CONDENSE_ITERATIONS} condensation passes."
+            )
 
 
 # ============================================================================
@@ -690,11 +723,10 @@ def main() -> None:
         f.write(SEED_DOCUMENT)
     log.info(f"Saved seed document to {seed_path}")
 
-    # Initialize document
+    # Initialize document and processor
     document = LineBasedDocument(SEED_DOCUMENT)
-
-    # Initialize Gemini client
     client = genai.Client()
+    processor = SceneProcessor(client, document)
 
     # Collect all scenes with Uno
     log.info("Scanning for scenes containing Uno...")
@@ -725,18 +757,10 @@ def main() -> None:
             ):
                 log.info(f"\nProcessing scene {i}/{len(all_scenes)}: {scene.issue}")
 
-                success, summary = process_scene(client, document, scene, i)
+                success, summary = processor.process_scene(scene, i)
 
                 if success:
                     successful_count += 1
-
-                # Check token count and condense if needed
-                current_tokens = count_tokens(document.get_content())
-                if current_tokens > TARGET_MAX_TOKENS:
-                    log.info(
-                        f"Document at {current_tokens} tokens (target: {TARGET_MAX_TOKENS}), condensing..."
-                    )
-                    condense_document(client, document, current_tokens)
 
                 # Save checkpoint with diff
                 previous_content = save_checkpoint_with_diff(
