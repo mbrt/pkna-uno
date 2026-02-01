@@ -34,13 +34,17 @@ load_dotenv()
 
 # Configure logging
 console = Console(stderr=True)
+# Silent root, use module loggers
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.CRITICAL,
     format="%(message)s",
     datefmt="[%X]",
     handlers=[RichHandler(console=console, show_time=True, show_path=False)],
 )
+# Explicit module logger
 log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
+
 
 # Settings
 MODEL_NAME = "gemini-3-flash-preview"
@@ -219,6 +223,10 @@ class LineBasedDocument:
 _current_document: LineBasedDocument | None = None
 
 
+def str_info(a: str) -> str:
+    return f"{count_tokens(a)} tokens, {len(a.splitlines())} lines"
+
+
 def read_document(offset: int = 1, limit: int | None = None) -> str:
     """Read lines from the character profile document.
 
@@ -232,6 +240,7 @@ def read_document(offset: int = 1, limit: int | None = None) -> str:
         Document content with numbered lines and stats header:
         "Total: X lines, Y tokens\\n1: content\\n2: content\\n..."
     """
+    log.debug(f"[read_document] offset={offset}, limit={limit}")
     if _current_document is None:
         return "Error: No document loaded."
 
@@ -259,6 +268,9 @@ def edit_document(old_text: str, new_text: str) -> str:
     Returns:
         Success message with new document stats, or error message
     """
+    log.debug(
+        f"[edit_document] old_text='{str_info(old_text)}', new_text='{str_info(new_text)}'"
+    )
     if _current_document is None:
         return "Error: No document loaded."
 
@@ -431,8 +443,6 @@ def generate_and_save_diff(
         diff_path.parent.mkdir(parents=True, exist_ok=True)
         with open(diff_path, "w", encoding="utf-8") as f:
             f.write(diff_output)
-
-        log.debug(f"Saved diff to {diff_path}")
     finally:
         Path(old_path).unlink()
         Path(new_path).unlink()
@@ -464,7 +474,8 @@ def save_checkpoint_with_diff(
             log.debug(f"Deleted old checkpoint: {old_checkpoint}")
 
     tokens = count_tokens(current_content)
-    log.debug(f"Saved checkpoint {checkpoint_num}: {checkpoint_path} ({tokens} tokens)")
+    rel_path = checkpoint_path.relative_to(BASE_DIR)
+    log.debug(f"Saved checkpoint {checkpoint_num}: {rel_path} ({tokens} tokens)")
 
     return current_content
 
@@ -502,6 +513,7 @@ When editing:
 - Replace placeholder text like "To be developed..." with actual content
 - Add new observations to appropriate sections
 - Preserve existing content unless you're consolidating or correcting
+- You can add new subsections if needed, especially for relationships, but keep the overall structure consistent
 
 ## Content Guidelines
 
@@ -693,7 +705,6 @@ def main() -> None:
 
     for issue_dir in issue_dirs:
         scenes = extract_scenes_from_issue(issue_dir)
-        log.info(f"Found {len(scenes)} scenes with Uno in {issue_dir.name}")
         all_scenes.extend(scenes)
 
     log.info(f"Total: {len(all_scenes)} scenes with Uno across all issues")
