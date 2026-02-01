@@ -616,7 +616,9 @@ class SceneProcessor:
             f"new_text='{_str_info(new_text)}'"
         )
 
-        _, message = self._document.edit(old_text, new_text)
+        ok, message = self._document.edit(old_text, new_text)
+        if not ok:
+            log.warning(f"[edit_document] Edit failed: {message}")
         return message
 
     def process_scene(self, scene: Scene, scene_number: int) -> tuple[bool, str]:
@@ -690,9 +692,13 @@ class SceneProcessor:
 
 Please condense the document by:
 1. Consolidating similar traits into broader patterns
-2. Keeping only the most illustrative examples
-3. Removing redundant or weaker observations
-4. Merging content where appropriate
+2. Removing redundant observations
+3. Merging content where appropriate
+4. Prioritize preserving communication style with the key relationships (Paperinik, Everett, Due)
+
+Make sure to:
+- Not over-condense; aim for a 10-20% reduction
+- Not generalizing to the point of making the profile vague
 
 Use read_document() to see the current content, then use edit_document() to make your changes. Aim to reduce the document to around {TARGET_MAX_TOKENS} tokens while preserving the most important character insights.
 
