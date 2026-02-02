@@ -16,16 +16,24 @@ Key features:
 
 import json
 import logging
+import random
 import re
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import tiktoken
 from dotenv import load_dotenv
 from google import genai
-from google.genai.types import Content, GenerateContentConfig, Part
+from google.genai.types import (
+    Content,
+    GenerateContentConfig,
+    GenerateContentResponse,
+    HttpOptions,
+    Part,
+)
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
@@ -54,6 +62,14 @@ ENCODING_NAME = "cl100k_base"
 VERSION_TAG = "v7"
 MAX_TOOL_ITERATIONS = 64
 MAX_CONDENSE_ITERATIONS = 5
+MAX_STRUCTURE_FIX_ATTEMPTS = 3
+
+# Retry settings for API calls
+MAX_RETRIES = 5
+INITIAL_BACKOFF_SECONDS = 2.0
+MAX_BACKOFF_SECONDS = 60.0
+BACKOFF_MULTIPLIER = 2.0
+API_TIMEOUT_SECONDS = 300  # 5 minutes per API call
 
 # Paths
 BASE_DIR = Path(__file__).parent
@@ -621,6 +637,56 @@ class SceneProcessor:
             log.warning(f"[edit_document] Edit failed: {message}")
         return message
 
+    def _generate_with_retry(
+        self, conversation: list[Content]
+    ) -> GenerateContentResponse | None:
+        """Call generate_content with retry on resource exhausted and timeout errors.
+
+        Returns:
+            The response content on success, None if all retries failed.
+
+        Raises:
+            Exception: If a non-retryable error occurs.
+        """
+        backoff = INITIAL_BACKOFF_SECONDS
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = self._client.models.generate_content(
+                    model=MODEL_NAME,
+                    contents=conversation,  # type: ignore[arg-type]
+                    config=self._config,
+                )
+                return response
+            except Exception as e:
+                error_str = str(e).lower()
+                is_timeout = "timeout" in error_str or "timed out" in error_str
+                is_rate_limited = (
+                    "resource" in error_str and "exhausted" in error_str
+                ) or "429" in error_str
+                is_retryable = is_timeout or is_rate_limited
+
+                if not is_retryable:
+                    raise
+
+                if attempt == MAX_RETRIES - 1:
+                    log.error(f"Max retries ({MAX_RETRIES}) exceeded: {e}")
+                    return None
+
+                # Add jitter: ±25% of backoff
+                jitter = backoff * 0.25 * (2 * random.random() - 1)
+                sleep_time = min(backoff + jitter, MAX_BACKOFF_SECONDS)
+
+                error_type = "Timeout" if is_timeout else "Resource exhausted"
+                log.warning(
+                    f"{error_type} (attempt {attempt + 1}/{MAX_RETRIES}), "
+                    f"retrying in {sleep_time:.1f}s..."
+                )
+                time.sleep(sleep_time)
+                backoff = min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF_SECONDS)
+
+        return None
+
     def process_scene(self, scene: Scene, scene_number: int) -> tuple[bool, str]:
         """Process a single scene using agentic editing.
 
@@ -637,11 +703,9 @@ class SceneProcessor:
         ]
 
         try:
-            response = self._client.models.generate_content(
-                model=MODEL_NAME,
-                contents=conversation,  # type: ignore[arg-type]
-                config=self._config,
-            )
+            response = self._generate_with_retry(conversation)
+            if response is None:
+                return False, "API call failed after retries"
 
             # The SDK handles automatic function calling
             # The final response.text contains the model's summary
@@ -651,10 +715,44 @@ class SceneProcessor:
             if response.candidates and response.candidates[0].content:
                 conversation.append(response.candidates[0].content)
 
-            # Validate structure after editing
+            # Validate structure after editing, retry with feedback if broken
             is_valid, missing = self._document.validate_structure(REQUIRED_SECTIONS)
+            fix_attempt = 0
+
+            while not is_valid and fix_attempt < MAX_STRUCTURE_FIX_ATTEMPTS:
+                fix_attempt += 1
+                log.warning(
+                    f"Scene {scene_number}: Structure broken (attempt {fix_attempt}/"
+                    f"{MAX_STRUCTURE_FIX_ATTEMPTS}). Missing: {missing}"
+                )
+
+                fix_prompt = f"""Your last edit broke the document structure. The following required section headers are missing:
+
+{chr(10).join(f"- {s}" for s in missing)}
+
+Please use read_document() to examine the current document, then use edit_document() to restore the missing sections. You must preserve the exact header format (e.g., "## Essential Identity", "### What Uno Does").
+
+When done, confirm what you fixed."""
+
+                conversation.append(
+                    Content(role="user", parts=[Part.from_text(text=fix_prompt)])
+                )
+
+                fix_response = self._generate_with_retry(conversation)
+                if fix_response is None:
+                    log.error("Structure fix failed after retries")
+                    return False, "Structure fix API call failed"
+
+                if fix_response.candidates and fix_response.candidates[0].content:
+                    conversation.append(fix_response.candidates[0].content)
+
+                is_valid, missing = self._document.validate_structure(REQUIRED_SECTIONS)
+
             if not is_valid:
-                log.error(f"Scene {scene_number}: Structure broken! Missing: {missing}")
+                log.error(
+                    f"Scene {scene_number}: Structure still broken after "
+                    f"{MAX_STRUCTURE_FIX_ATTEMPTS} fix attempts. Missing: {missing}"
+                )
                 return False, f"Structure validation failed: missing {missing}"
 
             log.info(f"Scene {scene_number}: {summary[:100]}...")
@@ -710,11 +808,10 @@ When done, provide a brief summary of what you condensed."""
             )
 
             try:
-                response = self._client.models.generate_content(
-                    model=MODEL_NAME,
-                    contents=conversation,  # type: ignore[arg-type]
-                    config=self._config,
-                )
+                response = self._generate_with_retry(conversation)
+                if response is None:
+                    log.error("Condensation failed after retries")
+                    return
 
                 # Update conversation with the model's response
                 if response.candidates and response.candidates[0].content:
@@ -782,7 +879,7 @@ def main() -> None:
             f.write(SEED_DOCUMENT)
         log.info(f"Starting fresh, saved seed document to {path_str(seed_path)}")
 
-    client = genai.Client()
+    client = genai.Client(http_options=HttpOptions(timeout=API_TIMEOUT_SECONDS * 1000))
     processor = SceneProcessor(client, document)
 
     # Collect all scenes with Uno
