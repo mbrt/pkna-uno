@@ -29,20 +29,12 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-import tiktoken
 from rich.console import Console
 
 console = Console()
 
 # Default settings
 DEFAULT_VERSION = "v7"
-ENCODING_NAME = "cl100k_base"
-
-
-def count_tokens(text: str) -> int:
-    """Count tokens in text using tiktoken."""
-    encoding = tiktoken.get_encoding(ENCODING_NAME)
-    return len(encoding.encode(text))
 
 
 def find_base_dir() -> Path:
@@ -187,7 +179,6 @@ def regenerate_checkpoint(
         output_path.write_text(final_content, encoding="utf-8")
 
         # Print summary
-        token_count = count_tokens(final_content)
         line_count = len(final_content.splitlines())
         word_count = len(final_content.split())
 
@@ -197,7 +188,6 @@ def regenerate_checkpoint(
         console.print(f"Output: {output_path}")
         console.print(f"  Lines: {line_count:,}")
         console.print(f"  Words: {word_count:,}")
-        console.print(f"  Tokens: {token_count:,}")
 
     finally:
         # Clean up temp file
@@ -415,47 +405,9 @@ def perform_rollback(checkpoint_num: int, version: str) -> None:
         )
 
     # 5. Regenerate the target checkpoint and save to checkpoints directory
-    console.print(
-        f"\n[bold cyan]Regenerating checkpoint {checkpoint_num}...[/bold cyan]\n"
-    )
     checkpoint_output = checkpoints_dir / f"checkpoint_{checkpoint_num:03d}.md"
-
-    # Get diff files for regeneration
-    diff_files = []
-    for i in range(1, checkpoint_num + 1):
-        diff_path = diffs_dir / f"checkpoint_{i:03d}.diff"
-        if diff_path.exists():
-            diff_files.append(diff_path)
-
-    # Regenerate without the verbose output
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".md", delete=False, encoding="utf-8"
-    ) as temp_file:
-        seed_content = seed_path.read_text(encoding="utf-8")
-        temp_file.write(seed_content)
-        temp_path = Path(temp_file.name)
-
-    try:
-        # Apply each diff in sequence
-        for diff_file in diff_files:
-            if not apply_patch(temp_path, diff_file):
-                console.print(
-                    f"[bold red]Error:[/bold red] Failed to apply {diff_file.name}"
-                )
-                sys.exit(1)
-
-        # Read the final result and save to checkpoints directory
-        final_content = temp_path.read_text(encoding="utf-8")
-        checkpoint_output.parent.mkdir(parents=True, exist_ok=True)
-        checkpoint_output.write_text(final_content, encoding="utf-8")
-
-        console.print(
-            f"[bold green]✓[/bold green] Regenerated checkpoint saved to {checkpoint_output.name}"
-        )
-    finally:
-        # Clean up temp file
-        if temp_path.exists():
-            temp_path.unlink()
+    diff_files = validate_paths(seed_path, diffs_dir, checkpoint_num)
+    regenerate_checkpoint(checkpoint_num, seed_path, diff_files, checkpoint_output)
 
     # Print summary
     console.print("\n[bold green]✓ Rollback complete![/bold green]\n")
