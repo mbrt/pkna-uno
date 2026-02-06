@@ -468,7 +468,7 @@ class TestClaimLedger:
         restored = ClaimLedger.from_json(data)
 
         assert restored.claim_count() == 1
-        assert restored.scene_count() == 1
+        assert restored.scene_count() == 1  # Scene IDs are preserved
 
         claim = restored.get_claim(1)
         assert claim is not None
@@ -476,9 +476,11 @@ class TestClaimLedger:
         assert len(claim.supporting) == 2
         assert len(claim.quotes) == 1
 
-        scene_restored = restored.get_scene("pkna-0_12")
-        assert scene_restored is not None
-        assert scene_restored.issue == "pkna-0"
+        # Scene cache is NOT serialized - only IDs are preserved for resume
+        assert restored.is_scene_processed("pkna-0_12")
+        assert (
+            restored.get_scene("pkna-0_12") is None
+        )  # Cache is empty after deserialize
 
 
 class TestFormatFunctions:

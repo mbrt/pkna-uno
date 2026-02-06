@@ -306,16 +306,15 @@ class ClaimLedger:
     def __init__(self):
         self._claims: dict[int, Claim] = {}
         self._next_id: int = 1
-        self._processed_scenes: dict[str, Scene] = {}  # scene_id -> Scene
+        self._processed_scene_ids: set[str] = set()  # Only IDs, serialized
+        self._scene_cache: dict[str, Scene] = {}  # In-memory cache, not serialized
 
     def to_json(self) -> dict:
         """Serialize ledger to JSON-compatible dict."""
         return {
             "next_id": self._next_id,
             "claims": {str(k): v.model_dump() for k, v in self._claims.items()},
-            "processed_scenes": {
-                k: v.to_dict() for k, v in self._processed_scenes.items()
-            },
+            "processed_scene_ids": sorted(self._processed_scene_ids),
         }
 
     @classmethod
@@ -326,22 +325,21 @@ class ClaimLedger:
         ledger._claims = {
             int(k): Claim.model_validate(v) for k, v in data.get("claims", {}).items()
         }
-        ledger._processed_scenes = {
-            k: Scene.from_dict(v) for k, v in data.get("processed_scenes", {}).items()
-        }
+        ledger._processed_scene_ids = set(data.get("processed_scene_ids", []))
         return ledger
 
     def add_scene(self, scene: Scene) -> None:
-        """Mark a scene as processed and store it for later reference."""
-        self._processed_scenes[scene.scene_id] = scene
+        """Mark a scene as processed and cache it for later reference."""
+        self._processed_scene_ids.add(scene.scene_id)
+        self._scene_cache[scene.scene_id] = scene
 
     def get_scene(self, scene_id: str) -> Scene | None:
-        """Get a previously processed scene by ID."""
-        return self._processed_scenes.get(scene_id)
+        """Get a cached scene by ID (only available for current session)."""
+        return self._scene_cache.get(scene_id)
 
     def is_scene_processed(self, scene_id: str) -> bool:
         """Check if a scene has already been processed."""
-        return scene_id in self._processed_scenes
+        return scene_id in self._processed_scene_ids
 
     def get_claims_by_section(
         self, section: str | None = None
@@ -460,7 +458,7 @@ class ClaimLedger:
 
     def scene_count(self) -> int:
         """Total number of processed scenes."""
-        return len(self._processed_scenes)
+        return len(self._processed_scene_ids)
 
 
 # ============================================================================
