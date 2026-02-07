@@ -229,7 +229,7 @@ class TestClaimLedger:
         assert len(claim.supporting) == 2
 
     def test_support_claim_with_quote(self):
-        """Test supporting a claim adds quote (up to 3)."""
+        """Test supporting a claim adds all quotes."""
         ledger = ClaimLedger()
         ledger.add_claim(
             section="personality",
@@ -238,8 +238,8 @@ class TestClaimLedger:
             justification="Initial",
         )
 
-        # Add quotes through support
-        for i in range(4):  # Try to add 4, only 3 should stick
+        # Add quotes through support - all should be kept
+        for i in range(4):
             ledger.support_claim(
                 claim_id=1,
                 scene_id=f"pkna-{i}_10",
@@ -250,7 +250,7 @@ class TestClaimLedger:
 
         claim = ledger.get_claim(1)
         assert claim is not None
-        assert len(claim.quotes) == 3  # Max 3 quotes
+        assert len(claim.quotes) == 4  # All quotes kept
 
     def test_support_claim_not_found(self):
         """Test supporting non-existent claim fails."""
@@ -412,7 +412,7 @@ class TestClaimLedger:
         by_section = ledger.get_claims_by_section()
         assert len(by_section["personality"]) == 2
         assert len(by_section["identity"]) == 1
-        assert len(by_section["communication"]) == 0
+        assert "communication" not in by_section  # Empty sections not included
 
     def test_get_claims_by_section_filtered(self):
         """Test filtering claims by section."""
@@ -432,7 +432,7 @@ class TestClaimLedger:
 
         by_section = ledger.get_claims_by_section("personality")
         assert len(by_section["personality"]) == 1
-        assert len(by_section["identity"]) == 0  # Filtered out
+        assert "identity" not in by_section  # Filtered out
 
     def test_serialization_roundtrip(self):
         """Test JSON serialization and deserialization."""

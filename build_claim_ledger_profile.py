@@ -20,6 +20,7 @@ import json
 import logging
 import random
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -136,7 +137,7 @@ class Claim(BaseModel):
     section: str  # identity|personality|communication|values|behavior|relationships
     supporting: list[SceneEvidence] = []  # Scenes that support with justification
     contradicting: list[SceneEvidence] = []  # Scenes that contradict with justification
-    quotes: list[Quote] = []  # Quotes with context (keep 2-3 best)
+    quotes: list[Quote] = []  # Quotes with context
 
     @property
     def support_count(self) -> int:
@@ -344,8 +345,15 @@ class ClaimLedger:
     def get_claims_by_section(
         self, section: str | None = None
     ) -> dict[str, list[Claim]]:
-        """Get claims grouped by section."""
-        result: dict[str, list[Claim]] = {s: [] for s in VALID_SECTIONS}
+        """Get claims grouped by section.
+
+        Args:
+            section: If provided, only return claims from this section.
+
+        Returns:
+            Dict mapping section names to lists of claims, excluding empty sections.
+        """
+        result: dict[str, list[Claim]] = defaultdict(list)
         for claim in self._claims.values():
             if section is None or claim.section == section:
                 result[claim.section].append(claim)
@@ -407,7 +415,7 @@ class ClaimLedger:
             SceneEvidence(scene_id=scene_id, justification=justification)
         )
 
-        if quote and quote_context and len(claim.quotes) < 3:
+        if quote and quote_context:
             claim.quotes.append(
                 Quote(text=quote, context=quote_context, scene_id=scene_id)
             )
@@ -581,18 +589,12 @@ def format_claims_compact(ledger: ClaimLedger, section: str | None = None) -> st
     lines = [f"Total claims: {ledger.claim_count()}"]
     lines.append("")
 
-    for sect in VALID_SECTIONS:
-        if section is not None and sect != section:
-            continue
-        claims = claims_by_section[sect]
-        if not claims:
-            continue
-
+    for sect, claims in claims_by_section.items():
         lines.append(f"## {sect.title()}")
         for claim in claims:
             sign = "+" if claim.support_count >= 0 else ""
             lines.append(
-                f"{claim.id}: {claim.text[:80]}{'...' if len(claim.text) > 80 else ''} [{sign}{claim.support_count}]"
+                f"{claim.id}: {claim.text[:256]}{'...' if len(claim.text) > 256 else ''} [{sign}{claim.support_count}]"
             )
         lines.append("")
 
@@ -603,7 +605,7 @@ def format_claims_detail(ledger: ClaimLedger, claim_ids: list[int]) -> str:
     """Format detailed view of specific claims."""
     lines = []
 
-    for claim_id in claim_ids[:10]:  # Max 10 at a time
+    for claim_id in claim_ids:
         claim = ledger.get_claim(claim_id)
         if not claim:
             lines.append(f"ID {claim_id}: Not found")
@@ -620,17 +622,13 @@ def format_claims_detail(ledger: ClaimLedger, claim_ids: list[int]) -> str:
 
         if claim.supporting:
             lines.append("  Supporting:")
-            for ev in claim.supporting[:5]:  # Show first 5
+            for ev in claim.supporting:
                 lines.append(f"    - {ev.scene_id}: {ev.justification}")
-            if len(claim.supporting) > 5:
-                lines.append(f"    ... and {len(claim.supporting) - 5} more")
 
         if claim.contradicting:
             lines.append("  Contradicting:")
-            for ev in claim.contradicting[:3]:  # Show first 3
+            for ev in claim.contradicting:
                 lines.append(f"    - {ev.scene_id}: {ev.justification}")
-            if len(claim.contradicting) > 3:
-                lines.append(f"    ... and {len(claim.contradicting) - 3} more")
 
         if claim.quotes:
             lines.append("  Quotes:")
@@ -660,10 +658,8 @@ def format_scene_view(scene: Scene) -> str:
     if scene.panel_descriptions:
         lines.append("")
         lines.append("Panel Descriptions:")
-        for desc in scene.panel_descriptions[:5]:
+        for desc in scene.panel_descriptions:
             lines.append(f"- {desc}")
-        if len(scene.panel_descriptions) > 5:
-            lines.append(f"... and {len(scene.panel_descriptions) - 5} more panels")
 
     return "\n".join(lines)
 
@@ -954,7 +950,7 @@ Use list_claims() to see existing claims, then add supporting/contradicting evid
             # Mark scene as processed
             self._ledger.add_scene(scene)
 
-            log.info(f"Scene {scene_number}: {summary[:100]}...")
+            log.info(f"Scene {scene_number}: {summary[:256]}...")
             return True, summary
 
         except Exception as e:
