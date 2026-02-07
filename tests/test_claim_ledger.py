@@ -387,6 +387,46 @@ class TestClaimLedger:
         assert retrieved is not None
         assert retrieved.issue == "pkna-0"
 
+    def test_populate_scene_cache(self):
+        """Test populating scene cache after loading from checkpoint."""
+        # Create ledger and process a scene
+        ledger = ClaimLedger()
+        scene1 = Scene(
+            issue="pkna-0",
+            page_numbers=[12],
+            summary="Scene 1",
+            uno_dialogues=["Hello"],
+            panel_descriptions=["Panel"],
+            other_characters=set(),
+        )
+        scene2 = Scene(
+            issue="pkna-1",
+            page_numbers=[5],
+            summary="Scene 2",
+            uno_dialogues=["World"],
+            panel_descriptions=["Panel 2"],
+            other_characters=set(),
+        )
+        ledger.add_scene(scene1)
+
+        # Simulate checkpoint save/load (only IDs preserved)
+        data = ledger.to_json()
+        restored = ClaimLedger.from_json(data)
+
+        # Cache is empty after load
+        assert restored.get_scene("pkna-0_12") is None
+
+        # Populate cache with all scenes
+        restored.populate_scene_cache([scene1, scene2])
+
+        # Now processed scene is available
+        retrieved = restored.get_scene("pkna-0_12")
+        assert retrieved is not None
+        assert retrieved.summary == "Scene 1"
+
+        # Unprocessed scene is not cached
+        assert restored.get_scene("pkna-1_5") is None
+
     def test_get_claims_by_section(self):
         """Test grouping claims by section."""
         ledger = ClaimLedger()

@@ -342,6 +342,16 @@ class ClaimLedger:
         """Check if a scene has already been processed."""
         return scene_id in self._processed_scene_ids
 
+    def populate_scene_cache(self, scenes: list["Scene"]) -> None:
+        """Populate the scene cache with previously processed scenes.
+
+        Call this after loading from checkpoint to enable view_scene for
+        scenes processed in previous runs.
+        """
+        for scene in scenes:
+            if scene.scene_id in self._processed_scene_ids:
+                self._scene_cache[scene.scene_id] = scene
+
     def get_claims_by_section(
         self, section: str | None = None
     ) -> dict[str, list[Claim]]:
@@ -934,7 +944,7 @@ class SceneProcessor:
 
 **Additional Context:** {panel_context}
 
-Use list_claims() to see existing claims, then add supporting/contradicting evidence or new claims as appropriate. When done, provide a brief summary of your updates."""
+Use list_claims() to see existing claims, then add supporting/contradicting evidence or new claims as appropriate. When done, provide a brief one-line summary of your updates."""
 
         conversation: list[Content] = [
             Content(role="user", parts=[Part.from_text(text=scene_prompt)])
@@ -1155,6 +1165,9 @@ def main() -> None:
         all_scenes.extend(scenes)
 
     log.info(f"Total: {len(all_scenes)} scenes with Uno across all issues")
+
+    # Populate scene cache for previously processed scenes (enables view_scene on resume)
+    ledger.populate_scene_cache(all_scenes)
 
     # Filter to unprocessed scenes
     unprocessed_scenes = [
