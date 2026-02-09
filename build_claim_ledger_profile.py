@@ -130,15 +130,16 @@ PROGRESS = Progress(
     transient=True,
 )
 
-# Valid claim sections
-VALID_SECTIONS = {
+# Valid claim sections (ordered for deterministic document generation)
+SECTION_ORDER = [
     "identity",
     "personality",
     "communication",
     "values",
     "behavior",
     "relationships",
-}
+]
+VALID_SECTIONS = set(SECTION_ORDER)
 
 
 def count_tokens(text: str) -> int:
@@ -589,46 +590,38 @@ The current scene ID will be provided with each scene. Use this ID when adding e
 """
 
 
-def get_soul_document_prompt(threshold: int) -> str:
-    """Generate system prompt for final soul document generation."""
-    return f"""Generate a soul document from the validated claims provided.
-
-## Input
-You will receive claims organized by section, filtered to only include claims with support_count >= {threshold}.
-
-## Output Format
-
-# Uno - Soul Document
-
-## Essential Identity
-[From "identity" section - core facts about what Uno is]
-
-## Core Personality
-[From "personality" section - prioritized by support count]
+SECTION_PROMPTS = {
+    "identity": """## Essential Identity
+[Core facts about what Uno IS - nature, constraints, origin]
+Write this as structured prose with key facts clearly stated.""",
+    "personality": """## Core Personality
+[Character traits - prioritized by support count]
 [Include Italian quotes with inline translations: "Quote" (English translation)]
-
-## Communication Style
+Write this as flowing prose that captures the character's distinctive personality.""",
+    "communication": """## Communication Style
 ### Voice and Tone
-[From "communication" - formal/informal patterns, tone by context]
+[Formal/informal patterns, tone by context]
 
 ### Linguistic Markers
 [Characteristic phrases, nicknames, expressions]
 - Nicknames for Paperinik: list them
 - Common expressions with translations
 
-## Values and Beliefs
-[From "values" section]
-
-## Behavioral Guidelines
+Write each subsection clearly, listing concrete examples.""",
+    "values": """## Values and Beliefs
+[What Uno believes in - loyalty, duty, freedom]
+Write this as structured prose capturing core convictions.""",
+    "behavior": """## Behavioral Guidelines
 ### What Uno Does
-[Positive behaviors from "behavior" section]
+[Positive behaviors]
 
 ### What Uno Doesn't Do
-[Constraints and limitations from "behavior" section]
+[Constraints and limitations]
 
-## Key Relationships
+Split behaviors into the two subsections above.""",
+    "relationships": """## Key Relationships
 ### With Paperinik
-[Detailed dynamics from "relationships"]
+[Detailed dynamics]
 
 ### With Everett Ducklair
 [Relationship description]
@@ -636,15 +629,33 @@ You will receive claims organized by section, filtered to only include claims wi
 ### With Due
 [Relationship description]
 
-[...other significant characters...]
+[...other significant characters with their own subsections...]
 
-## Guidelines
-- Order claims by support_count (highest first) within sections
+Create a subsection for each character mentioned in the claims.""",
+}
+
+
+def get_section_prompt(section: str, threshold: int) -> str:
+    """Generate system prompt for a single section of the soul document."""
+    template = SECTION_PROMPTS[section]
+    return f"""Generate one section of a soul document from validated claims.
+
+You MUST incorporate ALL claims provided. Every single claim represents validated
+evidence about this character and must be reflected in your output. Do NOT skip
+claims with lower support counts — they are already filtered to meet the minimum
+threshold of {threshold}.
+
+## Output Format
+
+{template}
+
+## Formatting Rules
+- Order claims by support_count (highest first) within subsections
 - Italian quotes format: "Quote" (English translation)
-- Merge very similar claims into coherent prose
-- Exclude claims with negative support_count
-- Be comprehensive but not repetitive
+- Merge very similar claims into coherent prose rather than repeating
+- Be comprehensive — every claim must appear in the output
 - Capture the character's distinctive voice and personality
+- Output ONLY the section content (starting with the ## heading), no preamble
 """
 
 
@@ -1128,83 +1139,94 @@ class ClaimRefiner:
 
 
 class SoulDocumentGenerator:
-    """Generates the final soul document from validated claims."""
+    """Generates the final soul document from validated claims, one section at a time."""
 
     def __init__(self, client: genai.Client, ledger: ClaimLedger, threshold: int):
         self._client = client
         self._ledger = ledger
         self._threshold = threshold
-        self._config = GenerateContentConfig(
-            system_instruction=get_soul_document_prompt(threshold),
+
+    def _format_section_claims(self, section: str) -> str:
+        """Format validated claims for a single section."""
+        claims_by_section = self._ledger.get_claims_by_section(section=section)
+        claims = [
+            c
+            for c in claims_by_section.get(section, [])
+            if c.support_count >= self._threshold
+        ]
+        if not claims:
+            return ""
+
+        lines = []
+        for claim in claims:
+            lines.append(f"**Claim (support: +{claim.support_count}):** {claim.text}")
+            if claim.quotes:
+                lines.append("Quotes:")
+                for q in claim.quotes:
+                    lines.append(f'  - "{q.text}" — {q.context}')
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def _generate_section(self, section: str) -> tuple[bool, str]:
+        """Generate a single section of the soul document.
+
+        Returns:
+            Tuple of (success, section_text_or_error).
+            If no claims meet the threshold for this section, returns (True, "").
+        """
+        claims_text = self._format_section_claims(section)
+        if not claims_text.strip():
+            log.info(f"Section '{section}': no claims meet threshold, skipping")
+            return True, ""
+
+        claim_count = claims_text.count("**Claim (support:")
+        log.info(f"Section '{section}': generating from {claim_count} claims")
+
+        config = GenerateContentConfig(
+            system_instruction=get_section_prompt(section, self._threshold),
             temperature=0.7,
             top_p=0.95,
         )
 
-    def _format_claims_for_generation(self) -> str:
-        """Format validated claims for soul document generation."""
-        lines = []
-        claims_by_section = self._ledger.get_claims_by_section()
-
-        for section in VALID_SECTIONS:
-            claims = [
-                c
-                for c in claims_by_section[section]
-                if c.support_count >= self._threshold
-            ]
-            if not claims:
-                continue
-
-            lines.append(f"## {section.upper()}")
-            lines.append("")
-
-            for claim in claims:
-                lines.append(
-                    f"**Claim (support: +{claim.support_count}):** {claim.text}"
-                )
-
-                if claim.quotes:
-                    lines.append("Quotes:")
-                    for q in claim.quotes:
-                        lines.append(f'  - "{q.text}" — {q.context}')
-
-                lines.append("")
-
-        return "\n".join(lines)
-
-    def generate(self) -> tuple[bool, str]:
-        """Generate the soul document from validated claims.
-
-        Returns:
-            Tuple of (success, document_or_error)
-        """
-        claims_text = self._format_claims_for_generation()
-
-        if not claims_text.strip():
-            return False, "No claims meet the support threshold"
-
-        prompt = f"""Generate a soul document from these validated claims:
-
-{claims_text}
-
-Create a comprehensive, well-organized soul document following the specified format."""
+        prompt = (
+            f"Generate the '{section}' section from the following "
+            f"{claim_count} validated claims. "
+            f"Every claim must be reflected in your output.\n\n"
+            f"{claims_text}"
+        )
 
         conversation: list[Content] = [
             Content(role="user", parts=[Part.from_text(text=prompt)])
         ]
 
-        try:
-            response = self._client.models.generate_content(
-                model=MODEL_NAME,
-                contents=conversation,  # type: ignore[arg-type]
-                config=self._config,
-            )
+        response = generate_with_retry(self._client, conversation, config)
+        if response is None:
+            return False, f"Generation failed for section '{section}'"
 
-            document = response.text or ""
-            return True, document
+        return True, response.text or ""
 
-        except Exception as e:
-            log.error(f"Soul document generation failed: {e}")
-            return False, str(e)
+    def generate(self) -> tuple[bool, str]:
+        """Generate the soul document from validated claims, one section at a time.
+
+        Returns:
+            Tuple of (success, document_or_error)
+        """
+        sections: list[str] = []
+
+        for section in SECTION_ORDER:
+            success, result = self._generate_section(section)
+            if not success:
+                log.error(f"Soul document generation failed at section '{section}'")
+                return False, result
+            if result:
+                sections.append(result)
+
+        if not sections:
+            return False, "No claims meet the support threshold"
+
+        document = "# Uno - Soul Document\n\n" + "\n\n".join(sections)
+        return True, document
 
 
 # ============================================================================
@@ -1264,32 +1286,24 @@ def find_latest_checkpoint() -> tuple[int, ClaimLedger] | None:
 # ============================================================================
 
 
-def main() -> None:
-    """Main function to build the character profile."""
-    parser = argparse.ArgumentParser(
-        description="Build character profile using claim ledger approach"
-    )
-    parser.add_argument(
-        "--max-scenes",
-        type=int,
-        default=None,
-        help="Maximum number of scenes to process (for testing)",
-    )
-    parser.add_argument(
-        "--threshold",
-        type=int,
-        default=CLAIM_SUPPORT_THRESHOLD,
-        help=f"Minimum support count for claims in final document (default: {CLAIM_SUPPORT_THRESHOLD})",
-    )
-    args = parser.parse_args()
+def run_claim_generation(client: genai.Client, max_scenes: int | None) -> ClaimLedger:
+    """Process scenes and generate claims, saving the final ledger.
 
-    console.print(
-        f"\n[bold cyan]Claim Ledger Character Profile Builder ({VERSION_TAG})[/bold cyan]\n"
-    )
+    Skips if final_ledger.json already exists. Supports resuming from
+    checkpoints for partial runs.
 
-    # Setup directories
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
+    Returns:
+        The claim ledger (loaded from file or built from scenes).
+    """
+    final_ledger_path = OUTPUT_DIR / "final_ledger.json"
+
+    if final_ledger_path.exists():
+        log.info(
+            f"Claim ledger already exists at {path_str(final_ledger_path)}, skipping"
+        )
+        with open(final_ledger_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return ClaimLedger.from_json(data)
 
     # Check for existing checkpoint to resume from
     checkpoint_info = find_latest_checkpoint()
@@ -1304,7 +1318,6 @@ def main() -> None:
         checkpoint_num = 0
         log.info("Starting fresh")
 
-    client = genai.Client(http_options=HttpOptions(timeout=API_TIMEOUT_SECONDS * 1000))
     processor = SceneProcessor(client, ledger)
 
     # Collect all scenes with Uno
@@ -1328,8 +1341,8 @@ def main() -> None:
         s for s in all_scenes if not ledger.is_scene_processed(s.scene_id)
     ]
 
-    if args.max_scenes:
-        unprocessed_scenes = unprocessed_scenes[: args.max_scenes]
+    if max_scenes:
+        unprocessed_scenes = unprocessed_scenes[:max_scenes]
 
     if not unprocessed_scenes:
         log.info("All scenes already processed!")
@@ -1382,35 +1395,67 @@ def main() -> None:
         console.print(f"Total claims: {ledger.claim_count()}")
 
     # Save final ledger
-    final_ledger_path = OUTPUT_DIR / "final_ledger.json"
     with open(final_ledger_path, "w", encoding="utf-8") as f:
         json.dump(ledger.to_json(), f, ensure_ascii=False, indent=2)
     log.info(f"Saved final ledger to {path_str(final_ledger_path)}")
 
-    # Refine contradicted claims
+    return ledger
+
+
+def run_claim_refinement(client: genai.Client, ledger: ClaimLedger) -> ClaimLedger:
+    """Refine contradicted claims and save the refined ledger.
+
+    Skips if refined_ledger.json already exists.
+
+    Returns:
+        The ledger (possibly refined in place, or loaded from file).
+    """
+    refined_ledger_path = OUTPUT_DIR / "refined_ledger.json"
+
+    if refined_ledger_path.exists():
+        log.info(
+            f"Refined ledger already exists at {path_str(refined_ledger_path)}, skipping"
+        )
+        with open(refined_ledger_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return ClaimLedger.from_json(data)
+
     console.print("\n[bold cyan]Refining contradicted claims...[/bold cyan]")
     refiner = ClaimRefiner(client, ledger)
     refined_count, failed_count = refiner.refine_all()
 
     if refined_count > 0 or failed_count > 0:
         console.print(f"Refined: {refined_count}, Failed: {failed_count}")
-
-        # Save refined ledger
-        refined_ledger_path = OUTPUT_DIR / "refined_ledger.json"
-        with open(refined_ledger_path, "w", encoding="utf-8") as f:
-            json.dump(ledger.to_json(), f, ensure_ascii=False, indent=2)
-        log.info(f"Saved refined ledger to {path_str(refined_ledger_path)}")
     else:
         console.print("No contradicted claims found")
 
-    # Generate soul document
+    # Always save the refined ledger so subsequent runs skip this step
+    with open(refined_ledger_path, "w", encoding="utf-8") as f:
+        json.dump(ledger.to_json(), f, ensure_ascii=False, indent=2)
+    log.info(f"Saved refined ledger to {path_str(refined_ledger_path)}")
+
+    return ledger
+
+
+def run_document_generation(
+    client: genai.Client, ledger: ClaimLedger, threshold: int
+) -> None:
+    """Generate the soul document from validated claims.
+
+    Skips if uno_soul_document.md already exists.
+    """
+    soul_doc_path = OUTPUT_DIR / "uno_soul_document.md"
+
+    if soul_doc_path.exists():
+        log.info(f"Soul document already exists at {path_str(soul_doc_path)}, skipping")
+        return
+
     console.print("\n[bold cyan]Generating soul document...[/bold cyan]")
 
-    generator = SoulDocumentGenerator(client, ledger, args.threshold)
+    generator = SoulDocumentGenerator(client, ledger, threshold)
     success, result = generator.generate()
 
     if success:
-        soul_doc_path = OUTPUT_DIR / "uno_soul_document.md"
         with open(soul_doc_path, "w", encoding="utf-8") as f:
             f.write(result)
 
@@ -1420,20 +1465,54 @@ def main() -> None:
         console.print("\n[bold green]Soul document generated![/bold green]")
         console.print(f"Output: {path_str(soul_doc_path)}")
         console.print(f"Size: {tokens:,} tokens (~{words:,} words)")
-        console.print(f"Threshold: support >= {args.threshold}")
+        console.print(f"Threshold: support >= {threshold}")
 
         # Count claims by threshold
         claims_included = sum(
             1
             for claims in ledger.get_claims_by_section().values()
             for c in claims
-            if c.support_count >= args.threshold
+            if c.support_count >= threshold
         )
         console.print(f"Claims included: {claims_included}/{ledger.claim_count()}")
     else:
         console.print(
             f"\n[bold red]Soul document generation failed:[/bold red] {result}"
         )
+
+
+def main() -> None:
+    """Main function to build the character profile."""
+    parser = argparse.ArgumentParser(
+        description="Build character profile using claim ledger approach"
+    )
+    parser.add_argument(
+        "--max-scenes",
+        type=int,
+        default=None,
+        help="Maximum number of scenes to process (for testing)",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=int,
+        default=CLAIM_SUPPORT_THRESHOLD,
+        help=f"Minimum support count for claims in final document (default: {CLAIM_SUPPORT_THRESHOLD})",
+    )
+    args = parser.parse_args()
+
+    console.print(
+        f"\n[bold cyan]Claim Ledger Character Profile Builder ({VERSION_TAG})[/bold cyan]\n"
+    )
+
+    # Setup directories
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    client = genai.Client(http_options=HttpOptions(timeout=API_TIMEOUT_SECONDS * 1000))
+
+    ledger = run_claim_generation(client, args.max_scenes)
+    ledger = run_claim_refinement(client, ledger)
+    run_document_generation(client, ledger, args.threshold)
 
     # Print summary
     console.print(f"\n[bold]Output directory:[/bold] {path_str(OUTPUT_DIR)}")
