@@ -68,6 +68,53 @@ MAX_BACKOFF_SECONDS = 60.0
 BACKOFF_MULTIPLIER = 2.0
 API_TIMEOUT_SECONDS = 300  # 5 minutes per API call
 
+
+def generate_with_retry(
+    client: genai.Client,
+    conversation: list[Content],
+    config: GenerateContentConfig,
+) -> GenerateContentResponse | None:
+    """Call generate_content with retry on resource exhausted and timeout errors."""
+    backoff = INITIAL_BACKOFF_SECONDS
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=conversation,  # type: ignore[arg-type]
+                config=config,
+            )
+            return response
+        except Exception as e:
+            error_str = str(e).lower()
+            is_timeout = "timeout" in error_str or "timed out" in error_str
+            is_rate_limited = (
+                "resource" in error_str and "exhausted" in error_str
+            ) or "429" in error_str
+            is_retryable = is_timeout or is_rate_limited
+
+            if not is_retryable:
+                raise
+
+            if attempt == MAX_RETRIES - 1:
+                log.error(f"Max retries ({MAX_RETRIES}) exceeded: {e}")
+                return None
+
+            # Add jitter: +/- 25% of backoff
+            jitter = backoff * 0.25 * (2 * random.random() - 1)
+            sleep_time = min(backoff + jitter, MAX_BACKOFF_SECONDS)
+
+            error_type = "Timeout" if is_timeout else "Resource exhausted"
+            log.warning(
+                f"{error_type} (attempt {attempt + 1}/{MAX_RETRIES}), "
+                f"retrying in {sleep_time:.1f}s..."
+            )
+            time.sleep(sleep_time)
+            backoff = min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF_SECONDS)
+
+    return None
+
+
 # Paths
 BASE_DIR = Path(__file__).parent
 INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
@@ -143,6 +190,20 @@ class Claim(BaseModel):
     def support_count(self) -> int:
         """Net support: supporting scenes minus contradicting scenes."""
         return len(self.supporting) - len(self.contradicting)
+
+    def absorb_contradictions(self) -> int:
+        """Move all contradicting evidence to supporting and clear contradicting.
+
+        Call this after the claim text has been refined to account for the
+        contradictions, so they become supporting evidence for the nuanced claim.
+
+        Returns:
+            Number of evidence entries moved.
+        """
+        moved = len(self.contradicting)
+        self.supporting.extend(self.contradicting)
+        self.contradicting = []
+        return moved
 
 
 # ============================================================================
@@ -587,6 +648,33 @@ You will receive claims organized by section, filtered to only include claims wi
 """
 
 
+def get_claim_refinement_prompt() -> str:
+    """Generate system prompt for refining contradicted claims."""
+    return """You refine character claims that have contradicting evidence.
+
+## Task
+Given a claim with supporting AND contradicting evidence, rewrite the claim to incorporate the nuance from the contradictions. The refined claim should preserve the core truth while adding qualifiers or exceptions.
+
+## Rules
+- Output ONLY the refined claim text. No preamble, no explanation, no wrapping.
+- Keep claims concise: 1-3 sentences in English.
+- Preserve the core insight while adding qualifiers/exceptions for contradictions.
+- Use concrete language, not vague hedging (prefer "except when X" over "sometimes").
+
+## Examples
+
+Input claim: "Uno is always sarcastic."
+Supporting: "Uses ironic deflection when Paperinik asks personal questions."
+Contradicting: "Speaks with sincere urgency when Paperinik is in danger."
+Output: Uno defaults to sarcasm and ironic deflection, especially in casual exchanges, but drops the sarcasm entirely and speaks with sincere urgency when Paperinik is in genuine danger.
+
+Input claim: "Uno dislikes humans."
+Supporting: "Expresses frustration with human inefficiency."
+Contradicting: "Shows genuine concern for Paperinik's wellbeing."
+Output: Uno is often frustrated by human inefficiency and limitations, but forms deep bonds with individuals he respects, showing genuine concern for their wellbeing.
+"""
+
+
 # ============================================================================
 # Tool Formatting Functions
 # ============================================================================
@@ -675,35 +763,33 @@ def format_scene_view(scene: Scene) -> str:
 
 
 # ============================================================================
-# SceneProcessor Class
+# LedgerTools - Shared tools for LLM interaction with the claim ledger
 # ============================================================================
 
 
-class SceneProcessor:
-    """Processes scenes and updates the claim ledger."""
+class LedgerTools:
+    """Tool methods for LLM interaction with the claim ledger.
 
-    def __init__(self, client: genai.Client, ledger: ClaimLedger):
-        self._client = client
+    Shared between SceneProcessor and ClaimRefiner so both can inspect
+    claims, evidence, and scenes.
+    """
+
+    def __init__(self, ledger: ClaimLedger):
         self._ledger = ledger
         self._current_scene_id: str = ""
-        self._config = GenerateContentConfig(
-            system_instruction=get_scene_processing_prompt(),
-            temperature=0.7,
-            top_p=0.95,
-            tools=[
-                self.list_claims,
-                self.view_claims,
-                self.view_scene,
-                self.add_claim,
-                self.support_claim,
-                self.contradict_claim,
-                self.refine_claim,
-            ],
-        )
 
-    # -------------------------------------------------------------------------
-    # Tool Methods
-    # -------------------------------------------------------------------------
+    @property
+    def all(self) -> list:
+        """All tool methods for GenerateContentConfig."""
+        return [
+            self.list_claims,
+            self.view_claims,
+            self.view_scene,
+            self.add_claim,
+            self.support_claim,
+            self.contradict_claim,
+            self.refine_claim,
+        ]
 
     def list_claims(self, section: str | None = None) -> str:
         """List all claims in compact format.
@@ -871,6 +957,26 @@ class SceneProcessor:
         _, message = self._ledger.refine_claim(claim_id, new_text)
         return message
 
+
+# ============================================================================
+# SceneProcessor Class
+# ============================================================================
+
+
+class SceneProcessor:
+    """Processes scenes and updates the claim ledger."""
+
+    def __init__(self, client: genai.Client, ledger: ClaimLedger):
+        self._client = client
+        self._ledger = ledger
+        self._tools = LedgerTools(ledger)
+        self._config = GenerateContentConfig(
+            system_instruction=get_scene_processing_prompt(),
+            temperature=0.7,
+            top_p=0.95,
+            tools=self._tools.all,
+        )
+
     # -------------------------------------------------------------------------
     # Processing Logic
     # -------------------------------------------------------------------------
@@ -879,44 +985,7 @@ class SceneProcessor:
         self, conversation: list[Content]
     ) -> GenerateContentResponse | None:
         """Call generate_content with retry on resource exhausted and timeout errors."""
-        backoff = INITIAL_BACKOFF_SECONDS
-
-        for attempt in range(MAX_RETRIES):
-            try:
-                response = self._client.models.generate_content(
-                    model=MODEL_NAME,
-                    contents=conversation,  # type: ignore[arg-type]
-                    config=self._config,
-                )
-                return response
-            except Exception as e:
-                error_str = str(e).lower()
-                is_timeout = "timeout" in error_str or "timed out" in error_str
-                is_rate_limited = (
-                    "resource" in error_str and "exhausted" in error_str
-                ) or "429" in error_str
-                is_retryable = is_timeout or is_rate_limited
-
-                if not is_retryable:
-                    raise
-
-                if attempt == MAX_RETRIES - 1:
-                    log.error(f"Max retries ({MAX_RETRIES}) exceeded: {e}")
-                    return None
-
-                # Add jitter: +/- 25% of backoff
-                jitter = backoff * 0.25 * (2 * random.random() - 1)
-                sleep_time = min(backoff + jitter, MAX_BACKOFF_SECONDS)
-
-                error_type = "Timeout" if is_timeout else "Resource exhausted"
-                log.warning(
-                    f"{error_type} (attempt {attempt + 1}/{MAX_RETRIES}), "
-                    f"retrying in {sleep_time:.1f}s..."
-                )
-                time.sleep(sleep_time)
-                backoff = min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF_SECONDS)
-
-        return None
+        return generate_with_retry(self._client, conversation, self._config)
 
     def process_scene(self, scene: Scene, scene_number: int) -> tuple[bool, str]:
         """Process a single scene and update the claim ledger.
@@ -924,7 +993,7 @@ class SceneProcessor:
         Returns:
             Tuple of (success, summary_or_error)
         """
-        self._current_scene_id = scene.scene_id
+        self._tools._current_scene_id = scene.scene_id
 
         # Format scene as prompt
         dialogues_text = "\n".join(f'- "{d}"' for d in scene.uno_dialogues)
@@ -966,6 +1035,91 @@ Use list_claims() to see existing claims, then add supporting/contradicting evid
         except Exception as e:
             log.error(f"Scene {scene_number}: Error - {e}")
             return False, str(e)
+
+
+# ============================================================================
+# Claim Refiner
+# ============================================================================
+
+
+class ClaimRefiner:
+    """Refines contradicted claims to incorporate nuance from contradictions."""
+
+    def __init__(self, client: genai.Client, ledger: ClaimLedger):
+        self._client = client
+        self._ledger = ledger
+        self._tools = LedgerTools(ledger)
+        self._config = GenerateContentConfig(
+            system_instruction=get_claim_refinement_prompt(),
+            temperature=0.3,
+            top_p=0.95,
+            tools=self._tools.all,
+        )
+
+    def _find_contradicted_claims(self) -> list[Claim]:
+        """Find all claims that have contradicting evidence."""
+        result = []
+        for claims in self._ledger.get_claims_by_section().values():
+            for claim in claims:
+                if claim.contradicting:
+                    result.append(claim)
+        return result
+
+    def refine_claim(self, claim: Claim) -> tuple[bool, str]:
+        """Refine a single claim via LLM call.
+
+        Returns:
+            Tuple of (success, refined_text_or_error).
+        """
+        claim_detail = format_claims_detail(self._ledger, [claim.id])
+        prompt = f"Refine this contradicted claim:\n\n{claim_detail}"
+        conversation: list[Content] = [
+            Content(role="user", parts=[Part.from_text(text=prompt)])
+        ]
+
+        response = generate_with_retry(self._client, conversation, self._config)
+        if response is None:
+            return False, "API call failed after retries"
+
+        refined_text = (response.text or "").strip()
+        if not refined_text:
+            return False, "Empty response from LLM"
+
+        return True, refined_text
+
+    def refine_all(self) -> tuple[int, int]:
+        """Refine all contradicted claims.
+
+        Returns:
+            Tuple of (refined_count, failed_count).
+        """
+        contradicted = self._find_contradicted_claims()
+        if not contradicted:
+            log.info("No contradicted claims to refine")
+            return 0, 0
+
+        log.info(f"Refining {len(contradicted)} contradicted claims...")
+        refined_count = 0
+        failed_count = 0
+
+        with PROGRESS as progress:
+            task = progress.add_task("Refining claims...", total=len(contradicted))
+
+            for i, claim in enumerate(contradicted, 1):
+                success, result = self.refine_claim(claim)
+
+                if success:
+                    self._ledger.refine_claim(claim.id, result)
+                    claim.absorb_contradictions()
+                    refined_count += 1
+                    log.debug(f"Refined claim {claim.id}: {result[:80]}...")
+                else:
+                    failed_count += 1
+                    log.warning(f"Failed to refine claim {claim.id}: {result}")
+
+                progress.update(task, completed=i)
+
+        return refined_count, failed_count
 
 
 # ============================================================================
@@ -1232,6 +1386,22 @@ def main() -> None:
     with open(final_ledger_path, "w", encoding="utf-8") as f:
         json.dump(ledger.to_json(), f, ensure_ascii=False, indent=2)
     log.info(f"Saved final ledger to {path_str(final_ledger_path)}")
+
+    # Refine contradicted claims
+    console.print("\n[bold cyan]Refining contradicted claims...[/bold cyan]")
+    refiner = ClaimRefiner(client, ledger)
+    refined_count, failed_count = refiner.refine_all()
+
+    if refined_count > 0 or failed_count > 0:
+        console.print(f"Refined: {refined_count}, Failed: {failed_count}")
+
+        # Save refined ledger
+        refined_ledger_path = OUTPUT_DIR / "refined_ledger.json"
+        with open(refined_ledger_path, "w", encoding="utf-8") as f:
+            json.dump(ledger.to_json(), f, ensure_ascii=False, indent=2)
+        log.info(f"Saved refined ledger to {path_str(refined_ledger_path)}")
+    else:
+        console.print("No contradicted claims found")
 
     # Generate soul document
     console.print("\n[bold cyan]Generating soul document...[/bold cyan]")

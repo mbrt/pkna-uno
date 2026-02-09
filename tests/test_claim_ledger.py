@@ -1,10 +1,13 @@
 """Unit tests for ClaimLedger and related classes."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from build_claim_ledger_profile import (
     Claim,
     ClaimLedger,
+    ClaimRefiner,
     Quote,
     Scene,
     SceneEvidence,
@@ -106,6 +109,49 @@ class TestClaim:
             ],
         )
         assert claim.support_count == 2  # 3 - 1 = 2
+
+    def test_absorb_contradictions(self):
+        """Test absorbing contradictions moves them to supporting."""
+        claim = Claim(
+            id=1,
+            text="Test claim",
+            section="personality",
+            supporting=[
+                SceneEvidence(scene_id="pkna-0_1", justification="Support 1"),
+            ],
+            contradicting=[
+                SceneEvidence(scene_id="pkna-1_5", justification="Contradiction 1"),
+                SceneEvidence(scene_id="pkna-2_10", justification="Contradiction 2"),
+            ],
+        )
+
+        moved = claim.absorb_contradictions()
+
+        assert moved == 2
+        assert len(claim.supporting) == 3
+        assert len(claim.contradicting) == 0
+        assert claim.support_count == 3
+        # Verify the moved entries are present
+        scene_ids = [ev.scene_id for ev in claim.supporting]
+        assert "pkna-1_5" in scene_ids
+        assert "pkna-2_10" in scene_ids
+
+    def test_absorb_contradictions_empty(self):
+        """Test absorbing contradictions is a no-op when there are none."""
+        claim = Claim(
+            id=1,
+            text="Test claim",
+            section="personality",
+            supporting=[
+                SceneEvidence(scene_id="pkna-0_1", justification="Support 1"),
+            ],
+        )
+
+        moved = claim.absorb_contradictions()
+
+        assert moved == 0
+        assert len(claim.supporting) == 1
+        assert len(claim.contradicting) == 0
 
 
 class TestScene:
@@ -608,3 +654,141 @@ class TestFormatFunctions:
         assert "Benvenuto!" in output
         assert "Io sono Uno." in output
         assert "Panel showing" in output
+
+
+class TestClaimRefiner:
+    """Tests for ClaimRefiner class."""
+
+    def _make_ledger_with_contradictions(self) -> ClaimLedger:
+        """Create a ledger with some contradicted claims."""
+        ledger = ClaimLedger()
+        # Claim 1: has contradictions
+        ledger.add_claim(
+            section="personality",
+            text="Uno is always sarcastic",
+            scene_id="pkna-0_12",
+            justification="Uses ironic deflection",
+        )
+        ledger.contradict_claim(
+            claim_id=1,
+            scene_id="pkna-5_30",
+            justification="Speaks sincerely when danger is present",
+        )
+        # Claim 2: no contradictions
+        ledger.add_claim(
+            section="identity",
+            text="Uno is an AI",
+            scene_id="pkna-0_1",
+            justification="Introduced as artificial intelligence",
+        )
+        # Claim 3: has contradictions
+        ledger.add_claim(
+            section="behavior",
+            text="Uno avoids direct confrontation",
+            scene_id="pkna-1_10",
+            justification="Prefers indirect approaches",
+        )
+        ledger.contradict_claim(
+            claim_id=3,
+            scene_id="pkna-3_20",
+            justification="Directly confronts Due to protect Paperinik",
+        )
+        return ledger
+
+    def test_find_contradicted_claims(self):
+        """Test finding claims with contradictions."""
+        ledger = self._make_ledger_with_contradictions()
+        client = MagicMock()
+        refiner = ClaimRefiner(client, ledger)
+
+        contradicted = refiner._find_contradicted_claims()
+
+        assert len(contradicted) == 2
+        ids = {c.id for c in contradicted}
+        assert ids == {1, 3}
+
+    def test_find_contradicted_claims_none(self):
+        """Test finding contradicted claims when there are none."""
+        ledger = ClaimLedger()
+        ledger.add_claim(
+            section="personality",
+            text="Claim without contradictions",
+            scene_id="pkna-0_1",
+            justification="Reason",
+        )
+        client = MagicMock()
+        refiner = ClaimRefiner(client, ledger)
+
+        contradicted = refiner._find_contradicted_claims()
+
+        assert contradicted == []
+
+    def test_refine_all_success(self):
+        """Test refining all contradicted claims successfully."""
+        ledger = self._make_ledger_with_contradictions()
+        client = MagicMock()
+
+        # Mock the API response
+        mock_response = MagicMock()
+        mock_response.text = "Uno defaults to sarcasm but speaks sincerely in danger."
+
+        with patch(
+            "build_claim_ledger_profile.generate_with_retry",
+            return_value=mock_response,
+        ):
+            refiner = ClaimRefiner(client, ledger)
+            refined_count, failed_count = refiner.refine_all()
+
+        assert refined_count == 2
+        assert failed_count == 0
+
+        # Check claim 1 was refined and contradictions absorbed
+        claim1 = ledger.get_claim(1)
+        assert claim1 is not None
+        assert claim1.text == "Uno defaults to sarcasm but speaks sincerely in danger."
+        assert len(claim1.contradicting) == 0
+        assert len(claim1.supporting) == 2  # original + absorbed contradiction
+
+        # Claim 2 (no contradictions) should be unchanged
+        claim2 = ledger.get_claim(2)
+        assert claim2 is not None
+        assert claim2.text == "Uno is an AI"
+
+    def test_refine_all_api_failure(self):
+        """Test refining when API calls fail."""
+        ledger = self._make_ledger_with_contradictions()
+        client = MagicMock()
+
+        with patch(
+            "build_claim_ledger_profile.generate_with_retry",
+            return_value=None,
+        ):
+            refiner = ClaimRefiner(client, ledger)
+            refined_count, failed_count = refiner.refine_all()
+
+        assert refined_count == 0
+        assert failed_count == 2
+
+        # Claims should be unchanged
+        claim1 = ledger.get_claim(1)
+        assert claim1 is not None
+        assert claim1.text == "Uno is always sarcastic"
+        assert len(claim1.contradicting) == 1
+
+    def test_refine_all_empty_response(self):
+        """Test refining when LLM returns empty text."""
+        ledger = self._make_ledger_with_contradictions()
+        client = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.text = ""
+
+        with patch(
+            "build_claim_ledger_profile.generate_with_retry",
+            return_value=mock_response,
+        ):
+            refiner = ClaimRefiner(client, ledger)
+            refined_count, failed_count = refiner.refine_all()
+
+        assert refined_count == 0
+        assert failed_count == 2

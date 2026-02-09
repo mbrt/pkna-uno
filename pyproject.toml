@@ -21,6 +21,7 @@ dependencies = [
     "python-dotenv>=1.1.0",
     "rich>=14.0.0",
     "scikit-learn>=1.7.0",
+    "seaborn>=0.13.2",
     "streamlit>=1.45.1",
     "synthetic-data-kit>=0.0.5",
     "tiktoken>=0.11.0",
