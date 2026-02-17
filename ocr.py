@@ -35,7 +35,7 @@ for idx, img_file in enumerate(image_files, 1):
     image = Image.open(img_path).convert("RGB")
 
     llm_input = {"prompt": chat_template, "multi_modal_data": {"image": image}}
-    output = llm.generate([llm_input], sampling_params=sampling_params)[0]
+    output = llm.generate([llm_input], sampling_params=sampling_params)[0]  # type: ignore[arg-type]
 
     doctags = output.outputs[0].text
     img_fn = os.path.splitext(img_file)[0]

@@ -112,58 +112,52 @@ def configure_lm() -> None:
 
 @dataclass
 class Scene:
-    """A scene from the comics containing Uno."""
+    """A scene from the comics containing Uno.
+
+    Preserves the original panel structure from the extraction JSON,
+    including all fields: description, caption_text, dialogues, is_new_scene.
+    """
 
     issue: str
     page_numbers: list[int]
-    summary: str
-    uno_dialogues: list[str]
-    panel_descriptions: list[str]
-    other_characters: set[str]
+    panels: list[dict]  # Original panel dicts with all fields preserved
 
     @property
     def scene_id(self) -> str:
         """Unique identifier for this scene: issue_firstpage."""
         return f"{self.issue}_{self.page_numbers[0]}"
 
-    def to_context_string(self) -> str:
-        """Create a context string describing the scene."""
-        pages_str = ", ".join(f"page {p}" for p in self.page_numbers)
-        chars_str = (
-            ", ".join(sorted(self.other_characters))
-            if self.other_characters
-            else "none"
-        )
-        return (
-            f"Issue: {self.issue}, {pages_str}. Other characters present: {chars_str}"
-        )
-
-    def to_other_context(self) -> str:
-        """Create additional context string."""
-        return f"Panel descriptions: {' | '.join(self.panel_descriptions)}"
-
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
+            "scene_id": self.scene_id,
             "issue": self.issue,
             "page_numbers": self.page_numbers,
-            "summary": self.summary,
-            "uno_dialogues": self.uno_dialogues,
-            "panel_descriptions": self.panel_descriptions,
-            "other_characters": list(self.other_characters),
+            "panels": self.panels,
         }
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "Scene":
-        """Create Scene from dictionary."""
-        return cls(
-            issue=data["issue"],
-            page_numbers=data["page_numbers"],
-            summary=data["summary"],
-            uno_dialogues=data["uno_dialogues"],
-            panel_descriptions=data["panel_descriptions"],
-            other_characters=set(data["other_characters"]),
-        )
+    def get_uno_dialogues(self) -> list[str]:
+        """Extract Uno's dialogue lines from panels."""
+        return [
+            d["line"]
+            for panel in self.panels
+            for d in panel.get("dialogues", [])
+            if d.get("character", "").lower() == "uno"
+        ]
+
+    def get_other_characters(self) -> set[str]:
+        """Get names of all non-Uno characters in this scene."""
+        chars: set[str] = set()
+        for panel in self.panels:
+            for d in panel.get("dialogues", []):
+                char = d.get("character", "")
+                if char and char.lower() != "uno":
+                    chars.add(char)
+        return chars
+
+    def has_uno(self) -> bool:
+        """Check if Uno appears in this scene."""
+        return len(self.get_uno_dialogues()) > 0
 
 
 def extract_scenes_from_issue(issue_dir: Path) -> list[Scene]:
@@ -211,36 +205,20 @@ def extract_scenes_from_issue(issue_dir: Path) -> list[Scene]:
 def create_scene_from_panels(
     issue: str, page_numbers: list[int], panels: list[dict]
 ) -> Scene | None:
-    """Create a Scene object from panels, only if Uno is present."""
-    uno_dialogues = []
-    panel_descriptions = []
-    other_characters: set[str] = set()
-
-    for panel in panels:
-        if desc := panel.get("description"):
-            panel_descriptions.append(desc)
-
-        for dialogue in panel.get("dialogues", []):
-            character = dialogue.get("character", "").strip()
-            line = dialogue.get("line", "").strip()
-
-            if character.lower() == "uno":
-                uno_dialogues.append(line)
-            elif character:
-                other_characters.add(character)
-
-    if not uno_dialogues:
+    """Create a Scene if Uno appears, preserving original panel structure."""
+    # Check if Uno appears in any dialogue
+    has_uno = any(
+        d.get("character", "").lower() == "uno"
+        for panel in panels
+        for d in panel.get("dialogues", [])
+    )
+    if not has_uno:
         return None
-
-    summary = " ".join(panel_descriptions)
 
     return Scene(
         issue=issue,
         page_numbers=page_numbers,
-        summary=summary,
-        uno_dialogues=uno_dialogues,
-        panel_descriptions=panel_descriptions,
-        other_characters=other_characters,
+        panels=panels,  # Preserve original structure
     )
 
 
@@ -281,27 +259,32 @@ class SceneStore:
         return self._by_issue.get(issue, [])
 
     def search_dialogues(self, query: str) -> list[tuple[str, str]]:
-        """Search dialogues for a query string.
+        """Search all dialogues (not just Uno's) in panels.
 
         Returns list of (scene_id, matching_dialogue) tuples.
         """
         results = []
         query_lower = query.lower()
         for scene in self._scenes.values():
-            for dialogue in scene.uno_dialogues:
-                if query_lower in dialogue.lower():
-                    results.append((scene.scene_id, dialogue))
+            for panel in scene.panels:
+                for d in panel.get("dialogues", []):
+                    line = d.get("line", "")
+                    if query_lower in line.lower():
+                        results.append((scene.scene_id, line))
         return results[:20]  # Limit results
 
     def get_index(self) -> list[dict]:
-        """Get lightweight index of all scenes."""
+        """Lightweight index computed on-the-fly from panels."""
         return [
             {
                 "scene_id": scene.scene_id,
                 "issue": scene.issue,
                 "pages": scene.page_numbers,
-                "dialogue_count": len(scene.uno_dialogues),
-                "other_characters": list(scene.other_characters),
+                "panel_count": len(scene.panels),
+                "dialogue_count": sum(
+                    len(p.get("dialogues", [])) for p in scene.panels
+                ),
+                "other_characters": list(scene.get_other_characters()),
             }
             for scene in self._scenes.values()
         ]
@@ -778,7 +761,7 @@ def get_scenes_with_character(character: str) -> list[dict]:
         return []
     results = []
     for scene in SCENE_STORE.all_scenes():
-        if any(character.lower() in c.lower() for c in scene.other_characters):
+        if any(character.lower() in c.lower() for c in scene.get_other_characters()):
             results.append(scene.to_dict())
     return results
 
