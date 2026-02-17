@@ -9,6 +9,7 @@ dependencies = [
     "docling-core>=2.25.0",
     "dspy>=3.0.1",
     "google-genai>=1.8.0",
+    "jsonschema>=4.25.1",
     "jupyter>=1.1.1",
     "layoutparser[layoutmodels]>=0.3.4",
     "markdown-it-py>=4.0.0",

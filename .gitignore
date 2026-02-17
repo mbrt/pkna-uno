@@ -1,4 +1,4 @@
-.env
+/.env*
 unsloth_compiled_cache
 llama.cpp
 
