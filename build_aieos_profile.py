@@ -32,18 +32,8 @@ from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 
 load_dotenv()
 
-# Configure logging
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-)
-log = logging.getLogger(__name__)
-
 # Settings
-MODEL_NAME = "vertex_ai/gemini-3-pro-preview"
+MODEL_NAME = "vertex_ai/gemini-3-flash-preview"
 CHARACTER_NAME = "Uno"
 ENCODING_NAME = "cl100k_base"
 VERSION_TAG = "v10"
@@ -54,6 +44,24 @@ INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
 OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / VERSION_TAG
 CHECKPOINTS_DIR = OUTPUT_DIR / "checkpoints"
 SECTIONS_DIR = CHECKPOINTS_DIR / "sections"
+
+# Configure logging
+# Ensure output directories exist (for logging)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+console = Console(stderr=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[
+        RichHandler(console=console, show_time=True, show_path=False),
+        logging.FileHandler(OUTPUT_DIR / "build.log", encoding="utf-8"),
+    ],
+    force=True,  # Override any existing config from imports
+)
+log = logging.getLogger(__name__)
+# Configure dspy.predict.rlm logger to use the same handlers
+logging.getLogger("dspy.predict.rlm").handlers = logging.root.handlers
 
 # Global progress bar
 PROGRESS = Progress(
