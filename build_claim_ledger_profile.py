@@ -48,6 +48,7 @@ logging.basicConfig(
     format="%(message)s",
     datefmt="[%X]",
     handlers=[RichHandler(console=console, show_time=True, show_path=False)],
+    force=True,
 )
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
@@ -57,7 +58,7 @@ log.setLevel(logging.DEBUG)
 MODEL_NAME = "gemini-3-flash-preview"
 CHARACTER_NAME = "Uno"
 ENCODING_NAME = "cl100k_base"
-VERSION_TAG = "v8"
+VERSION_TAG = "v11"
 MAX_TOOL_ITERATIONS = 64
 CLAIM_SUPPORT_THRESHOLD = 2  # Minimum support_count to include in final document
 
@@ -133,13 +134,80 @@ PROGRESS = Progress(
 # Valid claim sections (ordered for deterministic document generation)
 SECTION_ORDER = [
     "identity",
-    "personality",
+    "psychology",
     "communication",
-    "values",
+    "motivations",
+    "capabilities",
     "behavior",
     "relationships",
 ]
+
+# Valid top-level sections
 VALID_SECTIONS = set(SECTION_ORDER)
+
+# Valid hierarchical paths (AIEOS-derived)
+VALID_PATHS = {
+    # Identity
+    "identity/names",
+    "identity/bio",
+    "identity/origin",
+    # Psychology - Neural Matrix (AI cognitive weights)
+    "psychology/neural_matrix/creativity",
+    "psychology/neural_matrix/empathy",
+    "psychology/neural_matrix/logic",
+    "psychology/neural_matrix/adaptability",
+    "psychology/neural_matrix/charisma",
+    "psychology/neural_matrix/reliability",
+    # Psychology - OCEAN Traits
+    "psychology/traits/ocean/openness",
+    "psychology/traits/ocean/conscientiousness",
+    "psychology/traits/ocean/extraversion",
+    "psychology/traits/ocean/agreeableness",
+    "psychology/traits/ocean/neuroticism",
+    # Psychology - Other traits
+    "psychology/traits/mbti",
+    "psychology/traits/temperament",
+    # Psychology - Moral Compass
+    "psychology/moral_compass/alignment",
+    "psychology/moral_compass/core_values",
+    "psychology/moral_compass/conflict_resolution",
+    # Psychology - Emotional Profile
+    "psychology/emotional/base_mood",
+    "psychology/emotional/volatility",
+    "psychology/emotional/resilience",
+    "psychology/emotional/triggers/joy",
+    "psychology/emotional/triggers/anger",
+    "psychology/emotional/triggers/sadness",
+    "psychology/emotional/triggers/fear",
+    # Communication (AIEOS: Linguistics)
+    "communication/voice/formality",
+    "communication/voice/verbosity",
+    "communication/voice/vocabulary",
+    "communication/voice/style",
+    "communication/syntax/structure",
+    "communication/syntax/contractions",
+    "communication/idiolect/catchphrases",
+    "communication/idiolect/nicknames",
+    "communication/idiolect/expressions",
+    "communication/idiolect/forbidden",
+    "communication/interaction/dominance",
+    "communication/interaction/turn_taking",
+    "communication/interaction/emotional_coloring",
+    # Motivations
+    "motivations/core_drive",
+    "motivations/goals/short_term",
+    "motivations/goals/long_term",
+    "motivations/fears/rational",
+    "motivations/fears/irrational",
+    # Capabilities
+    "capabilities/skills",
+    "capabilities/limitations",
+    # Behavior
+    "behavior/does",
+    "behavior/avoids",
+    # Relationships - dynamic (relationships/{name})
+    # Validated separately to allow any character name
+}
 
 
 def count_tokens(text: str) -> int:
@@ -182,10 +250,15 @@ class Claim(BaseModel):
 
     id: int
     text: str  # Claim in English
-    section: str  # identity|personality|communication|values|behavior|relationships
+    path: str  # Hierarchical path, e.g., "psychology/traits/ocean/openness"
     supporting: list[SceneEvidence] = []  # Scenes that support with justification
     contradicting: list[SceneEvidence] = []  # Scenes that contradict with justification
     quotes: list[Quote] = []  # Quotes with context
+
+    @property
+    def section(self) -> str:
+        """Top-level section (first component of path)."""
+        return self.path.split("/")[0]
 
     @property
     def support_count(self) -> int:
@@ -434,13 +507,30 @@ class ClaimLedger:
             section_claims.sort(key=lambda c: c.support_count, reverse=True)
         return result
 
+    def get_claims_by_path(
+        self, path_prefix: str | None = None
+    ) -> dict[str, list[Claim]]:
+        """Get claims grouped by full path, filtered by prefix.
+
+        Args:
+            path_prefix: If provided, only return claims with paths starting with this prefix.
+
+        Returns:
+            Dict mapping full paths to lists of claims.
+        """
+        result: dict[str, list[Claim]] = defaultdict(list)
+        for claim in self._claims.values():
+            if path_prefix is None or claim.path.startswith(path_prefix):
+                result[claim.path].append(claim)
+        return result
+
     def get_claim(self, claim_id: int) -> Claim | None:
         """Get a claim by ID."""
         return self._claims.get(claim_id)
 
     def add_claim(
         self,
-        section: str,
+        path: str,
         text: str,
         scene_id: str,
         justification: str,
@@ -448,10 +538,19 @@ class ClaimLedger:
         quote_context: str | None = None,
     ) -> Claim:
         """Add a new claim with initial supporting evidence."""
+        # Validate path
+        section = path.split("/")[0]
+        if section not in VALID_SECTIONS:
+            raise ValueError(f"Invalid section in path '{path}'")
+
+        # relationships/{name} pattern is always valid
+        if not (section == "relationships" or path in VALID_PATHS):
+            raise ValueError(f"Invalid path '{path}'")
+
         claim = Claim(
             id=self._next_id,
             text=text,
-            section=section,
+            path=path,
             supporting=[SceneEvidence(scene_id=scene_id, justification=justification)],
             contradicting=[],
             quotes=[],
@@ -548,15 +647,15 @@ class ClaimLedger:
 
 def get_scene_processing_prompt() -> str:
     """Generate system prompt for scene processing."""
-    return """You are building a claim-based character profile for "Uno" from PKNA comics (Paperinik New Adventures).
+    return """You are building a claim-based character profile for "Uno" from PKNA comics.
 
 ## Tools (Progressive Disclosure)
-- list_claims(section=None): Compact list - "id: claim [+N]"
+- list_claims(section=None): Compact list - "id: path: claim [+N]"
 - view_claims(ids): Full details for specific claims (max 10)
 - view_scene(scene_id): Look back at a previous scene for context
-- add_claim(section, text, justification, quote?, quote_context?): Add NEW claim with justification
-- support_claim(claim_id, justification, quote?, quote_context?): Support existing claim with reason
-- contradict_claim(claim_id, justification): Contradict existing claim with reason
+- add_claim(path, text, justification, quote?, quote_context?): Add NEW claim
+- support_claim(claim_id, justification, quote?, quote_context?): Support existing claim
+- contradict_claim(claim_id, justification): Contradict existing claim
 - refine_claim(claim_id, new_text): Update claim text
 
 ## Workflow
@@ -565,73 +664,204 @@ def get_scene_processing_prompt() -> str:
 3. For each insight:
    - MATCHES existing claim -> support_claim() with justification
    - CONTRADICTS existing claim -> contradict_claim() with justification
-   - ADDS NUANCE to existing -> view_claims() to review details, then refine_claim()
-   - GENUINELY NEW insight -> add_claim()
+   - ADDS NUANCE -> view_claims() to review, then refine_claim()
+   - GENUINELY NEW -> add_claim()
 4. Brief summary when done
 
-## Sections
-- identity: Core facts about what Uno IS (nature, constraints, origin)
-- personality: Character traits (sarcasm, protectiveness, humor)
-- communication: How Uno speaks (expressions, nicknames, speech patterns)
-- values: What Uno believes in (loyalty, duty, freedom)
-- behavior: What Uno does or doesn't do (actions, habits, constraints)
-- relationships: How Uno relates to specific characters
+## Claim Paths (use these exact paths)
+
+### identity/ - Core facts about what Uno IS
+- identity/names: Names, aliases, nicknames
+- identity/bio: Nature, entity type, physical form, hardware
+- identity/origin: Creator (Everett Ducklair), creation context, purpose
+
+### psychology/ - Personality and emotional patterns
+Neural Matrix (AI cognitive weights):
+- psychology/neural_matrix/creativity: Creative thinking ability
+- psychology/neural_matrix/empathy: Emotional understanding
+- psychology/neural_matrix/logic: Logical reasoning ability
+- psychology/neural_matrix/adaptability: Flexibility in situations
+- psychology/neural_matrix/charisma: Social influence ability
+- psychology/neural_matrix/reliability: Dependability and consistency
+
+OCEAN Traits (Big Five):
+- psychology/traits/ocean/openness: Openness to experience
+- psychology/traits/ocean/conscientiousness: Organization, dependability
+- psychology/traits/ocean/extraversion: Social energy, assertiveness
+- psychology/traits/ocean/agreeableness: Cooperation, trust
+- psychology/traits/ocean/neuroticism: Emotional instability
+
+Other Personality:
+- psychology/traits/mbti: MBTI type (e.g., INTJ)
+- psychology/traits/temperament: Temperament description
+
+Moral Compass:
+- psychology/moral_compass/alignment: Moral alignment (lawful good, etc.)
+- psychology/moral_compass/core_values: Core values (loyalty, duty, etc.)
+- psychology/moral_compass/conflict_resolution: How conflicts are resolved
+
+Emotional Profile:
+- psychology/emotional/base_mood: Default emotional state
+- psychology/emotional/volatility: Emotional stability (high = unstable)
+- psychology/emotional/resilience: Recovery from setbacks
+- psychology/emotional/triggers/joy: Things that bring joy
+- psychology/emotional/triggers/anger: Things that cause anger
+- psychology/emotional/triggers/sadness: Things that cause sadness
+- psychology/emotional/triggers/fear: Things that cause fear
+
+### communication/ - How Uno speaks
+Voice Style:
+- communication/voice/formality: Formal vs casual register
+- communication/voice/verbosity: Terse vs verbose style
+- communication/voice/vocabulary: Vocabulary level (technical, advanced)
+- communication/voice/style: Style descriptors (sarcastic, witty)
+
+Syntax:
+- communication/syntax/structure: Sentence structure patterns
+- communication/syntax/contractions: Contraction usage patterns
+
+Idiolect (individual speech):
+- communication/idiolect/catchphrases: Characteristic phrases (Italian + translation)
+- communication/idiolect/nicknames: Nicknames for Paperinik and others
+- communication/idiolect/expressions: Common expressions
+- communication/idiolect/forbidden: Words/phrases Uno avoids
+
+Interaction Patterns:
+- communication/interaction/dominance: Conversational control patterns
+- communication/interaction/turn_taking: Turn-taking patterns
+- communication/interaction/emotional_coloring: Emotional tone
+
+### motivations/ - What drives Uno
+- motivations/core_drive: Primary motivation (raison d'être)
+- motivations/goals/short_term: Immediate objectives
+- motivations/goals/long_term: Long-term aspirations
+- motivations/fears/rational: Logical fears (system failure, etc.)
+- motivations/fears/irrational: Emotional fears (abandonment, etc.)
+
+### capabilities/ - What Uno can and cannot do
+- capabilities/skills: Skills and abilities with proficiency context
+- capabilities/limitations: Explicit constraints, vulnerabilities, dependencies
+
+### behavior/ - Actions and habits
+- behavior/does: Positive behaviors, protocols, habits
+- behavior/avoids: Self-imposed constraints, things avoided
+
+### relationships/ - Character dynamics
+- relationships/{character}: Use character name (e.g., relationships/paperinik)
 
 ## Quality Guidelines
 - Claims must be SPECIFIC and VERIFIABLE from scenes
+- Use the exact paths above (or relationships/{name} pattern)
 - Prefer supporting existing claims over creating near-duplicates
 - Write claims in ENGLISH
-- Preserve Italian quotes exactly as they appear
+- Preserve Italian quotes exactly
 - Include quote context explaining why the quote matters
-- Justifications should be brief (1-2 sentences) explaining the evidence
-
-## Current Scene ID
-The current scene ID will be provided with each scene. Use this ID when adding evidence.
 """
 
 
 SECTION_PROMPTS = {
     "identity": """## Essential Identity
-[Core facts about what Uno IS - nature, constraints, origin]
-Write this as structured prose with key facts clearly stated.""",
-    "personality": """## Core Personality
-[Character traits - prioritized by support count]
-[Include Italian quotes with inline translations: "Quote" (English translation)]
-Write this as flowing prose that captures the character's distinctive personality.""",
+
+### Names and Aliases
+[Claims from identity/names]
+
+### Nature and Form
+[Claims from identity/bio - what Uno IS, entity type, physical manifestation]
+
+### Origin
+[Claims from identity/origin - creator, creation context, purpose]
+
+Write as structured prose with key facts clearly stated.""",
+    "psychology": """## Core Psychology
+
+### Neural Matrix (AI Cognitive Profile)
+[Claims from psychology/neural_matrix/* - creativity, empathy, logic, adaptability, charisma, reliability]
+Describe cognitive strengths and patterns as prose.
+
+### Personality Traits
+[Claims from psychology/traits/* - OCEAN, MBTI, temperament]
+Include Italian quotes with inline translations: "Quote" (translation)
+
+### Moral Compass
+[Claims from psychology/moral_compass/* - alignment, core values, conflict resolution]
+
+### Emotional Profile
+[Claims from psychology/emotional/* - base mood, volatility, resilience]
+
+#### Emotional Triggers
+- Joy: [psychology/emotional/triggers/joy]
+- Anger: [psychology/emotional/triggers/anger]
+- Sadness: [psychology/emotional/triggers/sadness]
+- Fear: [psychology/emotional/triggers/fear]
+
+Write flowing prose capturing psychological makeup with concrete examples.""",
     "communication": """## Communication Style
+
 ### Voice and Tone
-[Formal/informal patterns, tone by context]
+[Claims from communication/voice/* - formality, verbosity, vocabulary, style]
 
-### Linguistic Markers
-[Characteristic phrases, nicknames, expressions]
-- Nicknames for Paperinik: list them
-- Common expressions with translations
+### Syntax Patterns
+[Claims from communication/syntax/*]
 
-Write each subsection clearly, listing concrete examples.""",
-    "values": """## Values and Beliefs
-[What Uno believes in - loyalty, duty, freedom]
-Write this as structured prose capturing core convictions.""",
-    "behavior": """## Behavioral Guidelines
+### Linguistic Markers (Idiolect)
+[Claims from communication/idiolect/*]
+- **Catchphrases**: "Italian phrase" (translation)
+- **Nicknames for Paperinik**: list them
+- **Common expressions**: with translations
+
+### Interaction Patterns
+[Claims from communication/interaction/* - dominance, turn-taking, emotional coloring]
+
+List concrete examples with Italian quotes.""",
+    "motivations": """## Motivations and Drives
+
+### Core Purpose
+[Claims from motivations/core_drive - what fundamentally drives Uno]
+
+### Goals
+**Short-term:** [motivations/goals/short_term]
+**Long-term:** [motivations/goals/long_term]
+
+### Fears
+**Rational fears:** [motivations/fears/rational - logical threats]
+**Irrational fears:** [motivations/fears/irrational - emotional anxieties]
+
+Write prose capturing what motivates and concerns the character.""",
+    "capabilities": """## Capabilities and Limitations
+
+### Skills and Abilities
+[Claims from capabilities/skills]
+List with proficiency context where relevant.
+
+### Limitations
+[Claims from capabilities/limitations]
+Explicit constraints, vulnerabilities, blind spots, dependencies.
+
+Include specific examples from scenes.""",
+    "behavior": """## Behavioral Patterns
+
 ### What Uno Does
-[Positive behaviors]
+[Claims from behavior/does - positive behaviors, habits, protocols]
 
-### What Uno Doesn't Do
-[Constraints and limitations]
+### What Uno Avoids
+[Claims from behavior/avoids - self-imposed constraints, things avoided]
 
-Split behaviors into the two subsections above.""",
+Split into subsections with concrete examples.""",
     "relationships": """## Key Relationships
+
 ### With Paperinik
-[Detailed dynamics]
+[Claims from relationships/paperinik]
 
 ### With Everett Ducklair
-[Relationship description]
+[Claims from relationships/everett_ducklair or relationships/ducklair]
 
 ### With Due
-[Relationship description]
+[Claims from relationships/due]
 
-[...other significant characters with their own subsections...]
+### Other Characters
+[Group remaining relationships/* claims by character]
 
-Create a subsection for each character mentioned in the claims.""",
+Create subsections for each character with significant claims.""",
 }
 
 
@@ -692,7 +922,7 @@ Output: Uno is often frustrated by human inefficiency and limitations, but forms
 
 
 def format_claims_compact(ledger: ClaimLedger, section: str | None = None) -> str:
-    """Format claims as a compact list for progressive disclosure."""
+    """Format claims as a compact list showing paths for progressive disclosure."""
     claims_by_section = ledger.get_claims_by_section(section)
 
     lines = [f"Total claims: {ledger.claim_count()}"]
@@ -702,8 +932,9 @@ def format_claims_compact(ledger: ClaimLedger, section: str | None = None) -> st
         lines.append(f"## {sect.title()}")
         for claim in claims:
             sign = "+" if claim.support_count >= 0 else ""
+            # Show path instead of just section
             lines.append(
-                f"{claim.id}: {claim.text[:256]}{'...' if len(claim.text) > 256 else ''} [{sign}{claim.support_count}]"
+                f"{claim.id}: [{claim.path}] {claim.text[:200]}{'...' if len(claim.text) > 200 else ''} [{sign}{claim.support_count}]"
             )
         lines.append("")
 
@@ -722,7 +953,7 @@ def format_claims_detail(ledger: ClaimLedger, claim_ids: list[int]) -> str:
             continue
 
         lines.append(f"ID {claim_id}:")
-        lines.append(f"  Section: {claim.section}")
+        lines.append(f"  Path: {claim.path}")
         lines.append(f"  Text: {claim.text}")
         lines.append(
             f"  Support: {'+' if claim.support_count >= 0 else ''}{claim.support_count} "
@@ -805,11 +1036,11 @@ class LedgerTools:
     def list_claims(self, section: str | None = None) -> str:
         """List all claims in compact format.
 
-        Shows claim ID, text (truncated), and net support count for quick scanning.
+        Shows claim ID, path, text (truncated), and net support count for quick scanning.
 
         Args:
-            section: Optional filter by section (identity, personality, communication,
-                    values, behavior, relationships). If None, shows all sections.
+            section: Optional filter by section (identity, psychology, communication,
+                    motivations, capabilities, behavior, relationships). If None, shows all sections.
 
         Returns:
             Compact listing of claims organized by section.
@@ -852,7 +1083,7 @@ class LedgerTools:
 
     def add_claim(
         self,
-        section: str,
+        path: str,
         text: str,
         justification: str,
         quote: str | None = None,
@@ -863,8 +1094,7 @@ class LedgerTools:
         Creates a new claim with the current scene as initial supporting evidence.
 
         Args:
-            section: Claim category (identity, personality, communication, values,
-                    behavior, relationships).
+            path: Claim path (e.g., "psychology/traits/ocean/openness").
             text: The claim text in English.
             justification: Brief explanation of why this scene supports the claim.
             quote: Optional Italian quote from the scene that exemplifies the claim.
@@ -873,24 +1103,33 @@ class LedgerTools:
         Returns:
             Confirmation with the new claim ID and support count.
         """
-        log.debug(f"[add_claim] section={section}, text={text[:50]}...")
+        log.debug(f"[add_claim] path={path}, text={text[:50]}...")
 
+        # Validate path
+        section = path.split("/")[0]
         if section not in VALID_SECTIONS:
-            return f"Error: Invalid section '{section}'. Valid sections: {', '.join(sorted(VALID_SECTIONS))}"
+            return f"Error: Invalid section in path '{path}'. Valid sections: {', '.join(sorted(VALID_SECTIONS))}"
+
+        # relationships/{name} pattern is always valid
+        if not (section == "relationships" or path in VALID_PATHS):
+            return f"Error: Invalid path '{path}'. Use one of the defined paths or relationships/{{character_name}}."
 
         if quote and not quote_context:
             return "Error: quote_context is required when providing a quote."
 
-        claim = self._ledger.add_claim(
-            section=section,
-            text=text,
-            scene_id=self._current_scene_id,
-            justification=justification,
-            quote=quote,
-            quote_context=quote_context,
-        )
+        try:
+            claim = self._ledger.add_claim(
+                path=path,
+                text=text,
+                scene_id=self._current_scene_id,
+                justification=justification,
+                quote=quote,
+                quote_context=quote_context,
+            )
+        except ValueError as e:
+            return f"Error: {e}"
 
-        return f"Added claim {claim.id} in {section}: '{text[:60]}...' [+{claim.support_count}]"
+        return f"Added claim {claim.id} [{path}]: '{text[:60]}...' [+{claim.support_count}]"
 
     def support_claim(
         self,
@@ -1147,7 +1386,7 @@ class SoulDocumentGenerator:
         self._threshold = threshold
 
     def _format_section_claims(self, section: str) -> str:
-        """Format validated claims for a single section."""
+        """Format validated claims for a single section, grouped by path."""
         claims_by_section = self._ledger.get_claims_by_section(section=section)
         claims = [
             c
@@ -1157,13 +1396,21 @@ class SoulDocumentGenerator:
         if not claims:
             return ""
 
-        lines = []
+        # Group by path for structured output
+        by_path: dict[str, list[Claim]] = defaultdict(list)
         for claim in claims:
-            lines.append(f"**Claim (support: +{claim.support_count}):** {claim.text}")
-            if claim.quotes:
-                lines.append("Quotes:")
-                for q in claim.quotes:
-                    lines.append(f'  - "{q.text}" — {q.context}')
+            by_path[claim.path].append(claim)
+
+        lines = []
+        for path in sorted(by_path.keys()):
+            lines.append(f"### Path: {path}")
+            for claim in by_path[path]:
+                lines.append(
+                    f"**Claim (support: +{claim.support_count}):** {claim.text}"
+                )
+                if claim.quotes:
+                    for q in claim.quotes:
+                        lines.append(f'  - "{q.text}" — {q.context}')
             lines.append("")
 
         return "\n".join(lines)

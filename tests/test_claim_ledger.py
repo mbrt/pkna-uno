@@ -53,18 +53,19 @@ class TestClaim:
         claim = Claim(
             id=1,
             text="Uno uses sarcasm as a defense mechanism",
-            section="personality",
+            path="psychology/traits/temperament",
         )
         assert claim.id == 1
         assert claim.text == "Uno uses sarcasm as a defense mechanism"
-        assert claim.section == "personality"
+        assert claim.path == "psychology/traits/temperament"
+        assert claim.section == "psychology"
         assert claim.supporting == []
         assert claim.contradicting == []
         assert claim.quotes == []
 
     def test_support_count_no_evidence(self):
         """Test support count with no evidence."""
-        claim = Claim(id=1, text="Test claim", section="personality")
+        claim = Claim(id=1, text="Test claim", path="psychology/traits/temperament")
         assert claim.support_count == 0
 
     def test_support_count_only_supporting(self):
@@ -72,7 +73,7 @@ class TestClaim:
         claim = Claim(
             id=1,
             text="Test claim",
-            section="personality",
+            path="psychology/traits/temperament",
             supporting=[
                 SceneEvidence(scene_id="pkna-0_1", justification="Reason 1"),
                 SceneEvidence(scene_id="pkna-0_2", justification="Reason 2"),
@@ -86,7 +87,7 @@ class TestClaim:
         claim = Claim(
             id=1,
             text="Test claim",
-            section="personality",
+            path="psychology/traits/temperament",
             contradicting=[
                 SceneEvidence(scene_id="pkna-0_1", justification="Contradiction 1"),
             ],
@@ -98,7 +99,7 @@ class TestClaim:
         claim = Claim(
             id=1,
             text="Test claim",
-            section="personality",
+            path="psychology/traits/temperament",
             supporting=[
                 SceneEvidence(scene_id="pkna-0_1", justification="Support 1"),
                 SceneEvidence(scene_id="pkna-0_2", justification="Support 2"),
@@ -115,7 +116,7 @@ class TestClaim:
         claim = Claim(
             id=1,
             text="Test claim",
-            section="personality",
+            path="psychology/traits/temperament",
             supporting=[
                 SceneEvidence(scene_id="pkna-0_1", justification="Support 1"),
             ],
@@ -141,7 +142,7 @@ class TestClaim:
         claim = Claim(
             id=1,
             text="Test claim",
-            section="personality",
+            path="psychology/traits/temperament",
             supporting=[
                 SceneEvidence(scene_id="pkna-0_1", justification="Support 1"),
             ],
@@ -204,7 +205,7 @@ class TestClaimLedger:
         """Test adding a claim."""
         ledger = ClaimLedger()
         claim = ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Uno is sarcastic",
             scene_id="pkna-0_12",
             justification="Uses ironic responses",
@@ -212,7 +213,8 @@ class TestClaimLedger:
 
         assert claim.id == 1
         assert claim.text == "Uno is sarcastic"
-        assert claim.section == "personality"
+        assert claim.path == "psychology/traits/temperament"
+        assert claim.section == "psychology"
         assert len(claim.supporting) == 1
         assert claim.supporting[0].scene_id == "pkna-0_12"
         assert ledger.claim_count() == 1
@@ -221,7 +223,7 @@ class TestClaimLedger:
         """Test adding a claim with a quote."""
         ledger = ClaimLedger()
         claim = ledger.add_claim(
-            section="communication",
+            path="communication/idiolect/catchphrases",
             text="Uno uses 'Sai che dispiacere!' sarcastically",
             scene_id="pkna-0_12",
             justification="Catchphrase used multiple times",
@@ -236,13 +238,13 @@ class TestClaimLedger:
         """Test ID increments correctly."""
         ledger = ClaimLedger()
         claim1 = ledger.add_claim(
-            section="identity",
+            path="identity/bio",
             text="Claim 1",
             scene_id="pkna-0_1",
             justification="Reason 1",
         )
         claim2 = ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Claim 2",
             scene_id="pkna-0_2",
             justification="Reason 2",
@@ -256,7 +258,7 @@ class TestClaimLedger:
         """Test supporting an existing claim."""
         ledger = ClaimLedger()
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Uno is protective",
             scene_id="pkna-0_12",
             justification="Initial evidence",
@@ -278,7 +280,7 @@ class TestClaimLedger:
         """Test supporting a claim adds all quotes."""
         ledger = ClaimLedger()
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Test claim",
             scene_id="pkna-0_1",
             justification="Initial",
@@ -313,7 +315,7 @@ class TestClaimLedger:
         """Test same scene cannot support twice."""
         ledger = ClaimLedger()
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Test",
             scene_id="pkna-0_12",
             justification="Initial",
@@ -340,7 +342,7 @@ class TestClaimLedger:
         """Test contradicting a claim."""
         ledger = ClaimLedger()
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Uno always uses sarcasm",
             scene_id="pkna-0_12",
             justification="Initial",
@@ -362,7 +364,7 @@ class TestClaimLedger:
         """Test same scene cannot contradict twice."""
         ledger = ClaimLedger()
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Test",
             scene_id="pkna-0_12",
             justification="Initial",
@@ -387,7 +389,7 @@ class TestClaimLedger:
         """Test refining a claim."""
         ledger = ClaimLedger()
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Uno is sarcastic",
             scene_id="pkna-0_12",
             justification="Initial",
@@ -477,26 +479,26 @@ class TestClaimLedger:
         """Test grouping claims by section."""
         ledger = ClaimLedger()
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Trait 1",
             scene_id="pkna-0_1",
             justification="R1",
         )
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/mbti",
             text="Trait 2",
             scene_id="pkna-0_2",
             justification="R2",
         )
         ledger.add_claim(
-            section="identity",
+            path="identity/bio",
             text="Fact 1",
             scene_id="pkna-0_3",
             justification="R3",
         )
 
         by_section = ledger.get_claims_by_section()
-        assert len(by_section["personality"]) == 2
+        assert len(by_section["psychology"]) == 2
         assert len(by_section["identity"]) == 1
         assert "communication" not in by_section  # Empty sections not included
 
@@ -504,27 +506,27 @@ class TestClaimLedger:
         """Test filtering claims by section."""
         ledger = ClaimLedger()
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Trait",
             scene_id="pkna-0_1",
             justification="R1",
         )
         ledger.add_claim(
-            section="identity",
+            path="identity/bio",
             text="Fact",
             scene_id="pkna-0_2",
             justification="R2",
         )
 
-        by_section = ledger.get_claims_by_section("personality")
-        assert len(by_section["personality"]) == 1
+        by_section = ledger.get_claims_by_section("psychology")
+        assert len(by_section["psychology"]) == 1
         assert "identity" not in by_section  # Filtered out
 
     def test_serialization_roundtrip(self):
         """Test JSON serialization and deserialization."""
         ledger = ClaimLedger()
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Uno is sarcastic",
             scene_id="pkna-0_12",
             justification="Uses ironic responses",
@@ -577,7 +579,7 @@ class TestFormatFunctions:
         """Create a sample ledger with claims."""
         ledger = ClaimLedger()
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Uno uses sarcasm as a defense mechanism",
             scene_id="pkna-0_12",
             justification="Deflects with irony",
@@ -590,7 +592,7 @@ class TestFormatFunctions:
             justification="More sarcasm",
         )
         ledger.add_claim(
-            section="identity",
+            path="identity/bio",
             text="Uno is an AI living in Ducklair Tower",
             scene_id="pkna-0_1",
             justification="Introduced as such",
@@ -603,15 +605,15 @@ class TestFormatFunctions:
 
         assert "Total claims: 2" in output
         assert "## Identity" in output
-        assert "## Personality" in output
+        assert "## Psychology" in output
         assert "[+2]" in output  # Claim 1 has support 2
         assert "[+1]" in output  # Claim 2 has support 1
 
     def test_format_claims_compact_filtered(self, sample_ledger):
         """Test compact formatting with section filter."""
-        output = format_claims_compact(sample_ledger, section="personality")
+        output = format_claims_compact(sample_ledger, section="psychology")
 
-        assert "## Personality" in output
+        assert "## Psychology" in output
         assert "## Identity" not in output
 
     def test_format_claims_detail(self, sample_ledger):
@@ -619,7 +621,7 @@ class TestFormatFunctions:
         output = format_claims_detail(sample_ledger, [1])
 
         assert "ID 1:" in output
-        assert "Section: personality" in output
+        assert "Path: psychology/traits/temperament" in output
         assert "Uno uses sarcasm" in output
         assert "Supporting:" in output
         assert "pkna-0_12:" in output
@@ -664,7 +666,7 @@ class TestClaimRefiner:
         ledger = ClaimLedger()
         # Claim 1: has contradictions
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Uno is always sarcastic",
             scene_id="pkna-0_12",
             justification="Uses ironic deflection",
@@ -676,14 +678,14 @@ class TestClaimRefiner:
         )
         # Claim 2: no contradictions
         ledger.add_claim(
-            section="identity",
+            path="identity/bio",
             text="Uno is an AI",
             scene_id="pkna-0_1",
             justification="Introduced as artificial intelligence",
         )
         # Claim 3: has contradictions
         ledger.add_claim(
-            section="behavior",
+            path="behavior/avoids",
             text="Uno avoids direct confrontation",
             scene_id="pkna-1_10",
             justification="Prefers indirect approaches",
@@ -711,7 +713,7 @@ class TestClaimRefiner:
         """Test finding contradicted claims when there are none."""
         ledger = ClaimLedger()
         ledger.add_claim(
-            section="personality",
+            path="psychology/traits/temperament",
             text="Claim without contradictions",
             scene_id="pkna-0_1",
             justification="Reason",
