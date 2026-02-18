@@ -32,21 +32,11 @@ from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 
 load_dotenv()
 
-# Configure logging
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-)
-log = logging.getLogger(__name__)
-
 # Settings
 MODEL_NAME = "vertex_ai/gemini-3-flash-preview"
 CHARACTER_NAME = "Uno"
 ENCODING_NAME = "cl100k_base"
-VERSION_TAG = "v9"
+VERSION_TAG = "v10"
 
 # Paths
 BASE_DIR = Path(__file__).parent
@@ -54,6 +44,24 @@ INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
 OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / VERSION_TAG
 CHECKPOINTS_DIR = OUTPUT_DIR / "checkpoints"
 SECTIONS_DIR = CHECKPOINTS_DIR / "sections"
+
+# Configure logging
+# Ensure output directories exist (for logging)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+console = Console(stderr=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[
+        RichHandler(console=console, show_time=True, show_path=False),
+        logging.FileHandler(OUTPUT_DIR / "build.log", encoding="utf-8"),
+    ],
+    force=True,  # Override any existing config from imports
+)
+log = logging.getLogger(__name__)
+# Configure dspy.predict.rlm logger to use the same handlers
+logging.getLogger("dspy.predict.rlm").handlers = logging.root.handlers
 
 # Global progress bar
 PROGRESS = Progress(
@@ -112,58 +120,52 @@ def configure_lm() -> None:
 
 @dataclass
 class Scene:
-    """A scene from the comics containing Uno."""
+    """A scene from the comics containing Uno.
+
+    Preserves the original panel structure from the extraction JSON,
+    including all fields: description, caption_text, dialogues, is_new_scene.
+    """
 
     issue: str
     page_numbers: list[int]
-    summary: str
-    uno_dialogues: list[str]
-    panel_descriptions: list[str]
-    other_characters: set[str]
+    panels: list[dict]  # Original panel dicts with all fields preserved
 
     @property
     def scene_id(self) -> str:
         """Unique identifier for this scene: issue_firstpage."""
         return f"{self.issue}_{self.page_numbers[0]}"
 
-    def to_context_string(self) -> str:
-        """Create a context string describing the scene."""
-        pages_str = ", ".join(f"page {p}" for p in self.page_numbers)
-        chars_str = (
-            ", ".join(sorted(self.other_characters))
-            if self.other_characters
-            else "none"
-        )
-        return (
-            f"Issue: {self.issue}, {pages_str}. Other characters present: {chars_str}"
-        )
-
-    def to_other_context(self) -> str:
-        """Create additional context string."""
-        return f"Panel descriptions: {' | '.join(self.panel_descriptions)}"
-
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
+            "scene_id": self.scene_id,
             "issue": self.issue,
             "page_numbers": self.page_numbers,
-            "summary": self.summary,
-            "uno_dialogues": self.uno_dialogues,
-            "panel_descriptions": self.panel_descriptions,
-            "other_characters": list(self.other_characters),
+            "panels": self.panels,
         }
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "Scene":
-        """Create Scene from dictionary."""
-        return cls(
-            issue=data["issue"],
-            page_numbers=data["page_numbers"],
-            summary=data["summary"],
-            uno_dialogues=data["uno_dialogues"],
-            panel_descriptions=data["panel_descriptions"],
-            other_characters=set(data["other_characters"]),
-        )
+    def get_uno_dialogues(self) -> list[str]:
+        """Extract Uno's dialogue lines from panels."""
+        return [
+            d["line"]
+            for panel in self.panels
+            for d in panel.get("dialogues", [])
+            if d.get("character", "").lower() == "uno"
+        ]
+
+    def get_other_characters(self) -> set[str]:
+        """Get names of all non-Uno characters in this scene."""
+        chars: set[str] = set()
+        for panel in self.panels:
+            for d in panel.get("dialogues", []):
+                char = d.get("character", "")
+                if char and char.lower() != "uno":
+                    chars.add(char)
+        return chars
+
+    def has_uno(self) -> bool:
+        """Check if Uno appears in this scene."""
+        return len(self.get_uno_dialogues()) > 0
 
 
 def extract_scenes_from_issue(issue_dir: Path) -> list[Scene]:
@@ -211,36 +213,20 @@ def extract_scenes_from_issue(issue_dir: Path) -> list[Scene]:
 def create_scene_from_panels(
     issue: str, page_numbers: list[int], panels: list[dict]
 ) -> Scene | None:
-    """Create a Scene object from panels, only if Uno is present."""
-    uno_dialogues = []
-    panel_descriptions = []
-    other_characters: set[str] = set()
-
-    for panel in panels:
-        if desc := panel.get("description"):
-            panel_descriptions.append(desc)
-
-        for dialogue in panel.get("dialogues", []):
-            character = dialogue.get("character", "").strip()
-            line = dialogue.get("line", "").strip()
-
-            if character.lower() == "uno":
-                uno_dialogues.append(line)
-            elif character:
-                other_characters.add(character)
-
-    if not uno_dialogues:
+    """Create a Scene if Uno appears, preserving original panel structure."""
+    # Check if Uno appears in any dialogue
+    has_uno = any(
+        d.get("character", "").lower() == "uno"
+        for panel in panels
+        for d in panel.get("dialogues", [])
+    )
+    if not has_uno:
         return None
-
-    summary = " ".join(panel_descriptions)
 
     return Scene(
         issue=issue,
         page_numbers=page_numbers,
-        summary=summary,
-        uno_dialogues=uno_dialogues,
-        panel_descriptions=panel_descriptions,
-        other_characters=other_characters,
+        panels=panels,  # Preserve original structure
     )
 
 
@@ -281,27 +267,32 @@ class SceneStore:
         return self._by_issue.get(issue, [])
 
     def search_dialogues(self, query: str) -> list[tuple[str, str]]:
-        """Search dialogues for a query string.
+        """Search all dialogues (not just Uno's) in panels.
 
         Returns list of (scene_id, matching_dialogue) tuples.
         """
         results = []
         query_lower = query.lower()
         for scene in self._scenes.values():
-            for dialogue in scene.uno_dialogues:
-                if query_lower in dialogue.lower():
-                    results.append((scene.scene_id, dialogue))
+            for panel in scene.panels:
+                for d in panel.get("dialogues", []):
+                    line = d.get("line", "")
+                    if query_lower in line.lower():
+                        results.append((scene.scene_id, line))
         return results[:20]  # Limit results
 
     def get_index(self) -> list[dict]:
-        """Get lightweight index of all scenes."""
+        """Lightweight index computed on-the-fly from panels."""
         return [
             {
                 "scene_id": scene.scene_id,
                 "issue": scene.issue,
                 "pages": scene.page_numbers,
-                "dialogue_count": len(scene.uno_dialogues),
-                "other_characters": list(scene.other_characters),
+                "panel_count": len(scene.panels),
+                "dialogue_count": sum(
+                    len(p.get("dialogues", [])) for p in scene.panels
+                ),
+                "other_characters": list(scene.get_other_characters()),
             }
             for scene in self._scenes.values()
         ]
@@ -639,345 +630,419 @@ class AIEOSDocument(BaseModel):
 
 
 # ============================================================================
-# Evidence Models
+# Evidence Models (for RLM output)
 # ============================================================================
 
 
-class Evidence(BaseModel):
-    """A piece of evidence for a character trait."""
+class SectionEvidence(BaseModel):
+    """Evidence supporting a section's content."""
 
-    scene_id: str = Field(description="ID of the source scene")
+    scene_id: str = Field(description="Scene ID (e.g., 'pkna-1_23')")
     quote: str | None = Field(default=None, description="Italian quote if applicable")
     description: str = Field(description="What this evidence shows")
-    section: str = Field(
-        description="AIEOS section: identity|psychology|linguistics|history|motivations|capabilities"
-    )
-    trait: str = Field(description="Specific trait or field within section")
+    trait: str = Field(description="Which trait/field this supports")
 
 
-class EvidenceLedger(BaseModel):
-    """Collection of evidence organized by AIEOS section."""
+# Concrete output types per section (DSPy needs concrete types, not Generic)
+class IdentityWithEvidence(BaseModel):
+    """Identity section output with evidence citations."""
 
-    evidence: list[Evidence] = Field(default_factory=list)
-    processed_scene_ids: set[str] = Field(default_factory=set)
+    section: AIEOSIdentity
+    evidence: list[SectionEvidence] = Field(description="Supporting evidence")
 
-    def add_evidence(self, ev: Evidence) -> None:
-        """Add an evidence item."""
-        self.evidence.append(ev)
 
-    def mark_scene_processed(self, scene_id: str) -> None:
-        """Mark a scene as processed."""
-        self.processed_scene_ids.add(scene_id)
+class PsychologyWithEvidence(BaseModel):
+    """Psychology section output with evidence citations."""
 
-    def is_scene_processed(self, scene_id: str) -> bool:
-        """Check if a scene has been processed."""
-        return scene_id in self.processed_scene_ids
+    section: AIEOSPsychology
+    evidence: list[SectionEvidence] = Field(description="Supporting evidence")
 
-    def get_evidence_by_section(self, section: str) -> list[Evidence]:
-        """Get all evidence for a specific AIEOS section."""
-        return [e for e in self.evidence if e.section == section]
 
-    def get_evidence_by_trait(self, section: str, trait: str) -> list[Evidence]:
-        """Get evidence for a specific trait within a section."""
-        return [e for e in self.evidence if e.section == section and e.trait == trait]
+class LinguisticsWithEvidence(BaseModel):
+    """Linguistics section output with evidence citations."""
 
-    def to_json(self) -> dict:
-        """Serialize to JSON-compatible dict."""
-        return {
-            "evidence": [e.model_dump() for e in self.evidence],
-            "processed_scene_ids": sorted(self.processed_scene_ids),
-        }
+    section: AIEOSLinguistics
+    evidence: list[SectionEvidence] = Field(description="Supporting evidence")
 
-    @classmethod
-    def from_json(cls, data: dict) -> "EvidenceLedger":
-        """Deserialize from JSON dict."""
-        return cls(
-            evidence=[Evidence.model_validate(e) for e in data.get("evidence", [])],
-            processed_scene_ids=set(data.get("processed_scene_ids", [])),
+
+class HistoryWithEvidence(BaseModel):
+    """History section output with evidence citations."""
+
+    section: AIEOSHistory
+    evidence: list[SectionEvidence] = Field(description="Supporting evidence")
+
+
+class MotivationsWithEvidence(BaseModel):
+    """Motivations section output with evidence citations."""
+
+    section: AIEOSMotivations
+    evidence: list[SectionEvidence] = Field(description="Supporting evidence")
+
+
+class CapabilitiesWithEvidence(BaseModel):
+    """Capabilities section output with evidence citations."""
+
+    section: AIEOSCapabilities
+    evidence: list[SectionEvidence] = Field(description="Supporting evidence")
+
+
+# ============================================================================
+# RLM Tool Functions (global scene store access)
+# ============================================================================
+
+# Global scene store for RLM tool access
+SCENE_STORE: SceneStore | None = None
+
+
+def list_all_scenes() -> list[dict]:
+    """Get lightweight index of all scenes with the character.
+
+    Returns:
+        List of dicts with: scene_id, issue, pages, dialogue_count, other_characters
+    """
+    if SCENE_STORE is None:
+        return []
+    return SCENE_STORE.get_index()
+
+
+def get_scene(scene_id: str) -> dict | None:
+    """Get full details of a specific scene.
+
+    Args:
+        scene_id: Scene identifier (e.g., 'pkna-1_23')
+
+    Returns:
+        Dict with: issue, pages, summary, uno_dialogues, panel_descriptions, other_characters
+        Or None if scene not found.
+    """
+    if SCENE_STORE is None:
+        return None
+    scene = SCENE_STORE.get_scene(scene_id)
+    if scene is None:
+        return None
+    return scene.to_dict()
+
+
+def search_dialogues(query: str, max_results: int = 20) -> list[dict]:
+    """Search character's dialogues for a keyword/phrase.
+
+    Args:
+        query: Text to search for (case-insensitive)
+        max_results: Maximum number of results to return (default 20)
+
+    Returns:
+        List of dicts with: scene_id, dialogue (matching line)
+    """
+    if SCENE_STORE is None:
+        return []
+    results = SCENE_STORE.search_dialogues(query)[:max_results]
+    return [
+        {"scene_id": scene_id, "dialogue": dialogue} for scene_id, dialogue in results
+    ]
+
+
+def get_scenes_by_issue(issue: str) -> list[dict]:
+    """Get all scenes from a specific issue.
+
+    Args:
+        issue: Issue identifier (e.g., 'pkna-1')
+
+    Returns:
+        List of scene dicts with full details.
+    """
+    if SCENE_STORE is None:
+        return []
+    scenes = SCENE_STORE.get_scenes_by_issue(issue)
+    return [s.to_dict() for s in scenes]
+
+
+def get_scenes_with_character(character: str) -> list[dict]:
+    """Get scenes where a specific character appears with the main character.
+
+    Args:
+        character: Name of the other character to find
+
+    Returns:
+        List of scene dicts where the character appears.
+    """
+    if SCENE_STORE is None:
+        return []
+    results = []
+    for scene in SCENE_STORE.all_scenes():
+        if any(character.lower() in c.lower() for c in scene.get_other_characters()):
+            results.append(scene.to_dict())
+    return results
+
+
+# RLM tool list for all section builders
+RLM_TOOLS = [
+    list_all_scenes,
+    get_scene,
+    search_dialogues,
+    get_scenes_by_issue,
+    get_scenes_with_character,
+]
+
+
+# ============================================================================
+# Section-Specific RLM Instructions
+# ============================================================================
+
+IDENTITY_RLM_INSTRUCTIONS = """
+Extract basic identity facts about the character.
+
+EXPLORATION STRATEGY:
+1. Use list_all_scenes() to get an overview of available scenes
+2. Use search_dialogues() to find mentions of names, origin, creator
+3. Use get_scene() to get full context for relevant scenes
+
+WHAT TO FIND:
+- Full name and any aliases or nicknames
+- Nature (AI, human, other) and entity type
+- Creator or origin
+- Physical/digital manifestation details
+
+OUTPUT:
+- Fill the AIEOSIdentity section with found facts
+- Include evidence citations for each claim
+"""
+
+PSYCHOLOGY_RLM_INSTRUCTIONS = """
+Explore scenes to understand the character's psychological profile.
+
+EXPLORATION STRATEGY:
+1. Use list_all_scenes() to get an overview
+2. Use search_dialogues() to find emotional expressions, decision statements
+3. Use get_scene() to analyze specific interactions in context
+4. Look at different issues to see personality consistency
+
+WHAT TO ANALYZE:
+- Emotional reactions and triggers (joy, anger, sadness, fear)
+- Decision-making patterns (logical vs emotional)
+- Big Five personality traits (OCEAN): score each 0.0-1.0 based on evidence
+- Neural matrix traits: creativity, empathy, logic, adaptability, charisma, reliability
+- Moral alignment and core values
+- MBTI type indicators
+
+SCORING RULES:
+- All numeric scores must be between 0.0 and 1.0
+- Base scores on evidence frequency and strength
+- Include quotes that exemplify personality traits
+
+OUTPUT:
+- Complete AIEOSPsychology section with all subscores
+- Evidence citations linking each trait to specific scenes/quotes
+"""
+
+LINGUISTICS_RLM_INSTRUCTIONS = """
+Analyze the character's speech patterns across all dialogues.
+
+EXPLORATION STRATEGY:
+1. Use list_all_scenes() to see dialogue counts per scene
+2. Use search_dialogues() to find recurring expressions and catchphrases
+3. Use get_scene() to see dialogue in context
+4. Sample dialogues from different issues for consistency
+
+WHAT TO ANALYZE:
+- Formality level (formal vs casual)
+- Vocabulary complexity (basic, intermediate, advanced, technical)
+- Sentence structure patterns
+- Catchphrases and recurring expressions (PRESERVE ITALIAN with translations)
+- Conversational dominance patterns
+- Emotional coloring in speech
+
+IMPORTANT:
+- Preserve Italian phrases exactly as found
+- Include translations in parentheses: "Frase italiana (English translation)"
+- All numeric scores (formality_level, verbosity_level, etc.) must be 0.0-1.0
+
+OUTPUT:
+- Complete AIEOSLinguistics section
+- Evidence citations with specific Italian quotes
+"""
+
+HISTORY_RLM_INSTRUCTIONS = """
+Explore scenes chronologically to build the origin story and key events.
+
+EXPLORATION STRATEGY:
+1. Use list_all_scenes() to see all available issues
+2. Use get_scenes_by_issue() to explore early issues for origin story
+3. Use get_scenes_with_character() to map relationships
+4. Use search_dialogues() to find references to past events
+
+WHAT TO BUILD:
+- Origin story narrative (how the character came to be)
+- Key life events with their impact
+- Relationships with other characters (use get_scenes_with_character)
+
+OUTPUT:
+- Complete AIEOSHistory section
+- Evidence citations linking events to specific scenes
+"""
+
+MOTIVATIONS_RLM_INSTRUCTIONS = """
+Search for scenes revealing the character's goals and fears.
+
+EXPLORATION STRATEGY:
+1. Use search_dialogues() with keywords: "voglio", "devo", "obiettivo", "paura", "temo"
+2. Use get_scene() to understand context of goal/fear statements
+3. Look for scenes of conflict or important decisions
+
+WHAT TO FIND:
+- Core drive (primary motivation)
+- Short-term goals (immediate objectives)
+- Long-term goals (aspirations)
+- Rational fears (logical concerns)
+- Irrational fears (emotional/deeper fears)
+
+OUTPUT:
+- Complete AIEOSMotivations section
+- Evidence citations with quotes expressing goals/fears
+"""
+
+CAPABILITIES_RLM_INSTRUCTIONS = """
+Find scenes demonstrating the character's skills and limitations.
+
+EXPLORATION STRATEGY:
+1. Use search_dialogues() to find skill demonstrations and limitations
+2. Use get_scene() to see full context of capability usage
+3. Look for scenes where character succeeds or fails at tasks
+
+WHAT TO FIND:
+- Skills and abilities (with proficiency 0.0-1.0)
+- Technical capabilities (for AI characters)
+- Explicit limitations or constraints
+- Things the character cannot or refuses to do
+
+OUTPUT:
+- Complete AIEOSCapabilities section with skills list
+- Evidence citations showing each skill/limitation
+"""
+
+SECTION_RLM_INSTRUCTIONS = {
+    "identity": IDENTITY_RLM_INSTRUCTIONS,
+    "psychology": PSYCHOLOGY_RLM_INSTRUCTIONS,
+    "linguistics": LINGUISTICS_RLM_INSTRUCTIONS,
+    "history": HISTORY_RLM_INSTRUCTIONS,
+    "motivations": MOTIVATIONS_RLM_INSTRUCTIONS,
+    "capabilities": CAPABILITIES_RLM_INSTRUCTIONS,
+}
+
+
+# ============================================================================
+# RLM Signature Factory
+# ============================================================================
+
+
+# Mapping of section names to their WithEvidence output types
+SECTION_OUTPUT_TYPES: dict[str, type[BaseModel]] = {
+    "identity": IdentityWithEvidence,
+    "psychology": PsychologyWithEvidence,
+    "linguistics": LinguisticsWithEvidence,
+    "history": HistoryWithEvidence,
+    "motivations": MotivationsWithEvidence,
+    "capabilities": CapabilitiesWithEvidence,
+}
+
+
+def build_section_rlm(section_name: str) -> dspy.RLM:
+    """Create an RLM for a specific AIEOS section.
+
+    Args:
+        section_name: Name of the section (identity, psychology, etc.)
+
+    Returns:
+        Configured RLM instance for the section.
+    """
+    output_type = SECTION_OUTPUT_TYPES[section_name]
+    instructions = SECTION_RLM_INSTRUCTIONS[section_name]
+
+    # Create signature class dynamically
+    class SectionSignature(dspy.Signature):
+        __doc__ = instructions
+
+        character_name: str = dspy.InputField(
+            description="Name of the character to analyze"
+        )
+        result: output_type = dspy.OutputField(  # type: ignore[valid-type]
+            description=f"AIEOS {section_name} section with evidence citations"
         )
 
-
-# ============================================================================
-# DSPy Signatures for Evidence Extraction
-# ============================================================================
-
-
-class SceneEvidenceExtractor(dspy.Signature):
-    """Extract evidence about a character from a comic scene for AIEOS profile.
-
-    CRITICAL INSTRUCTIONS:
-
-    1. AIEOS SECTIONS TO EXTRACT:
-       - identity: Names, aliases, nature (AI/human), origin facts
-       - psychology: Personality traits, emotional patterns, decision-making style
-       - linguistics: Speech patterns, catchphrases, formality level, vocabulary
-       - history: Origin story, key events, relationships formed
-       - motivations: Core drives, goals, fears
-       - capabilities: Skills, abilities, limitations
-
-    2. EVIDENCE QUALITY:
-       - Each evidence item must be directly supported by the scene
-       - Include Italian quotes when they exemplify a trait
-       - Be specific about what the evidence demonstrates
-       - Focus on observable behavior and explicit statements
-
-    3. TRAIT SPECIFICITY:
-       For each section, use these trait categories:
-       - psychology.ocean.openness, psychology.ocean.extraversion, etc.
-       - psychology.neural_matrix.creativity, psychology.neural_matrix.empathy, etc.
-       - psychology.emotional_profile.triggers.joy, etc.
-       - linguistics.voice.formality, linguistics.idiolect.catchphrases, etc.
-       - motivations.core_drive, motivations.goals.short_term, etc.
-
-    4. OUTPUT:
-       - Return a list of Evidence objects
-       - Each evidence item links a scene to a specific AIEOS field
-       - Empty list is valid if no relevant evidence in scene
-    """
-
-    scene_context: str = dspy.InputField(
-        description="Context about the scene (issue, pages, characters)"
-    )
-    scene_summary: str = dspy.InputField(description="Summary of what happens")
-    uno_dialogues: list[str] = dspy.InputField(
-        description="Uno's dialogue lines in Italian"
-    )
-    panel_descriptions: str = dspy.InputField(
-        description="Descriptions of visual panels"
-    )
-    scene_id: str = dspy.InputField(description="Unique scene identifier")
-
-    evidence_items: list[Evidence] = dspy.OutputField(
-        description="List of evidence items extracted from this scene"
+    return dspy.RLM(
+        signature=SectionSignature,
+        tools=RLM_TOOLS,
+        max_iterations=30,
+        max_llm_calls=100,
+        verbose=True,
     )
 
 
 # ============================================================================
-# DSPy Signatures for Section Building
-# ============================================================================
-
-
-class PsychologySectionBuilder(dspy.Signature):
-    """Build the AIEOS psychology section from evidence.
-
-    STRUCTURE:
-    - neural_matrix: creativity, empathy, logic, adaptability, charisma, reliability (0.0-1.0)
-    - traits.ocean: openness, conscientiousness, extraversion, agreeableness, neuroticism (0.0-1.0)
-    - traits.mbti: 4-letter MBTI type (e.g., INTJ)
-    - traits.temperament: temperament description
-    - moral_compass: alignment, core_values list, conflict_resolution_style
-    - emotional_profile: base_mood, volatility (0.0-1.0), resilience (0.0-1.0), triggers
-
-    SCORING RULES:
-    - All numeric scores must be between 0.0 and 1.0
-    - Base scores on evidence frequency and strength
-    - Provide reasoning for major trait scores
-    """
-
-    evidence_items: list[dict] = dspy.InputField(
-        description="Evidence items for psychology section"
-    )
-    character_name: str = dspy.InputField(description="Name of the character")
-
-    psychology: AIEOSPsychology = dspy.OutputField(
-        description="AIEOS psychology section"
-    )
-    scoring_rationale: str = dspy.OutputField(
-        description="Brief explanation of how scores were determined"
-    )
-
-
-class LinguisticsSectionBuilder(dspy.Signature):
-    """Build the AIEOS linguistics section from evidence.
-
-    STRUCTURE:
-    - voice: formality_level (0-1), verbosity_level (0-1), vocabulary_level, style_descriptors
-    - syntax: sentence_structure, use_contractions, active_passive_ratio (0-1)
-    - idiolect: catchphrases (Italian with translations), forbidden_words, hesitation_markers
-    - interaction: turn_taking description, dominance_score (0-1), emotional_coloring
-
-    IMPORTANT:
-    - Preserve Italian phrases and expressions
-    - Include translations in parentheses for catchphrases: "Frase italiana (English translation)"
-    - Base scores on observed dialogue patterns
-    - All numeric scores must be between 0.0 and 1.0
-    """
-
-    evidence_items: list[dict] = dspy.InputField(
-        description="Evidence items for linguistics section"
-    )
-    sample_dialogues: list[str] = dspy.InputField(
-        description="Sample dialogues to analyze patterns"
-    )
-    character_name: str = dspy.InputField(description="Name of the character")
-
-    linguistics: AIEOSLinguistics = dspy.OutputField(
-        description="AIEOS linguistics section"
-    )
-
-
-class IdentitySectionBuilder(dspy.Signature):
-    """Build the AIEOS identity section from evidence.
-
-    STRUCTURE:
-    - names: first (required), middle, last, nickname
-    - bio: description (required), entity_type (e.g., "artificial_intelligence"), age_*, gender
-    - origin: creator, creation_context, nationality, birthplace_city, birthplace_country
-
-    For AI characters, adapt human-focused fields appropriately (e.g., creator instead of parents).
-    """
-
-    evidence_items: list[dict] = dspy.InputField(
-        description="Evidence items for identity section"
-    )
-    character_name: str = dspy.InputField(description="Name of the character")
-
-    identity: AIEOSIdentity = dspy.OutputField(description="AIEOS identity section")
-
-
-class HistorySectionBuilder(dspy.Signature):
-    """Build the AIEOS history section from evidence.
-
-    STRUCTURE:
-    - origin_story: Narrative describing the character's origin
-    - key_life_events: List of {year, event, impact} objects
-    - relationships: Dict mapping character names to relationship descriptions
-    """
-
-    evidence_items: list[dict] = dspy.InputField(
-        description="Evidence items for history section"
-    )
-    character_name: str = dspy.InputField(description="Name of the character")
-
-    history: AIEOSHistory = dspy.OutputField(description="AIEOS history section")
-
-
-class MotivationsSectionBuilder(dspy.Signature):
-    """Build the AIEOS motivations section from evidence.
-
-    STRUCTURE:
-    - core_drive: Primary motivation driving the character
-    - goals.short_term: List of immediate goals
-    - goals.long_term: List of long-term aspirations
-    - fears.rational: List of logical/justified fears
-    - fears.irrational: List of emotional/unjustified fears
-    """
-
-    evidence_items: list[dict] = dspy.InputField(
-        description="Evidence items for motivations section"
-    )
-    character_name: str = dspy.InputField(description="Name of the character")
-
-    motivations: AIEOSMotivations = dspy.OutputField(
-        description="AIEOS motivations section"
-    )
-
-
-class CapabilitiesSectionBuilder(dspy.Signature):
-    """Build the AIEOS capabilities section from evidence.
-
-    STRUCTURE:
-    - skills: List of {name, description, proficiency (0.0-1.0)} objects
-    - limitations: List of explicit limitations and constraints
-
-    Proficiency scores must be between 0.0 and 1.0.
-    """
-
-    evidence_items: list[dict] = dspy.InputField(
-        description="Evidence items for capabilities section"
-    )
-    character_name: str = dspy.InputField(description="Name of the character")
-
-    capabilities: AIEOSCapabilities = dspy.OutputField(
-        description="AIEOS capabilities section"
-    )
-
-
-# ============================================================================
-# Profile Builder
+# Profile Builder (RLM-based)
 # ============================================================================
 
 
 class AIEOSProfileBuilder:
-    """Builds AIEOS profile from scenes using DSPy."""
+    """Builds AIEOS profile from scenes using DSPy RLM."""
 
-    def __init__(self, scene_store: SceneStore, character_name: str = CHARACTER_NAME):
-        self._store = scene_store
+    def __init__(self, character_name: str = CHARACTER_NAME):
         self._character = character_name
-        self._evidence_extractor = dspy.ChainOfThought(SceneEvidenceExtractor)
 
-    def extract_evidence_from_scene(self, scene: Scene) -> list[Evidence]:
-        """Extract evidence items from a single scene."""
-        try:
-            result = self._evidence_extractor(
-                scene_context=scene.to_context_string(),
-                scene_summary=scene.summary,
-                uno_dialogues=scene.uno_dialogues,
-                panel_descriptions=scene.to_other_context(),
-                scene_id=scene.scene_id,
-            )
-            return result.evidence_items
-        except Exception as e:
-            log.warning(f"Error extracting evidence from {scene.scene_id}: {e}")
-            return []
+    def build_section(
+        self, section_name: str
+    ) -> tuple[BaseModel, list[SectionEvidence]]:
+        """Build a section using RLM exploration.
 
-    def build_psychology_section(self, evidence: list[Evidence]) -> AIEOSPsychology:
-        """Build psychology section from evidence."""
-        builder = dspy.ChainOfThought(PsychologySectionBuilder)
-        result = builder(
-            evidence_items=[e.model_dump() for e in evidence],
-            character_name=self._character,
-        )
-        log.debug(f"Psychology scoring rationale: {result.scoring_rationale}")
-        return result.psychology
+        Args:
+            section_name: Name of the section to build.
+
+        Returns:
+            Tuple of (section_data, evidence_list).
+        """
+        log.info(f"Building {section_name} section with RLM...")
+
+        rlm = build_section_rlm(section_name)
+        result = rlm(character_name=self._character)
+
+        # Extract section and evidence from result
+        with_evidence = result.result
+        return with_evidence.section, with_evidence.evidence
+
+    def build_identity_section(self) -> tuple[AIEOSIdentity, list[SectionEvidence]]:
+        """Build identity section."""
+        section, evidence = self.build_section("identity")
+        return section, evidence  # type: ignore[return-value]
+
+    def build_psychology_section(self) -> tuple[AIEOSPsychology, list[SectionEvidence]]:
+        """Build psychology section."""
+        section, evidence = self.build_section("psychology")
+        return section, evidence  # type: ignore[return-value]
 
     def build_linguistics_section(
-        self, evidence: list[Evidence], sample_dialogues: list[str]
-    ) -> AIEOSLinguistics:
-        """Build linguistics section from evidence."""
-        builder = dspy.ChainOfThought(LinguisticsSectionBuilder)
-        result = builder(
-            evidence_items=[e.model_dump() for e in evidence],
-            sample_dialogues=sample_dialogues[:50],  # Limit sample size
-            character_name=self._character,
-        )
-        return result.linguistics
+        self,
+    ) -> tuple[AIEOSLinguistics, list[SectionEvidence]]:
+        """Build linguistics section."""
+        section, evidence = self.build_section("linguistics")
+        return section, evidence  # type: ignore[return-value]
 
-    def build_identity_section(self, evidence: list[Evidence]) -> AIEOSIdentity:
-        """Build identity section from evidence."""
-        builder = dspy.ChainOfThought(IdentitySectionBuilder)
-        result = builder(
-            evidence_items=[e.model_dump() for e in evidence],
-            character_name=self._character,
-        )
-        return result.identity
+    def build_history_section(self) -> tuple[AIEOSHistory, list[SectionEvidence]]:
+        """Build history section."""
+        section, evidence = self.build_section("history")
+        return section, evidence  # type: ignore[return-value]
 
-    def build_history_section(self, evidence: list[Evidence]) -> AIEOSHistory:
-        """Build history section from evidence."""
-        builder = dspy.ChainOfThought(HistorySectionBuilder)
-        result = builder(
-            evidence_items=[e.model_dump() for e in evidence],
-            character_name=self._character,
-        )
-        return result.history
+    def build_motivations_section(
+        self,
+    ) -> tuple[AIEOSMotivations, list[SectionEvidence]]:
+        """Build motivations section."""
+        section, evidence = self.build_section("motivations")
+        return section, evidence  # type: ignore[return-value]
 
-    def build_motivations_section(self, evidence: list[Evidence]) -> AIEOSMotivations:
-        """Build motivations section from evidence."""
-        builder = dspy.ChainOfThought(MotivationsSectionBuilder)
-        result = builder(
-            evidence_items=[e.model_dump() for e in evidence],
-            character_name=self._character,
-        )
-        return result.motivations
-
-    def build_capabilities_section(self, evidence: list[Evidence]) -> AIEOSCapabilities:
-        """Build capabilities section from evidence."""
-        builder = dspy.ChainOfThought(CapabilitiesSectionBuilder)
-        result = builder(
-            evidence_items=[e.model_dump() for e in evidence],
-            character_name=self._character,
-        )
-        return result.capabilities
+    def build_capabilities_section(
+        self,
+    ) -> tuple[AIEOSCapabilities, list[SectionEvidence]]:
+        """Build capabilities section."""
+        section, evidence = self.build_section("capabilities")
+        return section, evidence  # type: ignore[return-value]
 
 
 # ============================================================================
@@ -1099,30 +1164,26 @@ def validate_aieos_document(doc: AIEOSDocument) -> list[str]:
 # ============================================================================
 
 
-def save_evidence_ledger(ledger: EvidenceLedger, path: Path) -> None:
-    """Save evidence ledger to JSON file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(ledger.to_json(), f, ensure_ascii=False, indent=2)
-    log.debug(f"Saved evidence ledger to {path_str(path)}")
-
-
-def load_evidence_ledger(path: Path) -> EvidenceLedger | None:
-    """Load evidence ledger from JSON file if it exists."""
-    if not path.exists():
-        return None
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
-    return EvidenceLedger.from_json(data)
-
-
-def save_section(section_data: BaseModel, section_name: str, output_dir: Path) -> None:
-    """Save a section to JSON file."""
+def save_section(
+    section_data: BaseModel,
+    evidence: list[SectionEvidence],
+    section_name: str,
+    output_dir: Path,
+) -> None:
+    """Save a section and its evidence to JSON files."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"{section_name}.json"
-    with open(path, "w", encoding="utf-8") as f:
+
+    # Save section
+    section_path = output_dir / f"{section_name}.json"
+    with open(section_path, "w", encoding="utf-8") as f:
         json.dump(section_data.model_dump(), f, ensure_ascii=False, indent=2)
-    log.debug(f"Saved section {section_name} to {path_str(path)}")
+    log.debug(f"Saved section {section_name} to {path_str(section_path)}")
+
+    # Save evidence
+    evidence_path = output_dir / f"{section_name}_evidence.json"
+    with open(evidence_path, "w", encoding="utf-8") as f:
+        json.dump([e.model_dump() for e in evidence], f, ensure_ascii=False, indent=2)
+    log.debug(f"Saved evidence for {section_name} to {path_str(evidence_path)}")
 
 
 # Mapping of section names to their model classes
@@ -1154,78 +1215,14 @@ def load_section(section_name: str, sections_dir: Path) -> BaseModel | None:
 # ============================================================================
 
 
-def run_evidence_gathering(
-    builder: AIEOSProfileBuilder,
-    scene_store: SceneStore,
-    max_scenes: int | None,
-) -> EvidenceLedger:
-    """Stage 1: Gather evidence from all scenes.
+def run_section_extraction(builder: AIEOSProfileBuilder) -> AIEOSSections:
+    """Build each AIEOS section using RLM exploration.
 
-    Skips if evidence_ledger.json already exists.
+    Each section's RLM autonomously explores the scene store via tools,
+    extracts relevant evidence, and produces the typed section output.
     """
-    ledger_path = CHECKPOINTS_DIR / "evidence_ledger.json"
-
-    # Check for existing ledger
-    existing_ledger = load_evidence_ledger(ledger_path)
-    if existing_ledger:
-        log.info(
-            f"Loaded existing evidence ledger: {len(existing_ledger.evidence)} items, "
-            f"{len(existing_ledger.processed_scene_ids)} scenes processed"
-        )
-        ledger = existing_ledger
-    else:
-        ledger = EvidenceLedger()
-        log.info("Starting fresh evidence gathering")
-
-    scenes = scene_store.all_scenes()
-    if max_scenes:
-        scenes = scenes[:max_scenes]
-
-    # Filter to unprocessed scenes
-    unprocessed = [s for s in scenes if not ledger.is_scene_processed(s.scene_id)]
-
-    if not unprocessed:
-        log.info("All scenes already processed for evidence")
-        return ledger
-
-    log.info(f"Gathering evidence from {len(unprocessed)} scenes...")
-
-    with PROGRESS as progress:
-        task = progress.add_task("Extracting evidence...", total=len(unprocessed))
-
-        for i, scene in enumerate(unprocessed, 1):
-            evidence_items = builder.extract_evidence_from_scene(scene)
-
-            for ev in evidence_items:
-                ledger.add_evidence(ev)
-
-            ledger.mark_scene_processed(scene.scene_id)
-
-            # Save checkpoint every 10 scenes
-            if i % 10 == 0:
-                save_evidence_ledger(ledger, ledger_path)
-
-            progress.update(task, completed=i)
-
-    # Final save
-    save_evidence_ledger(ledger, ledger_path)
-    log.info(f"Evidence gathering complete: {len(ledger.evidence)} items")
-
-    return ledger
-
-
-def run_section_extraction(
-    builder: AIEOSProfileBuilder,
-    ledger: EvidenceLedger,
-    scene_store: SceneStore,
-) -> AIEOSSections:
-    """Stage 2: Extract each AIEOS section from evidence."""
     sections = AIEOSSections()
-
-    # Collect sample dialogues for linguistics
-    all_dialogues: list[str] = []
-    for scene in scene_store.all_scenes():
-        all_dialogues.extend(scene.uno_dialogues)
+    total_evidence_count = 0
 
     for section_name in AIEOS_SECTIONS:
         # Check for cached section
@@ -1236,33 +1233,26 @@ def run_section_extraction(
             continue
 
         log.info(f"Building section: {section_name}")
-        evidence = ledger.get_evidence_by_section(section_name)
-        log.debug(f"  Found {len(evidence)} evidence items")
 
         try:
-            if section_name == "psychology":
-                section_data = builder.build_psychology_section(evidence)
-            elif section_name == "linguistics":
-                section_data = builder.build_linguistics_section(
-                    evidence, all_dialogues
-                )
-            elif section_name == "identity":
-                section_data = builder.build_identity_section(evidence)
-            elif section_name == "history":
-                section_data = builder.build_history_section(evidence)
-            elif section_name == "motivations":
-                section_data = builder.build_motivations_section(evidence)
-            elif section_name == "capabilities":
-                section_data = builder.build_capabilities_section(evidence)
-            else:
-                continue
+            # Build section using RLM (returns section + evidence)
+            section_data, evidence = builder.build_section(section_name)
 
             setattr(sections, section_name, section_data)
-            save_section(section_data, section_name, SECTIONS_DIR)
+            save_section(section_data, evidence, section_name, SECTIONS_DIR)
+
+            total_evidence_count += len(evidence)
+            log.info(f"  Completed {section_name} with {len(evidence)} evidence items")
 
         except Exception as e:
             log.error(f"Error building section {section_name}: {e}")
+            import traceback
 
+            traceback.print_exc()
+
+    log.info(
+        f"Section extraction complete: {total_evidence_count} total evidence items"
+    )
     return sections
 
 
@@ -1291,6 +1281,8 @@ def run_assembly(sections: AIEOSSections, character_name: str) -> AIEOSDocument:
 
 def main() -> None:
     """Main function to build the AIEOS character profile."""
+    global SCENE_STORE
+
     parser = argparse.ArgumentParser(
         description="Build character profile in AIEOS format"
     )
@@ -1308,7 +1300,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    console.print("\n[bold cyan]AIEOS Profile Builder[/bold cyan]\n")
+    console.print("\n[bold cyan]AIEOS Profile Builder (RLM)[/bold cyan]\n")
     console.print(f"Character: {args.character}")
 
     # Check for existing output
@@ -1340,24 +1332,25 @@ def main() -> None:
         scenes = extract_scenes_from_issue(issue_dir)
         all_scenes.extend(scenes)
 
+    # Limit scenes if requested (for testing)
+    if args.max_scenes:
+        all_scenes = all_scenes[: args.max_scenes]
+        log.info(f"Limited to {len(all_scenes)} scenes (--max-scenes)")
+
     log.info(f"Loaded {len(all_scenes)} scenes with {args.character}")
 
-    # Create scene store
-    scene_store = SceneStore(all_scenes)
+    # Initialize global scene store for RLM tool access
+    SCENE_STORE = SceneStore(all_scenes)
 
     # Create builder
-    builder = AIEOSProfileBuilder(scene_store, args.character)
+    builder = AIEOSProfileBuilder(args.character)
 
-    # Stage 1: Evidence Gathering
-    console.print("\n[bold]Stage 1: Evidence Gathering[/bold]")
-    ledger = run_evidence_gathering(builder, scene_store, args.max_scenes)
+    # Section Extraction (RLM explores scenes via tools)
+    console.print("\n[bold]Stage 1: Section Extraction (RLM)[/bold]")
+    sections = run_section_extraction(builder)
 
-    # Stage 2: Section Extraction
-    console.print("\n[bold]Stage 2: Section Extraction[/bold]")
-    sections = run_section_extraction(builder, ledger, scene_store)
-
-    # Stage 3: Assembly
-    console.print("\n[bold]Stage 3: Assembly & Validation[/bold]")
+    # Assembly
+    console.print("\n[bold]Stage 2: Assembly & Validation[/bold]")
     aieos_doc = run_assembly(sections, args.character)
 
     # Serialize document using aliases for @context and @type
@@ -1370,8 +1363,7 @@ def main() -> None:
     # Summary
     console.print("\n[bold green]AIEOS Profile Complete![/bold green]\n")
     console.print(f"Output: {path_str(output_path)}")
-    console.print(f"Evidence items: {len(ledger.evidence)}")
-    console.print(f"Scenes processed: {len(ledger.processed_scene_ids)}")
+    console.print(f"Scenes available: {SCENE_STORE.scene_count()}")
 
     # Token count
     doc_str = json.dumps(doc_dict, ensure_ascii=False)
@@ -1384,8 +1376,7 @@ def main() -> None:
         json.dump(
             {
                 "character": args.character,
-                "scenes_processed": len(ledger.processed_scene_ids),
-                "evidence_items": len(ledger.evidence),
+                "scenes_available": SCENE_STORE.scene_count(),
                 "output_tokens": tokens,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },

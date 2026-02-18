@@ -2,7 +2,7 @@
 
 import pytest
 
-from build_aieos_profile import Scene, SceneStore, create_scene_from_panels
+from build_aieos_profile_rlm import Scene, SceneStore, create_scene_from_panels
 
 
 class TestScene:
