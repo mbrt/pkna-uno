@@ -33,7 +33,7 @@ from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 load_dotenv()
 
 # Settings
-MODEL_NAME = "vertex_ai/gemini-3-flash-preview"
+MODEL_NAME = "vertex_ai/gemini-3-pro-preview"
 CHARACTER_NAME = "Uno"
 ENCODING_NAME = "cl100k_base"
 VERSION_TAG = "v10"
@@ -240,70 +240,6 @@ def natural_sort_key(path: Path) -> tuple:
         except ValueError:
             key.append(part)
     return tuple(key)
-
-
-# ============================================================================
-# Scene Store
-# ============================================================================
-
-
-class SceneStore:
-    """On-demand scene storage for access during profile building."""
-
-    def __init__(self, scenes: list[Scene]):
-        self._scenes = {scene.scene_id: scene for scene in scenes}
-        self._by_issue: dict[str, list[Scene]] = {}
-        for scene in scenes:
-            if scene.issue not in self._by_issue:
-                self._by_issue[scene.issue] = []
-            self._by_issue[scene.issue].append(scene)
-
-    def get_scene(self, scene_id: str) -> Scene | None:
-        """Get a scene by its ID."""
-        return self._scenes.get(scene_id)
-
-    def get_scenes_by_issue(self, issue: str) -> list[Scene]:
-        """Get all scenes from a specific issue."""
-        return self._by_issue.get(issue, [])
-
-    def search_dialogues(self, query: str, limit: int = 20) -> list[tuple[str, str]]:
-        """Search all dialogues (not just Uno's) in panels.
-
-        Returns list of (scene_id, matching_dialogue) tuples.
-        """
-        results = []
-        query_lower = query.lower()
-        for scene in self._scenes.values():
-            for panel in scene.panels:
-                for d in panel.get("dialogues", []):
-                    line = d.get("line", "")
-                    if query_lower in line.lower():
-                        results.append((scene.scene_id, line))
-        return results[:limit]  # Limit results
-
-    def get_index(self) -> list[dict]:
-        """Lightweight index computed on-the-fly from panels."""
-        return [
-            {
-                "scene_id": scene.scene_id,
-                "issue": scene.issue,
-                "pages": scene.page_numbers,
-                "panel_count": len(scene.panels),
-                "dialogue_count": sum(
-                    len(p.get("dialogues", [])) for p in scene.panels
-                ),
-                "other_characters": list(scene.get_other_characters()),
-            }
-            for scene in self._scenes.values()
-        ]
-
-    def all_scenes(self) -> list[Scene]:
-        """Get all scenes in order."""
-        return list(self._scenes.values())
-
-    def scene_count(self) -> int:
-        """Total number of scenes."""
-        return len(self._scenes)
 
 
 # ============================================================================
@@ -687,114 +623,26 @@ class CapabilitiesWithEvidence(BaseModel):
 
 
 # ============================================================================
-# RLM Tool Functions (global scene store access)
-# ============================================================================
-
-# Global scene store for RLM tool access
-SCENE_STORE: SceneStore | None = None
-
-
-def list_all_scenes() -> list[dict]:
-    """Get lightweight index of all scenes with the character.
-
-    Returns:
-        List of dicts with: scene_id, issue, pages, dialogue_count, other_characters
-    """
-    if SCENE_STORE is None:
-        return []
-    return SCENE_STORE.get_index()
-
-
-def get_scene(scene_id: str) -> dict | None:
-    """Get full details of a specific scene.
-
-    Args:
-        scene_id: Scene identifier (e.g., 'pkna-1_23')
-
-    Returns:
-        Dict with: issue, pages, summary, uno_dialogues, panel_descriptions, other_characters
-        Or None if scene not found.
-    """
-    if SCENE_STORE is None:
-        return None
-    scene = SCENE_STORE.get_scene(scene_id)
-    if scene is None:
-        return None
-    return scene.to_dict()
-
-
-def search_dialogues(query: str, max_results: int = 20) -> list[dict]:
-    """Search character's dialogues for a keyword/phrase.
-
-    Args:
-        query: Text to search for (case-insensitive)
-        max_results: Maximum number of results to return (default 20)
-
-    Returns:
-        List of dicts with: scene_id, dialogue (matching line)
-    """
-    if SCENE_STORE is None:
-        return []
-    results = SCENE_STORE.search_dialogues(query, limit=max_results)
-    return [
-        {"scene_id": scene_id, "dialogue": dialogue} for scene_id, dialogue in results
-    ]
-
-
-def get_scenes_by_issue(issue: str) -> list[dict]:
-    """Get all scenes from a specific issue.
-
-    Args:
-        issue: Issue identifier (e.g., 'pkna-1')
-
-    Returns:
-        List of scene dicts with full details.
-    """
-    if SCENE_STORE is None:
-        return []
-    scenes = SCENE_STORE.get_scenes_by_issue(issue)
-    return [s.to_dict() for s in scenes]
-
-
-def get_scenes_with_character(character: str) -> list[dict]:
-    """Get scenes where a specific character appears with the main character.
-
-    Args:
-        character: Name of the other character to find
-
-    Returns:
-        List of scene dicts where the character appears.
-    """
-    if SCENE_STORE is None:
-        return []
-    results = []
-    for scene in SCENE_STORE.all_scenes():
-        if any(character.lower() in c.lower() for c in scene.get_other_characters()):
-            results.append(scene.to_dict())
-    return results
-
-
-# RLM tool list for all section builders
-RLM_TOOLS = [
-    list_all_scenes,
-    get_scene,
-    search_dialogues,
-    get_scenes_by_issue,
-    get_scenes_with_character,
-]
-
-
-# ============================================================================
 # Section-Specific RLM Instructions
 # ============================================================================
 
 IDENTITY_RLM_INSTRUCTIONS = """
-Extract basic identity facts about the character.
+Extract basic identity facts about the character from the provided scenes.
 
-EXPLORATION STRATEGY:
-1. Use list_all_scenes() to get an overview of available scenes
-2. Use search_dialogues() to find mentions of names, origin, creator
-3. Use get_scene() to get full context for relevant scenes
+INPUT DATA (available as `scenes` variable):
+A list of scene dicts, each containing:
+- scene_id: Unique identifier for citations (e.g., "pkna-1_23")
+- issue: Comic issue (e.g., "pkna-1")
+- page_numbers: Pages the scene spans
+- panels: List of panels with:
+  - description: Visual description
+  - caption_text: Narrative caption (if any)
+  - dialogues: List of {character, line} pairs
+
+EXPLORATION APPROACH:
+Use Python to search and analyze scenes. Examples:
+- `[s for s in scenes if any('name' in d['line'].lower() for p in s['panels'] for d in p['dialogues'])]`
+- `[d['line'] for s in scenes for p in s['panels'] for d in p['dialogues'] if d['character'] == 'Uno']`
 
 WHAT TO FIND:
 - Full name and any aliases or nicknames
@@ -804,17 +652,28 @@ WHAT TO FIND:
 
 OUTPUT:
 - Fill the AIEOSIdentity section with found facts
-- Include evidence citations for each claim
+- Include evidence citations with scene_id for each claim
+- Fields in English, quotes in original Italian with translations
 """
 
 PSYCHOLOGY_RLM_INSTRUCTIONS = """
 Explore scenes to understand the character's psychological profile.
 
-EXPLORATION STRATEGY:
-1. Use list_all_scenes() to get an overview
-2. Use search_dialogues() to find emotional expressions, decision statements
-3. Use get_scene() to analyze specific interactions in context
-4. Look at different issues to see personality consistency
+INPUT DATA (available as `scenes` variable):
+A list of scene dicts, each containing:
+- scene_id: Unique identifier for citations (e.g., "pkna-1_23")
+- issue: Comic issue (e.g., "pkna-1")
+- page_numbers: Pages the scene spans
+- panels: List of panels with:
+  - description: Visual description
+  - caption_text: Narrative caption (if any)
+  - dialogues: List of {character, line} pairs
+
+EXPLORATION APPROACH:
+Use Python to search and analyze scenes. Examples:
+- `[s for s in scenes if any('emotion_word' in d['line'].lower() for p in s['panels'] for d in p['dialogues'])]`
+- Use `collections.Counter` for frequency analysis of words/patterns
+- Use `re` for regex matching in dialogues
 
 WHAT TO ANALYZE:
 - Emotional reactions and triggers (joy, anger, sadness, fear)
@@ -831,17 +690,28 @@ SCORING RULES:
 
 OUTPUT:
 - Complete AIEOSPsychology section with all subscores
-- Evidence citations linking each trait to specific scenes/quotes
+- Evidence citations linking each trait to specific scenes/quotes (include scene_id)
+- Fields in English, quotes in original Italian with translations
 """
 
 LINGUISTICS_RLM_INSTRUCTIONS = """
 Analyze the character's speech patterns across all dialogues.
 
-EXPLORATION STRATEGY:
-1. Use list_all_scenes() to see dialogue counts per scene
-2. Use search_dialogues() to find recurring expressions and catchphrases
-3. Use get_scene() to see dialogue in context
-4. Sample dialogues from different issues for consistency
+INPUT DATA (available as `scenes` variable):
+A list of scene dicts, each containing:
+- scene_id: Unique identifier for citations (e.g., "pkna-1_23")
+- issue: Comic issue (e.g., "pkna-1")
+- page_numbers: Pages the scene spans
+- panels: List of panels with:
+  - description: Visual description
+  - caption_text: Narrative caption (if any)
+  - dialogues: List of {character, line} pairs
+
+EXPLORATION APPROACH:
+Use Python to analyze speech patterns. Examples:
+- Extract all character dialogues: `[d['line'] for s in scenes for p in s['panels'] for d in p['dialogues'] if d['character'] == 'Uno']`
+- Find recurring phrases with `collections.Counter`
+- Use `re` for pattern matching (sentence structure, punctuation usage)
 
 WHAT TO ANALYZE:
 - Formality level (formal vs casual)
@@ -858,35 +728,58 @@ IMPORTANT:
 
 OUTPUT:
 - Complete AIEOSLinguistics section
-- Evidence citations with specific Italian quotes
+- Evidence citations with specific Italian quotes (include scene_id)
+- Fields in English, quotes in original Italian with translations
 """
 
 HISTORY_RLM_INSTRUCTIONS = """
 Explore scenes chronologically to build the origin story and key events.
 
-EXPLORATION STRATEGY:
-1. Use list_all_scenes() to see all available issues
-2. Use get_scenes_by_issue() to explore early issues for origin story
-3. Use get_scenes_with_character() to map relationships
-4. Use search_dialogues() to find references to past events
+INPUT DATA (available as `scenes` variable):
+A list of scene dicts, each containing:
+- scene_id: Unique identifier for citations (e.g., "pkna-1_23")
+- issue: Comic issue (e.g., "pkna-1")
+- page_numbers: Pages the scene spans
+- panels: List of panels with:
+  - description: Visual description
+  - caption_text: Narrative caption (if any)
+  - dialogues: List of {character, line} pairs
+
+EXPLORATION APPROACH:
+Use Python to explore chronologically and map relationships. Examples:
+- Group by issue: `{s['issue']: [s for s in scenes if s['issue'] == issue] for issue in set(s['issue'] for s in scenes)}`
+- Find scenes with specific character: `[s for s in scenes if any('CharName' in d['character'] for p in s['panels'] for d in p['dialogues'])]`
+- Search for past event references using `re` or keyword matching
 
 WHAT TO BUILD:
 - Origin story narrative (how the character came to be)
 - Key life events with their impact
-- Relationships with other characters (use get_scenes_with_character)
+- Relationships with other characters (find scenes where they interact)
 
 OUTPUT:
 - Complete AIEOSHistory section
-- Evidence citations linking events to specific scenes
+- Evidence citations linking events to specific scenes (include scene_id)
+- Fields in English, quotes in original Italian with translations
 """
 
 MOTIVATIONS_RLM_INSTRUCTIONS = """
 Search for scenes revealing the character's goals and fears.
 
-EXPLORATION STRATEGY:
-1. Use search_dialogues() with keywords: "voglio", "devo", "obiettivo", "paura", "temo"
-2. Use get_scene() to understand context of goal/fear statements
-3. Look for scenes of conflict or important decisions
+INPUT DATA (available as `scenes` variable):
+A list of scene dicts, each containing:
+- scene_id: Unique identifier for citations (e.g., "pkna-1_23")
+- issue: Comic issue (e.g., "pkna-1")
+- page_numbers: Pages the scene spans
+- panels: List of panels with:
+  - description: Visual description
+  - caption_text: Narrative caption (if any)
+  - dialogues: List of {character, line} pairs
+
+EXPLORATION APPROACH:
+Use Python to search for goal/fear expressions. Examples:
+- Search for Italian keywords: "voglio", "devo", "obiettivo", "paura", "temo"
+- `[s for s in scenes if any('voglio' in d['line'].lower() for p in s['panels'] for d in p['dialogues'] if d['character'] == 'Uno')]`
+- Look for decision/conflict scenes by searching descriptions
 
 WHAT TO FIND:
 - Core drive (primary motivation)
@@ -897,16 +790,28 @@ WHAT TO FIND:
 
 OUTPUT:
 - Complete AIEOSMotivations section
-- Evidence citations with quotes expressing goals/fears
+- Evidence citations with quotes expressing goals/fears (include scene_id)
+- Fields in English, quotes in original Italian with translations
 """
 
 CAPABILITIES_RLM_INSTRUCTIONS = """
 Find scenes demonstrating the character's skills and limitations.
 
-EXPLORATION STRATEGY:
-1. Use search_dialogues() to find skill demonstrations and limitations
-2. Use get_scene() to see full context of capability usage
-3. Look for scenes where character succeeds or fails at tasks
+INPUT DATA (available as `scenes` variable):
+A list of scene dicts, each containing:
+- scene_id: Unique identifier for citations (e.g., "pkna-1_23")
+- issue: Comic issue (e.g., "pkna-1")
+- page_numbers: Pages the scene spans
+- panels: List of panels with:
+  - description: Visual description
+  - caption_text: Narrative caption (if any)
+  - dialogues: List of {character, line} pairs
+
+EXPLORATION APPROACH:
+Use Python to find skill demonstrations and limitations. Examples:
+- Search descriptions for actions: `[s for s in scenes if any('action_word' in p['description'].lower() for p in s['panels'])]`
+- Find limitations: search dialogues for "non posso", "impossibile", "limite"
+- Look for success/failure patterns in scene descriptions
 
 WHAT TO FIND:
 - Skills and abilities (with proficiency 0.0-1.0)
@@ -916,7 +821,8 @@ WHAT TO FIND:
 
 OUTPUT:
 - Complete AIEOSCapabilities section with skills list
-- Evidence citations showing each skill/limitation
+- Evidence citations showing each skill/limitation (include scene_id)
+- Fields in English, quotes in original Italian with translations
 """
 
 SECTION_RLM_INSTRUCTIONS = {
@@ -964,13 +870,15 @@ def build_section_rlm(section_name: str) -> dspy.RLM:
         character_name: str = dspy.InputField(
             description="Name of the character to analyze"
         )
+        scenes: list[dict] = dspy.InputField(
+            description="All scenes containing the character with dialogues and context"
+        )
         result: output_type = dspy.OutputField(  # type: ignore[valid-type]
             description=f"AIEOS {section_name} section with evidence citations"
         )
 
     return dspy.RLM(
         signature=SectionSignature,
-        tools=RLM_TOOLS,
         max_iterations=30,
         max_llm_calls=100,
         verbose=True,
@@ -985,7 +893,9 @@ def build_section_rlm(section_name: str) -> dspy.RLM:
 class AIEOSProfileBuilder:
     """Builds AIEOS profile from scenes using DSPy RLM."""
 
-    def __init__(self, character_name: str = CHARACTER_NAME):
+    def __init__(self, scenes: list[Scene], character_name: str = CHARACTER_NAME):
+        self._scenes = scenes
+        self._scenes_dict = [s.to_dict() for s in scenes]
         self._character = character_name
 
     def build_section(
@@ -1002,7 +912,10 @@ class AIEOSProfileBuilder:
         log.info(f"Building {section_name} section with RLM...")
 
         rlm = build_section_rlm(section_name)
-        result = rlm(character_name=self._character)
+        result = rlm(
+            character_name=self._character,
+            scenes=self._scenes_dict,
+        )
 
         # Extract section and evidence from result
         with_evidence = result.result
@@ -1281,8 +1194,6 @@ def run_assembly(sections: AIEOSSections, character_name: str) -> AIEOSDocument:
 
 def main() -> None:
     """Main function to build the AIEOS character profile."""
-    global SCENE_STORE
-
     parser = argparse.ArgumentParser(
         description="Build character profile in AIEOS format"
     )
@@ -1339,13 +1250,10 @@ def main() -> None:
 
     log.info(f"Loaded {len(all_scenes)} scenes with {args.character}")
 
-    # Initialize global scene store for RLM tool access
-    SCENE_STORE = SceneStore(all_scenes)
+    # Create builder with scenes
+    builder = AIEOSProfileBuilder(all_scenes, args.character)
 
-    # Create builder
-    builder = AIEOSProfileBuilder(args.character)
-
-    # Section Extraction (RLM explores scenes via tools)
+    # Section Extraction (RLM explores scenes via Python REPL)
     console.print("\n[bold]Stage 1: Section Extraction (RLM)[/bold]")
     sections = run_section_extraction(builder)
 
@@ -1363,7 +1271,7 @@ def main() -> None:
     # Summary
     console.print("\n[bold green]AIEOS Profile Complete![/bold green]\n")
     console.print(f"Output: {path_str(output_path)}")
-    console.print(f"Scenes available: {SCENE_STORE.scene_count()}")
+    console.print(f"Scenes available: {len(all_scenes)}")
 
     # Token count
     doc_str = json.dumps(doc_dict, ensure_ascii=False)
@@ -1376,7 +1284,7 @@ def main() -> None:
         json.dump(
             {
                 "character": args.character,
-                "scenes_available": SCENE_STORE.scene_count(),
+                "scenes_available": len(all_scenes),
                 "output_tokens": tokens,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             },
