@@ -266,7 +266,7 @@ class SceneStore:
         """Get all scenes from a specific issue."""
         return self._by_issue.get(issue, [])
 
-    def search_dialogues(self, query: str) -> list[tuple[str, str]]:
+    def search_dialogues(self, query: str, limit: int = 20) -> list[tuple[str, str]]:
         """Search all dialogues (not just Uno's) in panels.
 
         Returns list of (scene_id, matching_dialogue) tuples.
@@ -279,7 +279,7 @@ class SceneStore:
                     line = d.get("line", "")
                     if query_lower in line.lower():
                         results.append((scene.scene_id, line))
-        return results[:20]  # Limit results
+        return results[:limit]  # Limit results
 
     def get_index(self) -> list[dict]:
         """Lightweight index computed on-the-fly from panels."""
@@ -735,7 +735,7 @@ def search_dialogues(query: str, max_results: int = 20) -> list[dict]:
     """
     if SCENE_STORE is None:
         return []
-    results = SCENE_STORE.search_dialogues(query)[:max_results]
+    results = SCENE_STORE.search_dialogues(query, limit=max_results)
     return [
         {"scene_id": scene_id, "dialogue": dialogue} for scene_id, dialogue in results
     ]
