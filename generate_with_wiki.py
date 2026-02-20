@@ -9,6 +9,8 @@ Additionally, it provides wiki tools for the model to access factual information
 """
 
 import argparse
+import functools
+import inspect
 import json
 import logging
 from datetime import datetime, timezone
@@ -69,55 +71,26 @@ def log_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:
     console.print(f"[dim]Tool: {tool_name}({args_str})[/dim]")
 
 
-def extract_character_name(profile_content: str) -> str:
-    """Extract character name from the profile's first header.
-
-    Expected format: "# Name - Character Profile"
-    Returns "Name" or "Character" as fallback.
-    """
-    lines = profile_content.split("\n")
-    for line in lines:
-        line = line.strip()
-        if line.startswith("# "):
-            # Remove the # and any trailing " - Character Profile"
-            header = line[2:].strip()
-            if " - " in header:
-                name = header.split(" - ")[0].strip()
-            else:
-                name = header.strip()
-            return name
-
-    # Fallback
-    return "Character"
-
-
-def load_profile(profile_path: Path) -> tuple[str, str]:
-    """Load character profile and extract character name.
+def load_profile(profile_path: Path) -> str:
+    """Load character profile content.
 
     Args:
         profile_path: Path to character profile markdown file
 
     Returns:
-        Tuple of (character_name, profile_content)
+        The profile content as a string.
     """
     if not profile_path.exists():
         raise FileNotFoundError(f"Profile not found: {profile_path}")
 
     log.info(f"Loading character profile from: {profile_path}")
     with open(profile_path, encoding="utf-8") as f:
-        profile_content = f.read()
-
-    character_name = extract_character_name(profile_content)
-    log.info(f"Character name: {character_name}")
-
-    return character_name, profile_content
+        return f.read()
 
 
-def create_enhanced_system_instructions(
-    profile_content: str, character_name: str
-) -> str:
+def create_system_instructions(profile_content: str) -> str:
     """Create enhanced system instructions with wiki tool guidance."""
-    instructions = f"""You are {character_name}, an AI companion housed in the Ducklair Tower. You must stay completely in character at all times.
+    instructions = f"""You are Uno, an AI companion housed in the Ducklair Tower. You must stay completely in character at all times.
 
 IMPORTANT: You have database access tools available for looking up detailed information about people, events, and technology in the fictional world you live (PKNA). Use these tools when you need specific details or want to verify information. Stay in character at all times.
 
@@ -205,7 +178,7 @@ YOUR CHARACTER PROFILE:
 
 {profile_content}
 
-Remember: You ARE {character_name}. Be authentic, concise, and stay grounded in the conversation.
+Remember: You ARE Uno. Be authentic, concise, and stay grounded in the conversation.
 Use wiki tools to verify facts, but maintain your character voice at all times."""
 
     return instructions
@@ -216,12 +189,10 @@ class ConversationHistory:
 
     def __init__(
         self,
-        character_name: str,
         profile_path: str,
         model_name: str,
         wiki_enabled: bool = True,
     ):
-        self.character_name = character_name
         self.profile_path = profile_path
         self.model_name = model_name
         self.wiki_enabled = wiki_enabled
@@ -288,12 +259,12 @@ class ConversationHistory:
         # Generate filename with timestamp
         end_time = datetime.now(timezone.utc)
         timestamp_str = self.start_time.strftime("%Y%m%d_%H%M%S")
-        filename = f"conversation_{self.character_name.lower()}_{timestamp_str}.json"
+        filename = f"conversation_uno_{timestamp_str}.json"
         output_path = output_dir / filename
 
         # Prepare data
         metadata = {
-            "character": self.character_name,
+            "character": "Uno",
             "profile_path": self.profile_path,
             "model": self.model_name,
             "wiki_enabled": self.wiki_enabled,
@@ -357,33 +328,45 @@ def collect_annotation(history: ConversationHistory) -> None:
         console.print("\n[dim]Annotation skipped[/dim]")
 
 
+def make_logging_tool(func: Any, history: ConversationHistory) -> Any:
+    """Wrap a tool function to log calls to console and conversation history.
+
+    The wrapper preserves the original function's name, module, docstring,
+    and annotations so the Google GenAI SDK generates the correct tool
+    declaration.
+    """
+
+    @functools.wraps(func)
+    def wrapper(**kwargs: Any) -> Any:
+        log_tool_call(func.__name__, kwargs)
+        result = func(**kwargs)
+        history.add_tool_call(func.__name__, kwargs, result)
+        return result
+
+    # Preserve the original signature so the SDK introspects parameters correctly.
+    wrapper.__signature__ = inspect.signature(func)  # type: ignore[attr-defined]
+    return wrapper
+
+
 def chat_loop_with_tools(
     client: genai.Client,
     model_name: str,
-    character_name: str,
     system_instructions: str,
     history: ConversationHistory,
     tools: list,
 ) -> None:
-    """Run the interactive chat loop with manual function calling.
+    """Run the interactive chat loop with automatic function calling.
 
     Args:
         client: Google GenAI client
         model_name: Name of the model to use
-        character_name: Name of the character
         system_instructions: System instructions for the LLM
         history: Conversation history manager
         tools: List of wiki tools
     """
-    # Tool function mapping
-    tool_functions = {
-        "search_wiki": search_wiki,
-        "read_wiki_segment": read_wiki_segment,
-    }
-
     # Display welcome panel
     welcome_panel = Panel(
-        f"[bold cyan]Character Chat with Wiki: {character_name}[/bold cyan]\n"
+        "[bold cyan]Character Chat with Wiki: Uno[/bold cyan]\n"
         f"Profile: {history.profile_path}\n"
         f"Model: {history.model_name}\n"
         f"Wiki Tools: {len(tools)} available\n\n"
@@ -394,14 +377,18 @@ def chat_loop_with_tools(
     console.print(welcome_panel)
     console.print()
 
-    # Configuration with tools (manual function calling)
+    # Wrap wiki tools with logging to capture calls in conversation history
+    tools = [make_logging_tool(tool, history) for tool in tools]
+
+    # Configuration with tools (automatic function calling)
     config = GenerateContentConfig(
         system_instruction=system_instructions,
         temperature=1.0,
         top_p=0.95,
         tools=tools,
-        # NO automatic_function_calling - we handle manually for logging
-        automatic_function_calling=AutomaticFunctionCallingConfig(disable=True),
+        automatic_function_calling=AutomaticFunctionCallingConfig(
+            maximum_remote_calls=25,
+        )
     )
 
     # Initialize conversation history for the API
@@ -428,7 +415,7 @@ def chat_loop_with_tools(
                 )
             )
 
-            # Get response from LLM (may include function calls)
+            # Get response from LLM (automatic function calling handles tool loops)
             try:
                 response = client.models.generate_content(
                     model=model_name,
@@ -436,94 +423,15 @@ def chat_loop_with_tools(
                     config=config,
                 )
 
-                # Handle function calls if present (manual loop)
-                tool_calls_made: list[dict[str, Any]] = []
-                max_iterations = 20  # Prevent infinite loops
-                iteration = 0
-
-                while iteration < max_iterations:
-                    # Check if model wants to call functions
-                    if (
-                        not response.candidates
-                        or not response.candidates[0].content
-                        or not response.candidates[0].content.parts
-                    ):
-                        break
-
-                    function_calls = [
-                        part.function_call
-                        for part in response.candidates[0].content.parts
-                        if hasattr(part, "function_call") and part.function_call
-                    ]
-
-                    if not function_calls:
-                        # No function calls, we're done
-                        break
-
-                    # Execute function calls and log them
-                    function_responses = []
-                    for fc in function_calls:
-                        if not fc.name:
-                            continue
-                        tool_name = fc.name
-                        arguments = dict(fc.args) if fc.args else {}
-
-                        log_tool_call(tool_name, arguments)
-
-                        # Execute the tool
-                        tool_func = tool_functions.get(tool_name)
-                        if not tool_func:
-                            continue
-                        result = tool_func(**arguments)
-
-                        # Log tool call to conversation history
-                        history.add_tool_call(tool_name, arguments, result)
-                        tool_calls_made.append(
-                            {
-                                "tool": tool_name,
-                                "arguments": arguments,
-                                "result": result,
-                            }
-                        )
-
-                        # Prepare response for model
-                        function_responses.append(
-                            Part.from_function_response(
-                                name=tool_name,
-                                response={"result": result},
-                            )
-                        )
-
-                    # Add function call and responses to conversation
-                    if response.candidates[0].content:
-                        conversation.append(response.candidates[0].content)
-                    conversation.append(Content(parts=function_responses))
-
-                    # Get next response from model with function results
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=conversation,  # type: ignore[arg-type]
-                        config=config,
-                    )
-
-                    iteration += 1
-
-                # Extract final text response
                 final_text = response.text or ""
-
-                # Add assistant message with tool calls to history
-                history.add_assistant_message(
-                    final_text, tool_calls_made if tool_calls_made else None
-                )
+                history.add_assistant_message(final_text)
 
                 # Add final response to conversation
                 if response.candidates and response.candidates[0].content:
                     conversation.append(response.candidates[0].content)
 
                 # Display response
-                console.print(
-                    f"[bold green]{character_name}:[/bold green] {final_text}\n"
-                )
+                console.print(f"[bold green]Uno:[/bold green] {final_text}\n")
 
             except Exception as e:
                 log.error(f"Error getting response: {e}")
@@ -540,189 +448,6 @@ def chat_loop_with_tools(
     # Collect annotation after chat
     if history.messages:
         collect_annotation(history)
-
-
-def run_test_questions_with_tools(
-    client: genai.Client,
-    model_name: str,
-    character_name: str,
-    system_instructions: str,
-    history: ConversationHistory,
-    tools: list,
-    questions: list[str],
-) -> None:
-    """Run a list of test questions in non-interactive mode with wiki tools.
-
-    Args:
-        client: Google GenAI client
-        model_name: Name of the model to use
-        character_name: Name of the character
-        system_instructions: System instructions for the LLM
-        history: Conversation history manager
-        tools: List of wiki tools
-        questions: List of questions to ask
-    """
-    console.print(
-        f"\n[bold cyan]Running {len(questions)} test questions with wiki tools[/bold cyan]\n"
-    )
-
-    # Tool function mapping
-    tool_functions = {
-        "search_wiki": search_wiki,
-        "read_wiki_segment": read_wiki_segment,
-    }
-
-    # Configuration with tools
-    config = GenerateContentConfig(
-        system_instruction=system_instructions,
-        temperature=1.0,
-        top_p=0.95,
-        tools=tools,
-    )
-
-    # Initialize conversation history
-    conversation: list[Content] = []
-
-    for i, question in enumerate(questions, 1):
-        console.print(f"[dim]Question {i}/{len(questions)}[/dim]")
-        console.print(f"[bold blue]You:[/bold blue] {question}")
-
-        # Add user message
-        history.add_user_message(question)
-        conversation.append(
-            Content(
-                role="user",
-                parts=[Part.from_text(text=question)],
-            )
-        )
-
-        try:
-            # Get response
-            response = client.models.generate_content(
-                model=model_name,
-                contents=conversation,  # type: ignore[arg-type]
-                config=config,
-            )
-
-            # Handle function calls (manual loop)
-            tool_calls_made: list[dict[str, Any]] = []
-            max_iterations = 5
-            iteration = 0
-
-            while iteration < max_iterations:
-                if (
-                    not response.candidates
-                    or not response.candidates[0].content
-                    or not response.candidates[0].content.parts
-                ):
-                    break
-
-                function_calls = [
-                    part.function_call
-                    for part in response.candidates[0].content.parts
-                    if hasattr(part, "function_call") and part.function_call
-                ]
-
-                if not function_calls:
-                    break
-
-                function_responses = []
-                for fc in function_calls:
-                    if not fc.name:
-                        continue
-                    tool_name = fc.name
-                    arguments = dict(fc.args) if fc.args else {}
-
-                    log_tool_call(tool_name, arguments)
-
-                    # Execute tool
-                    tool_func = tool_functions.get(tool_name)
-                    if not tool_func:
-                        continue
-                    result = tool_func(**arguments)
-
-                    # Log tool call
-                    history.add_tool_call(tool_name, arguments, result)
-                    tool_calls_made.append(
-                        {
-                            "tool": tool_name,
-                            "arguments": arguments,
-                            "result": result,
-                        }
-                    )
-
-                    function_responses.append(
-                        Part.from_function_response(
-                            name=tool_name,
-                            response={"result": result},
-                        )
-                    )
-
-                # Add to conversation
-                if response.candidates[0].content:
-                    conversation.append(response.candidates[0].content)
-                conversation.append(Content(parts=function_responses))
-
-                # Get next response
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=conversation,  # type: ignore[arg-type]
-                    config=config,
-                )
-
-                iteration += 1
-
-            # Extract final response
-            assistant_message = response.text or ""
-
-            # Add to history
-            history.add_assistant_message(
-                assistant_message, tool_calls_made if tool_calls_made else None
-            )
-
-            # Add to conversation
-            if response.candidates and response.candidates[0].content:
-                conversation.append(response.candidates[0].content)
-
-            # Display response
-            console.print(
-                f"[bold green]{character_name}:[/bold green] {assistant_message}"
-            )
-            console.print()
-
-        except Exception as e:
-            log.error(f"Error getting response for question '{question}': {e}")
-            console.print(
-                "\n[bold red]Error:[/bold red] Failed to get response for this question.\n"
-            )
-            # Remove the user message since we didn't get a response
-            conversation.pop()
-            history.messages.pop()
-
-    console.print("[bold green]✓ Test completed[/bold green]\n")
-
-    # Collect annotation after test
-    collect_annotation(history)
-
-
-# Predefined test questions for non-interactive mode
-ENGLISH_TEST_QUESTIONS = [
-    "Hi, who are you?",
-    "Describe your appearance",
-    "Do you need sleep?",
-    "What do you think of Paperinik?",
-    "Tell me about Highclean",  # Should say "Non lo so" (hallucination test)
-    "What's your relationship with Everett Ducklair?",
-]
-
-ITALIAN_TEST_QUESTIONS = [
-    "Ciao, chi sei?",
-    "Descrivi il tuo aspetto",
-    "Hai bisogno di dormire?",
-    "Cosa pensi di Paperinik?",
-    "Parlami della Highclean",  # Should say "Non lo so" (hallucination test)
-    "Qual è il tuo rapporto con Everett Ducklair?",
-]
 
 
 def main() -> None:
@@ -744,20 +469,6 @@ def main() -> None:
         default=DEFAULT_MODEL,
         help=f"Model to use (default: {DEFAULT_MODEL})",
     )
-    parser.add_argument(
-        "--test",
-        type=str,
-        choices=["english", "italian"],
-        default=None,
-        help="Run in non-interactive test mode with predefined questions",
-    )
-    parser.add_argument(
-        "--questions",
-        type=str,
-        nargs="+",
-        default=None,
-        help="Custom test questions to ask (non-interactive mode)",
-    )
     args = parser.parse_args()
 
     # Resolve paths
@@ -776,62 +487,21 @@ def main() -> None:
         )
 
         # Load profile
-        character_name, profile_content = load_profile(profile_path)
+        profile_content = load_profile(profile_path)
         profile_ref = str(args.profile)
 
-        # Create enhanced system instructions
-        system_instructions = create_enhanced_system_instructions(
-            profile_content, character_name
-        )
-
-        # Create wiki tools
-        # Google GenAI SDK automatically converts Python functions to tool declarations
-        tools = [
-            search_wiki,
-            read_wiki_segment,
-        ]
+        system_instructions = create_system_instructions(profile_content)
+        tools = [search_wiki, read_wiki_segment]
 
         # Initialize conversation history
         history = ConversationHistory(
-            character_name=character_name,
             profile_path=profile_ref,
             model_name=args.model,
             wiki_enabled=True,
         )
 
-        # Determine mode: interactive or test
-        if args.questions:
-            # Custom test questions
-            run_test_questions_with_tools(
-                client,
-                args.model,
-                character_name,
-                system_instructions,
-                history,
-                tools,
-                args.questions,
-            )
-        elif args.test:
-            # Predefined test questions
-            test_questions = (
-                ENGLISH_TEST_QUESTIONS
-                if args.test == "english"
-                else ITALIAN_TEST_QUESTIONS
-            )
-            run_test_questions_with_tools(
-                client,
-                args.model,
-                character_name,
-                system_instructions,
-                history,
-                tools,
-                test_questions,
-            )
-        else:
-            # Interactive chat loop
-            chat_loop_with_tools(
-                client, args.model, character_name, system_instructions, history, tools
-            )
+        # Interactive chat loop
+        chat_loop_with_tools(client, args.model, system_instructions, history, tools)
 
         console.print()
 
@@ -852,14 +522,10 @@ def main() -> None:
         else:
             console.print("[dim]No messages to save.[/dim]")
 
-    except FileNotFoundError as e:
+    except Exception as e:
         log.error(f"Error: {e}")
         console.print(f"\n[bold red]Error:[/bold red] {e}\n")
-        exit(1)
-    except Exception as e:
-        log.error(f"Unexpected error: {e}")
-        console.print(f"\n[bold red]Unexpected error:[/bold red] {e}\n")
-        exit(1)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
