@@ -69,53 +69,6 @@ MAX_BACKOFF_SECONDS = 60.0
 BACKOFF_MULTIPLIER = 2.0
 API_TIMEOUT_SECONDS = 300  # 5 minutes per API call
 
-
-def generate_with_retry(
-    client: genai.Client,
-    conversation: list[Content],
-    config: GenerateContentConfig,
-) -> GenerateContentResponse | None:
-    """Call generate_content with retry on resource exhausted and timeout errors."""
-    backoff = INITIAL_BACKOFF_SECONDS
-
-    for attempt in range(MAX_RETRIES):
-        try:
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=conversation,  # type: ignore[arg-type]
-                config=config,
-            )
-            return response
-        except Exception as e:
-            error_str = str(e).lower()
-            is_timeout = "timeout" in error_str or "timed out" in error_str
-            is_rate_limited = (
-                "resource" in error_str and "exhausted" in error_str
-            ) or "429" in error_str
-            is_retryable = is_timeout or is_rate_limited
-
-            if not is_retryable:
-                raise
-
-            if attempt == MAX_RETRIES - 1:
-                log.error(f"Max retries ({MAX_RETRIES}) exceeded: {e}")
-                return None
-
-            # Add jitter: +/- 25% of backoff
-            jitter = backoff * 0.25 * (2 * random.random() - 1)
-            sleep_time = min(backoff + jitter, MAX_BACKOFF_SECONDS)
-
-            error_type = "Timeout" if is_timeout else "Resource exhausted"
-            log.warning(
-                f"{error_type} (attempt {attempt + 1}/{MAX_RETRIES}), "
-                f"retrying in {sleep_time:.1f}s..."
-            )
-            time.sleep(sleep_time)
-            backoff = min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF_SECONDS)
-
-    return None
-
-
 # Paths
 BASE_DIR = Path(__file__).parent
 INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
@@ -225,6 +178,52 @@ def path_str(path: Path) -> str:
     return str(rel_path)
 
 
+def generate_with_retry(
+    client: genai.Client,
+    conversation: list[Content],
+    config: GenerateContentConfig,
+) -> GenerateContentResponse | None:
+    """Call generate_content with retry on resource exhausted and timeout errors."""
+    backoff = INITIAL_BACKOFF_SECONDS
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=conversation,  # type: ignore[arg-type]
+                config=config,
+            )
+            return response
+        except Exception as e:
+            error_str = str(e).lower()
+            is_timeout = "timeout" in error_str or "timed out" in error_str
+            is_rate_limited = (
+                "resource" in error_str and "exhausted" in error_str
+            ) or "429" in error_str
+            is_retryable = is_timeout or is_rate_limited
+
+            if not is_retryable:
+                raise
+
+            if attempt == MAX_RETRIES - 1:
+                log.error(f"Max retries ({MAX_RETRIES}) exceeded: {e}")
+                return None
+
+            # Add jitter: +/- 25% of backoff
+            jitter = backoff * 0.25 * (2 * random.random() - 1)
+            sleep_time = min(backoff + jitter, MAX_BACKOFF_SECONDS)
+
+            error_type = "Timeout" if is_timeout else "Resource exhausted"
+            log.warning(
+                f"{error_type} (attempt {attempt + 1}/{MAX_RETRIES}), "
+                f"retrying in {sleep_time:.1f}s..."
+            )
+            time.sleep(sleep_time)
+            backoff = min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF_SECONDS)
+
+    return None
+
+
 # ============================================================================
 # Pydantic Models for Claims
 # ============================================================================
@@ -264,20 +263,6 @@ class Claim(BaseModel):
     def support_count(self) -> int:
         """Net support: supporting scenes minus contradicting scenes."""
         return len(self.supporting) - len(self.contradicting)
-
-    def absorb_contradictions(self) -> int:
-        """Move all contradicting evidence to supporting and clear contradicting.
-
-        Call this after the claim text has been refined to account for the
-        contradictions, so they become supporting evidence for the nuanced claim.
-
-        Returns:
-            Number of evidence entries moved.
-        """
-        moved = len(self.contradicting)
-        self.supporting.extend(self.contradicting)
-        self.contradicting = []
-        return moved
 
 
 # ============================================================================
@@ -1360,7 +1345,9 @@ class ClaimRefiner:
 
                 if success:
                     self._ledger.refine_claim(claim.id, result)
-                    claim.absorb_contradictions()
+                    # Absorb contradictions into supporting evidence
+                    claim.supporting.extend(claim.contradicting)
+                    claim.contradicting = []
                     refined_count += 1
                     log.debug(f"Refined claim {claim.id}: {result[:80]}...")
                 else:

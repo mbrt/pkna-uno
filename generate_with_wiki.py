@@ -388,7 +388,7 @@ def chat_loop_with_tools(
         tools=tools,
         automatic_function_calling=AutomaticFunctionCallingConfig(
             maximum_remote_calls=25,
-        )
+        ),
     )
 
     # Initialize conversation history for the API

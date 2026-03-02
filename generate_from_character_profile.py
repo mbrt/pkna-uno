@@ -263,116 +263,6 @@ def collect_annotation(history: ConversationHistory) -> None:
         console.print("\n[dim]Annotation skipped[/dim]")
 
 
-def run_test_questions(
-    backend: dict[str, Any],
-    model_name: str,
-    character_name: str,
-    system_instructions: str,
-    history: ConversationHistory,
-    questions: list[str],
-) -> None:
-    """Run a list of test questions in non-interactive mode.
-
-    Args:
-        backend: Backend configuration dict (Gemini or HuggingFace)
-        model_name: Name of the model to use
-        character_name: Name of the character
-        system_instructions: System instructions for the LLM
-        history: Conversation history manager
-        questions: List of questions to ask
-    """
-    console.print(f"\n[bold cyan]Running {len(questions)} test questions[/bold cyan]\n")
-
-    backend_type = backend["type"]
-
-    # Initialize conversation history (backend-specific format)
-    if backend_type == "gemini":
-        conversation_gemini: list[Content] = []
-        conversation_hf: list[dict[str, str]] = []
-    else:  # huggingface
-        conversation_gemini = []
-        conversation_hf = []
-
-    for i, question in enumerate(questions, 1):
-        console.print(f"[dim]Question {i}/{len(questions)}[/dim]")
-        console.print(f"[bold blue]You:[/bold blue] {question}")
-
-        # Add user message
-        history.add_user_message(question)
-
-        # Add to conversation (backend-specific format)
-        if backend_type == "gemini":
-            conversation_gemini.append(
-                Content(
-                    role="user",
-                    parts=[Part.from_text(text=question)],
-                )
-            )
-        else:  # huggingface
-            conversation_hf.append(
-                {
-                    "role": "user",
-                    "content": question,
-                }
-            )
-
-        try:
-            # Get response (backend-specific)
-            if backend_type == "gemini":
-                assistant_message = generate_response_gemini(
-                    backend,
-                    conversation_gemini,
-                    system_instructions,
-                    model_name,
-                )
-                # Add to conversation history
-                conversation_gemini.append(
-                    Content(
-                        role="model",
-                        parts=[Part.from_text(text=assistant_message)],
-                    )
-                )
-            else:  # huggingface
-                assistant_message = generate_response_huggingface(
-                    backend,
-                    conversation_hf,
-                    system_instructions,
-                )
-                # Add to conversation history
-                conversation_hf.append(
-                    {
-                        "role": "assistant",
-                        "content": assistant_message,
-                    }
-                )
-
-            # Add to persistent history
-            history.add_assistant_message(assistant_message)
-
-            # Display response
-            console.print(
-                f"[bold green]{character_name}:[/bold green] {assistant_message}"
-            )
-            console.print()
-
-        except Exception as e:
-            log.error(f"Error getting response for question '{question}': {e}")
-            console.print(
-                "\n[bold red]Error:[/bold red] Failed to get response for this question.\n"
-            )
-            # Remove the user message since we didn't get a response
-            if backend_type == "gemini":
-                conversation_gemini.pop()
-            else:
-                conversation_hf.pop()
-            history.messages.pop()
-
-    console.print("[bold green]✓ Test completed[/bold green]\n")
-
-    # Collect annotation after test
-    collect_annotation(history)
-
-
 def chat_loop(
     backend: dict[str, Any],
     model_name: str,
@@ -498,26 +388,6 @@ def chat_loop(
     # Collect annotation after chat
     if history.messages:
         collect_annotation(history)
-
-
-# Predefined test questions for non-interactive mode
-ENGLISH_TEST_QUESTIONS = [
-    "Hi, who are you?",
-    "Describe your appearance",
-    "Do you need sleep?",
-    "What do you think of Paperinik?",
-    "Tell me about Highclean",  # Should say "Non lo so" (hallucination test)
-    "What's your relationship with Everett Ducklair?",
-]
-
-ITALIAN_TEST_QUESTIONS = [
-    "Ciao, chi sei?",
-    "Descrivi il tuo aspetto",
-    "Hai bisogno di dormire?",
-    "Cosa pensi di Paperinik?",
-    "Parlami della Highclean",  # Should say "Non lo so" (hallucination test)
-    "Qual è il tuo rapporto con Everett Ducklair?",
-]
 
 
 # Backend abstraction
@@ -648,20 +518,6 @@ def main() -> None:
         help=f"Model to use (default: {DEFAULT_MODEL})",
     )
     parser.add_argument(
-        "--test",
-        type=str,
-        choices=["english", "italian"],
-        default=None,
-        help="Run in non-interactive test mode with predefined questions",
-    )
-    parser.add_argument(
-        "--questions",
-        type=str,
-        nargs="+",
-        default=None,
-        help="Custom test questions to ask (non-interactive mode)",
-    )
-    parser.add_argument(
         "--backend",
         type=str,
         choices=["gemini", "huggingface"],
@@ -697,35 +553,8 @@ def main() -> None:
             model_name=args.model,
         )
 
-        # Determine mode: interactive or test
-        if args.questions:
-            # Custom test questions
-            run_test_questions(
-                backend,
-                args.model,
-                character_name,
-                system_instructions,
-                history,
-                args.questions,
-            )
-        elif args.test:
-            # Predefined test questions
-            test_questions = (
-                ENGLISH_TEST_QUESTIONS
-                if args.test == "english"
-                else ITALIAN_TEST_QUESTIONS
-            )
-            run_test_questions(
-                backend,
-                args.model,
-                character_name,
-                system_instructions,
-                history,
-                test_questions,
-            )
-        else:
-            # Interactive chat loop
-            chat_loop(backend, args.model, character_name, system_instructions, history)
+        # Run interactive chat loop
+        chat_loop(backend, args.model, character_name, system_instructions, history)
 
         console.print()
 

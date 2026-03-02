@@ -111,49 +111,6 @@ class TestClaim:
         )
         assert claim.support_count == 2  # 3 - 1 = 2
 
-    def test_absorb_contradictions(self):
-        """Test absorbing contradictions moves them to supporting."""
-        claim = Claim(
-            id=1,
-            text="Test claim",
-            path="psychology/traits/temperament",
-            supporting=[
-                SceneEvidence(scene_id="pkna-0_1", justification="Support 1"),
-            ],
-            contradicting=[
-                SceneEvidence(scene_id="pkna-1_5", justification="Contradiction 1"),
-                SceneEvidence(scene_id="pkna-2_10", justification="Contradiction 2"),
-            ],
-        )
-
-        moved = claim.absorb_contradictions()
-
-        assert moved == 2
-        assert len(claim.supporting) == 3
-        assert len(claim.contradicting) == 0
-        assert claim.support_count == 3
-        # Verify the moved entries are present
-        scene_ids = [ev.scene_id for ev in claim.supporting]
-        assert "pkna-1_5" in scene_ids
-        assert "pkna-2_10" in scene_ids
-
-    def test_absorb_contradictions_empty(self):
-        """Test absorbing contradictions is a no-op when there are none."""
-        claim = Claim(
-            id=1,
-            text="Test claim",
-            path="psychology/traits/temperament",
-            supporting=[
-                SceneEvidence(scene_id="pkna-0_1", justification="Support 1"),
-            ],
-        )
-
-        moved = claim.absorb_contradictions()
-
-        assert moved == 0
-        assert len(claim.supporting) == 1
-        assert len(claim.contradicting) == 0
-
 
 class TestScene:
     """Tests for Scene dataclass."""
