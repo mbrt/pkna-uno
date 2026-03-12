@@ -1,0 +1,15 @@
+# Paperbuck
+
+Conosciuto nel suo reame come Buck Paper, l'invincibile supereroe e tiranno, la sua vera identità è quella del Professor Paperbuck. Questo scienziato, la cui mente contorta lo ha spinto a creare una Paperopoli parallela – Paperopolis – che ha governato con assoluta tirannia, è stato l'antagonista chiave di PK durante gli eventi di "Un Mondo Perfetto".
+
+## Carattere e aspetto fisico
+
+La vera natura del Professor Paperbuck era quella di un individuo profondamente disadattato, che, per sfuggire a una realtà che lo respingeva, ne ha plasmata una a sua immagine e somiglianza. Come Buck Paper, si è presentato come un supereroe invincibile e un governante che, pur autoproclamandosi illuminato, era spietato nel sopprimere chiunque osasse opporsi alla sua visione di ordine. Oltre a possedere una forza sovrumana e la capacità di volare, era armato di una micidiale pistola a raggi. Il suo corpo era interamente celato da un costume che richiamava gli antichi eroi mascherati: una calzamaglia verde con il simbolo "BP" sul petto, un cappuccio verde che lasciava intravedere un ciuffo di capelli biondi, un mantello viola e guanti e stivali di colore giallo.
+
+Nella sua forma originale di Professor Paperbuck, è un papero di alta statura, con capelli biondi e folte sopracciglia nere.
+
+## Storia
+
+Il Professor Paperbuck, un tempo uno scienziato brillante, fu emarginato dalla comunità accademica per le sue audaci, e considerate folli, teorie sulle dimensioni parallele. Fu lui a inventare il diffusore dimensionale, una macchina capace di trasformare in realtà le sue più sfrenate fantasie. Con essa, creò Paperopolis, una città avveniristica dove stabilì un ordine ferreo sotto la maschera dell'invincibile Buck Paper, instaurando un governo efficiente ma inequivocabilmente dittatoriale. La sua tirannia fu osteggiata da una banda partigiana nota come gli Imperfetti, guidata dalla controparte di Angus Fangus e che annoverava tra le sue fila Rupert Potomac e Tempest Gale. La Paperopolis immaginaria minacciava di cancellare dalla realtà la nostra stessa Paperopoli.
+
+Quando PK e Lyla si intrufolarono in Paperopolis in missione, Buck Paper si dimostrò un avversario formidabile, riuscendo quasi a sconfiggere l'eroe e a catturare la droide. Fu solo grazie all'aiuto degli Imperfetti e al sacrificio della controparte di Angus che i due riuscirono a tornare nella loro dimensione. Con il supporto di Uno, scoprirono la vera identità di Buck Paper e localizzarono il diffusore dimensionale. Dopo un ultimo, violento scontro, PK riuscì a riportare Paperbuck nella nostra realtà e a distruggere la macchina. A seguito dello shock del ritorno alla dimensione originale, lo scienziato ha perso la memoria, e Uno e PK, considerandolo ormai innocuo, hanno deciso di lasciarlo libero, un'eco silenziosa del genio che un tempo aveva quasi distrutto il nostro mondo.

@@ -1,0 +1,21 @@
+# Urk
+
+Urk è un potente alleato di Pikappa, un guerriero proveniente da un'altra dimensione, originario della regione dei Grandi Laghi.
+
+## Aspetto e personalità
+
+Urk è un individuo imponente, di corporatura massiccia e muscolosa, eppure sorprendentemente agile e scattante. Il suo aspetto, all'apparenza feroce, cela una natura generosa, un coraggio incrollabile e una costante disponibilità ad aiutare i suoi amici.
+
+Quando non deve celare la sua vera identità, Urk indossa i suoi abiti tradizionali e impugna la sua lancia da guerra: quest'ultima non è una semplice arma bianca, ma un prodigio tecnologico capace di scagliare raggi di energia che possono ferire persino le Creature. I suoi capelli, lunghi e neri, sono sempre raccolti in una coda.
+
+Urk è riconosciuto come il guerriero più abile e coraggioso della sua tribù, il Popolo Rosso, dotato di una forza e agilità straordinarie. È un cacciatore esperto, con sensi estremamente acuiti, e possiede una vasta esperienza in combattimento: si racconta che una volta, in una situazione critica, riuscì a sbaragliare una banda di teppisti prevedendo con esattezza ogni loro mossa. È anche un leader naturale, sebbene questa sua qualità sia stata raramente ostentata durante la sua permanenza a Paperopoli, data la sua limitata interazione con il mondo circostante. Nonostante la sua apparenza, Urk possiede anche un intelletto notevole: senza alcun aiuto, riuscì a dedurre di aver viaggiato non nel tempo, ma tra le dimensioni, anticipando persino le conclusioni di Lyla. Fu in grado di assumere l'identità di Dexter Brundle senza destare sospetti e di integrarsi perfettamente nella società paperopolese, così diversa dalla sua, fino al suo ritorno. Non ha difficoltà a comprendere e usare espressioni tecniche complesse come "energia cronale" ed è stato capace di rintracciare una Creatura senza l'ausilio dei mezzi di Pikappa.
+
+Tuttavia, esistono altre cronache, forse provenienti da diverse realtà o tempi, che descrivono Urk non come un viaggiatore dimensionale, ma come un Guardiano della Galassia. In queste versioni, egli non brandisce la lancia, ma possiede la capacità di trasformarsi nella sua forma animale totemica, un orso fatto di pura energia.
+
+## Vicende note
+
+Dopo una brevissima apparizione iniziale, la vera storia di Urk si svelò quando si scoprì che si nascondeva a Paperopoli sotto le spoglie di Dexter Brundle, un modesto impiegato di un'agenzia di pulizie. Inizialmente, Pikappa lo sospettò di essere responsabile di una serie di inspiegabili rapimenti in città. In seguito, Urk rivelò la sua vera identità e Lyla Lay comprese che la sua presenza in questa dimensione era dovuta a un "pasticcio temporale" causato dal Razziatore.
+
+Urk, assieme a Lyla e Pikappa, si spinse fino all'orbita di Saturno per salvare un'astronave terrestre che era stata catturata dal sistema di sicurezza di una nave xerbrana. Alla fine, venne costruita una macchina in grado di riportare Urk nella sua dimensione. Pikappa accompagnò l'amico nel suo viaggio. Giunti in quella realtà alternativa, tentarono di salvare Zeryn, la sorella di Urk, ignari del suo piano segreto: la Missione Ragnarök, volta a garantire la vittoria dei nativi americani sui vichinghi. Nonostante l'intromissione del fratello, Zeryn riuscì a portare a termine la sua missione e a infliggere una pesante sconfitta all'impero vichingo. Al termine della missione, Pikappa e Urk si salutarono, consapevoli che difficilmente si sarebbero potuti rincontrare. L'indiano consegnò poi una lettera destinata a Lyla, in cui le dichiarava tutti i suoi sentimenti.
+
+In un'altra registrazione o linea temporale, Urk fece un'ulteriore, seppur breve, comparsa. Qui, tentò di proteggere la base segreta della Robolab dal suo maestro impazzito, fallendo purtroppo e dovendo fuggire. In questa narrazione, la sua storia è diversa: egli è un Guardiano della Galassia, e non proviene da un'altra dimensione, ma appartiene a una razza aliena, i Thoriani, sterminata mille anni prima dagli Evroniani. I Thoriani sono esseri immuni alla coolflamizzazione e hanno l'abilità di trasformarsi nei loro animali totemici fatti di pura energia. L'animale totemico di Urk è un orso.

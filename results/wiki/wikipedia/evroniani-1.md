@@ -1,0 +1,1 @@
+The document field is empty. Please provide the text to be rephrased.

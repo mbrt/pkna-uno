@@ -1,0 +1,15 @@
+# Raghor
+
+Raghor, un mutante ibrido nato dall'unione di una spora evroniana con genoma rangariano, è stato il comandante delle forze speciali d'invasione evroniane, schierate contro la Terra. Ha rappresentato un notevole antagonista per PK durante gli eventi di Metamorfosi.
+
+## Carattere e aspetto fisico
+
+Le peculiarità fisiche e morali tipiche della stirpe evroniana erano in Raghor amplificate all'estremo, soprattutto la sua ambizione sfrenata e la totale assenza di scrupoli. Nonostante la sua posizione di comando, nutriva un profondo disprezzo per gli Evroniani, sognando di annientare il loro impero per rimpiazzarlo con uno fondato e guidato da mutanti come lui. Dimostrava un'intelligenza notevole, tanto da mettere in seria difficoltà Xadhoom in uno scontro diretto. Tuttavia, la sua inguaribile megalomania lo spingeva spesso a decisioni avventate e autodistruttive.
+
+I mutanti come Raghor si distinguevano dagli Evroniani "puri" per la folta peluria e la capigliatura violacea, elementi che conferivano loro una maggiore resistenza alle basse temperature. La loro bocca, anziché semplici denti, era armata di zanne affilate. Possedevano inoltre una muscolatura estremamente potenziata, organi di senso iper-sviluppati e artigli capaci di squarciare il metallo. Una mutazione unica in Raghor era la presenza, sul suo capo, di cinque tentacoli muniti di bocca dentata, una caratteristica che suggeriva una possibile evoluzione verso una doppia testa, simile a quella del Duca Evroniano. Raghor era solito indossare un'armatura che, pur composta da corazza, guanti, gambali e un elmo che gli celava gli occhi, lasciava esposta gran parte del suo corpo. Nonostante le sue specifiche genetiche indicassero otto paia di occhi, quando privo dell'elmo se ne potevano distinguere solo due.
+
+## Storia
+
+Inizialmente assegnato, assieme ad altri mutanti, a una nave stellare in orbita geostazionaria attorno alla Terra, Raghor manifestò fin da subito la sua insofferenza verso il suo superiore, il comandante Zortag. Senza autorizzazione, condusse una rischiosa incursione sul pianeta, dove ingaggiò un primo scontro con PK e Xadhoom. Fu in questa circostanza che notò la vulnerabilità di Xadhoom, profondamente turbata dalla presenza di un coolflame che replicava l'aspetto del suo perduto compagno, Xari, rendendola incapace di combattere al massimo delle sue forze.
+
+Di fronte alla minaccia di essere richiamato su Evron, Raghor optò per la ribellione totale: destituì Zortag e fece ritorno sulla Terra, determinato a eliminare definitivamente i due più formidabili avversari dell'impero. Durante il Newsduck Award alla Ducklair Tower, il mutante tentò invano di stringere un'alleanza con Xadhoom (allora nelle sue sembianze terrestri di dottoressa Xado) contro il dominio evroniano. Al suo rifiuto, ordinò al coolflame di spararle. Il suo effimero trionfo fu però stroncato quasi immediatamente: Zortag riapparve, strappandogli il controllo delle sue stesse truppe, e Xadhoom, che sembrava morta, si ridestò, pienamente in possesso dei suoi poteri e animata da una furia vendicativa. Raghor trovò la morte nell'esplosione scatenata dall'eroina xerbiana.

@@ -1,0 +1,21 @@
+# Mary Ann Flagstarr
+
+Mary Ann Flagstarr è un'agente della P.B.I. – Paperopoli Bureau of Investigation, la polizia federale di Paperopoli.
+
+## Aspetto
+
+L'agente Flagstarr è una cocorita, alta e slanciata. È spesso riconoscibile per i suoi occhiali da sole, indossati in ogni stagione, e i suoi orecchini appariscenti. Ha una capigliatura mora, corta e spesso arruffata. È noto che suo fratello Ziggy e il giornalista Angus Fangus condividono tratti simili.
+
+## Carattere
+
+Inizialmente, la Flagstarr si è dimostrata un'avversaria ostinata di Paperinik, ma col tempo ha sviluppato una fiducia che si è trasformata in una stretta, seppur complessa, amicizia. Si è spesso avvalsa dell'aiuto di Pikappa per portare a termine missioni ad alto rischio, e non ha esitato a persuaderlo per ottenere il supporto di Uno. Questa tendenza a manipolare l'eroe per i propri scopi ha infine indotto Paperinik a recidere ogni legame con la P.B.I., arrivando a distruggere il distintivo che lo designava come collaboratore segreto.
+
+## Operazioni Documentate
+
+La sua carriera si è intersecata per la prima volta con quella di Pikappa durante gli eventi del "Terremoto". In quella fase, si è opposta con forza all'eroe, cercando di arrestarlo mentre questi investigava su esperimenti classificati sul fondale della costa pacifica. La Flagstarr ha fronteggiato il papero mascherato finché non ha realizzato la vera natura del Progetto Pangea del professor Morgan Fairfax: un delirio visionario che minacciava di annientare l'intera costa pacifica per realizzare il folle sogno del professore.
+
+Dopo gli eventi del "Terremoto", l'agente Flagstarr è rimasta meno presente nelle operazioni di alto profilo, riemergendo durante l'inchiesta sulla scomparsa di Paperinik, conosciuta come "Missing". Successivamente, la neo-promossa tenente Flagstarr ha incrociato nuovamente la strada del supereroe durante l'incidente "Stella Cadente", quando entrambi erano alla ricerca di Xadhoom, la quale vagava senza controllo per Paperopoli. Poco dopo, si è trovata a gestire una banda di rapinatori asserragliata nella Ducklair Tower, dovendo anche fare i conti con le frequenti ingerenze del giornalista Angus Fangus, come documentato nel caso "Antico Futuro".
+
+Durante gli eventi del "Tyrannic", Mary Ann ha richiesto personalmente l'intervento di Paperinik e Uno, in seguito all'evasione del dottor Fairfax dal carcere di massima sicurezza di Steel Island e al suo ingaggio da parte della Repubblica di Belgravia per riprendere il Progetto Pangea. Nel caso "Virus", Mary Ann, insieme al fratello Ziggy Flagstarr, anch'egli ex-agente P.B.I., ha condotto un'infiltrazione nel Dipartimento 51 per liberare Pikappa, tenuto prigioniero. Successivamente, durante un'inchiesta per insabbiamento di informazioni, Mary Ann e il suo collega, il capitano Nimrod, sono stati coinvolti, ma pienamente riabilitati al termine delle indagini. L'agente P.B.I. ha avuto un ruolo minore ma presente durante la "Trilogia di Xadhoom", specificatamente nel caso "Clandestino a bordo". La sua collaborazione con Pikappa è stata cruciale nel caso "Un Solo Respiro", quando si sono uniti per aiutare Ziggy, coinvolto in questioni delicate della Factory, un dipartimento militare segreto che conduce esperimenti sui poteri paranormali. L'ultima richiesta ufficiale di aiuto della P.B.I. a Pikappa per mano di Mary Ann si è verificata nell'"Operazione Efesto". Mary Ann ha chiesto al papero mascherato di infiltrarsi nella Repubblica di Belgravia, simulando di essere il principe erede al trono. Quest'operazione ha segnato l'ultima documentazione nota dell'agente Mary Ann Flagstarr in servizio attivo.
+
+Successivamente, l'agente Malice Sturling ha informato Pikappa che Mary Ann era stata assegnata a una missione segreta di lunga durata, stimata in quindici anni, e che non sarebbe rientrata a Paperopoli fino al suo completamento. Sebbene la durata esatta di tale missione rimanga sconosciuta, essa le ha evidentemente valso una promozione significativa: l'agente Flagstarr è rientrata a Paperopoli, presso la sede P.B.I. di Quacktico, con il grado di Capitano, come emerso durante gli eventi di "Zona Franca". Mantiene eccellenti rapporti con il fratello Ziggy, che nel frattempo è divenuto direttore di 00-News.

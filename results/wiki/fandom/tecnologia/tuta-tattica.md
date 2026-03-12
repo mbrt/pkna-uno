@@ -1,0 +1,10 @@
+**PROTOCOLLO DUCKLAIR TOWER: Specifiche Tecniche – Tuta Tattica**
+
+Questo assetto operativo speciale è stato sviluppato da Uno per consentire a Pikappa di affrontare le missioni in ambienti caratterizzati da temperature rigide e climi polari. La Tuta Tattica è stata schierata con successo durante la sventata invasione evroniana e nel corso del conflitto contro Tyrannic. Curiosamente, l'equipaggiamento non è stato invece utilizzato durante la missione in Antartide legata ai complessi eventi dei "gradi di separazione", nonostante le condizioni ambientali lo richiedessero.
+
+**Specifiche del Sistema:**
+
+*   **Agilità e Termoregolazione:** La struttura della tuta è progettata per non intralciare i movimenti agili di Pikappa. La protezione dal gelo è affidata a un compensatore termobiologico: una rete di sensori annegati nel tessuto monitora costantemente le condizioni esterne, attivando una reazione calorigena che mantiene la temperatura corporea stabile e inalterata.
+*   **Cintura di Sequenza:** È il nucleo centrale della tuta, il dispositivo che coordina e dirige ogni singola funzione computerizzata dell'equipaggiamento.
+*   **Scarponi in Plastoresina:** Calzature realizzate in un composto unico a variazione molecolare, estremamente resistente e leggero. Al raggiungimento degli zero gradi centigradi, la densità molecolare aumenta per resistere a congelamento e urti. Sono dotati di una chiodatura retrattile in tecnometallo mutogeno. Nota logistica: gli scarponi devono essere conservati in appositi moduli raffreddanti per preservare le proprietà molecoagulanti del materiale.
+*   **Sensori e Visore:** Per non compromettere l'efficacia operativa, i guanti in servoderma simulano perfettamente la sensibilità tattile e termica delle mani. Il visore a doppia densità, anch'esso in plastoresina, è fondamentale per proteggere l'apparato visivo dal riverbero accecante tipico dei territori innevati.

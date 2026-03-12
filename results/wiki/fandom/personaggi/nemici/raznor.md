@@ -1,0 +1,15 @@
+# Raznor
+
+Raznor, il feroce e implacabile cacciatore alieno che ha gettato Paperopoli nel caos durante gli eventi di "Prima dell’alba", si è rivelato un avversario formidabile per PK. Le sue metodologie di caccia, brutali e spietate, ricordano pericolosamente le leggende ancestrali legate a certi predatori galattici.
+
+## Carattere e aspetto fisico
+
+Le capacità di Raznor erano straordinarie e letali. Era in grado di generare potenti raggi energetici dalle proprie mani e possedeva eccezionali poteri telepatici, tanto da poter controllare la sua nave spaziale anche in condizioni di immobilità. La sua stessa astronave era un'entità senziente, capace di comunicare verbalmente, e il suo equipaggiamento includeva un arsenale vastissimo, con alcune delle armi più distruttive conosciute nell'universo.
+
+Nonostante una spiccata propensione all'avidità e all'astuzia negli affari illeciti, la motivazione principale di Raznor era il puro piacere della caccia. Conduceva le sue persecuzioni con una violenza e una determinazione inaudite. Paradossalmente, fu proprio questa ossessione venatoria a causarne la rovina: la sua insistenza nel confrontarsi in uno scontro diretto con PK, una battaglia inutile in quel contesto, gli impedì di completare la sua missione con successo.
+
+Fisicamente, Raznor era notevolmente più alto e robusto di un terrestre medio. La sua fisionomia era grossomodo umanoide, ma presentava tratti distintivi che evocavano sia gli uccelli (come i piedi palmati) sia, in misura maggiore, i rettili (il colore verde della pelle, la conformazione del viso e la dentatura acuminata). Il suo abbigliamento consisteva in una corazza viola, un indumento intimo e protezioni per le ginocchia.
+
+## Storia
+
+La presenza di Raznor sulla Terra fu il risultato di un incarico ben retribuito da parte del senatore Korneus: recuperare una valigetta contenente un dispositivo temporale, precipitata nel porto di Paperopoli a seguito di un incidente di trasporto. Appena giunto sul nostro mondo, il cacciatore iniziò a confrontarsi con brutalità inaudita non solo con gli altri individui che cercavano la valigetta (tra cui Angus Fangus, Camera 9 e i criminali Mac e Garth), ma con chiunque gli si parasse davanti, incluso PK, giunto sul posto per valutare la minaccia. Dopo un'estenuante notte di scontri dall'esito incerto, la macchina temporale fu attivata per errore, e Raznor si ritrovò catapultato nel Paleolitico, trascinando con sé la sua astronave, Angus, Camera 9 e PK. Mentre i terrestri, con astuzia o fortuna, riuscirono a fare ritorno alla loro epoca, il predatore alieno rimase irrimediabilmente intrappolato nella preistoria. Secoli e millenni più tardi, reperti archeologici hanno rivelato un antico graffito, raffigurante la caccia dei primi esseri umani a una creatura che stranamente somigliava a Raznor, a testimonianza del suo destino remoto.

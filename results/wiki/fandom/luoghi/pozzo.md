@@ -1,0 +1,23 @@
+# Pozzo (Ev-666 / R'ur kil / Ev'jaal)
+
+Il Pozzo, noto anche come planetoide artificiale Ev-666, R'ur kil o La culla di Evron nella lingua evroniana, è un'immensa prigione spaziale e un possedimento dell'Impero Evroniano. Localizzato in un non specificato quadrante oscuro dell'universo, su di esso vengono isolati i più pericolosi criminali dell'Impero, oltre a tutti i dissidenti politici. Nelle sue profondità si cela un laboratorio sotterraneo dove si compiono aberranti sperimentazioni genetiche su cavie evroniane, volte a potenziare la forza e l'aggressività dei guerrieri.
+
+## Biosfera
+
+Il planetoide rimane avvolto nell'oscurità per ben sei cicli terrestri. La luce solare colpisce la superficie per un solo giorno, e durante quelle ventiquattr'ore, la vita esplode in un'effimera ma violenta fioritura. Normalmente un luogo desertico, buio e totalmente inospitale, il Pozzo vede tutte le sue creature viventi risvegliarsi da un lunghissimo letargo al sorgere del sole.
+
+La fauna include predatori carnivori alati, oltre a creature pelose simili a scimmie, di dimensioni estremamente variabili: alcune sono piccole come felini, altre raggiungono dimensioni umane, e altre ancora sono alte e mastodontiche. La flora è composta prevalentemente da piante da fiore carnivore, che si cibano della fauna locale. Alcune sono rampicanti pseudo-mobili grazie alla loro rapida crescita, mentre altre sono immensi fiori radicati nel terreno.
+
+## La Prigione
+
+La natura ostile e le condizioni estreme del planetoide lo hanno reso la scelta ideale per la prigione imperiale. Qui vengono confinati i criminali più pericolosi e i maggiori dissidenti politici. Tra i prigionieri più celebri vi è il generale Trauma, un evroniano di casta alta che, dopo potenziamenti genetici ad opera di Gorthan, sviluppò un'indole individualista, venendo per questo degradato e imprigionato. I prigionieri più pericolosi, come Trauma, sono trattenuti in catene, mentre quelli meno minacciosi possono vagare liberamente per il planetoide. Per sedare le frequenti ribellioni, i guardiani evroniani utilizzano un elaborato macchinario chiamato Il Castigatore. Il responsabile della prigione è il controllore Rankar.
+
+Ribelli come Yak, Kurg, T99 e Tarkoz erano destinati al Pozzo, ma un agente alieno, noto come Pikappa, è intervenuto per liberarli dalle grinfie di Evron, impedendone la detenzione.
+
+Dopo la caduta dell'Impero Evroniano, il planetoide artificiale è diventato una terra di nessuno, con i prigionieri abbandonati a se stessi e alcune sparute bande di evroniani "sbandati". Durante questo periodo, l'agente Pikappa ha raggiunto il Pozzo, guidato dal capo-branca Karkadon (ex collaboratore di Gorthan nel progetto Trauma). Qui, Pikappa ha distrutto Il Castigatore e liberato Trauma per chiederne l'aiuto nella battaglia contro Moldrock. Sebbene Pikappa sia stato costretto a fuggire dopo uno scontro con il gruppo evroniano di Nebula Faraday, Trauma e altri ex prigionieri (inclusi i minuscoli Predoni Grozsnaz) sono stati successivamente salvati dal Pozzo da Everett Ducklair e Uno, i quali si ritiene abbiano posto fine alla minaccia di Nebula e Karkadon.
+
+Successivamente, il Pozzo è caduto in una situazione ancora più caotica. Gli evroniani hanno evacuato il pianeta, portando con sé o distruggendo tutte le astronavi. I prigionieri delle altre razze rimasti versano in condizioni disperate, senza possibilità di fuga e costantemente esposti agli attacchi dei robot del Castigatore, ora impazziti. La leadership locale è stata assunta da una misteriosa donna mascherata, Kora. Il suo più forte alleato è Trauma, che ha volontariamente scelto il potere sul Pozzo anziché la libertà, mentre il suo nemico più accanito è Kilborg, un detenuto comune trasformatosi in una sorta di cavaliere errante. L'agente Pikappa è tornato sul Pozzo con la missione di far fuggire Kilborg e recuperare una chiave in suo possesso, da cui potrebbe dipendere il destino degli evroniani. I due, dopo alterne vicende, sono riusciti a evadere a bordo di una navicella nascosta nel palazzo di Kora, l'ultimo collegamento del Pozzo con l'universo esterno.
+
+## Il Laboratorio scientifico
+
+Un laboratorio scientifico sotterraneo è stato stabilito sul planetoide, sotto la guida del capo-branca scientifico Zoster. Qui, Zoster e il suo staff conducono esperimenti di alterazione genetica volti a modificare e potenziare la razza evroniana. Le creature generate nel laboratorio vengono testate sulla superficie del planetoide, proprio il giorno in cui la natura si risveglia dal letargo. Solo la creatura più forte è in grado di sopravvivere in un ambiente così ostile, rendendolo il banco di prova ideale per le loro creazioni.

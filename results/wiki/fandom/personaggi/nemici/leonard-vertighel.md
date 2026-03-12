@@ -1,0 +1,19 @@
+# Leonard Vertighel
+
+Leonard Vertighel è una figura centrale nell'universo in cui opera Pikappa e la Tempolizia. È noto come il primo designer e ingegnere capo delle industrie Eidolon, un ruolo di estrema fiducia per il potente Odin. A lui si deve la progettazione e realizzazione dei sofisticati droidi femminili di classe 5Y, tra cui spiccano nomi come Lyla Lay e Geena.
+
+## Aspetto
+
+Vertighel si presenta come un papero di mezza età, la cui eleganza nel vestire e il portamento raffinato gli conferiscono un'aura di nobiltà e fascino. I suoi lunghi capelli bianchi e i grandi occhi verdi donano al suo aspetto una singolare magnetismo. È evidente la sua profonda convinzione nell'importanza dell'immagine, che cura con meticolosa attenzione. Tuttavia, ciò che più colpisce è il suo sguardo, perennemente incupito e sofferente, come se celasse un incolmabile dolore interiore.
+
+## Carattere
+
+Coloro che non hanno un rapporto profondo con lui lo percepiscono spesso come una figura inquietante e scontrosa. È notoriamente arduo decifrare i suoi veri pensieri e sentimenti; a un primo approccio, sembra un manager freddo e calcolatore, totalmente assorbito dalla propria ascesa professionale. La verità, tuttavia, è ben diversa: Vertighel è in realtà prigioniero dei propri sentimenti, incapace di gestirli, e afflitto da una depressione cronica. La sua esistenza è segnata da una profonda solitudine e dalla piaga dell'amore non corrisposto. Tra le sue abitudini più singolari, spicca la sua meticolosa collezione di foglie secche d'autunno, gelosamente custodite all'interno degli antichi tomi della sua vasta libreria.
+
+## Eventi Noti
+
+In un periodo antecedente agli eventi più noti che lo hanno coinvolto, precisamente nell'anno 2179, il giovane Leonard Vertighel, pur con la sua indole introversa, era già riconosciuto come uno degli ingegneri robotici più geniali del pianeta. Grazie alle risorse messe a disposizione da Odin Eidolon e con la collaborazione di Zyba, una donna misteriosa rivelatasi essere un droide giunta dal futuro, Vertighel riuscì a infondere vita al primo droide mai creato: il modello 986. Questa gioia pionieristica fu tuttavia effimera. Sotto i suoi stessi occhi, il cinico e implacabile cacciatore di droidi Tyrrel Duckard, anch'egli viaggiatore temporale, disattivò brutalmente 986 e rapì Zyba, l'unica entità con cui Vertighel era riuscito a stabilire un legame autentico. Questa perdita devastante ha marcato profondamente la psiche di Leonard, alimentando la sua personalità nevrotica e scatenando in lui una complessa e ossessiva attrazione verso i droidi femminili.
+
+In un'altra occasione, decenni dopo questi eventi formativi, Pikappa fece una scoperta sconcertante: l'ingegnere Vertighel aveva segretamente, e all'insaputa di Odin, impiantato dei biochip nella "sfera delle emozioni" di alcuni modelli 5Y. Il suo obiettivo era disperato e ambizioso: forgiare la compagna ideale, un'entità che potesse condividere le sue passioni e ricambiare incondizionatamente il suo amore. La presenza di questi microchip, tuttavia, causò un grave malfunzionamento in numerosi modelli 5Y, culminato nella temuta "Rivolta dei Droidi", guidata da Geena. Solo Lyla Lay, tra tutti, rispose pienamente e positivamente alle complesse istruzioni del chip.
+
+Pikappa si confrontò duramente con Leonard per porre fine al suo progetto, che aveva già creato immense difficoltà alla Tempolizia e minacciava persino la deattivazione di Lyla. Durante lo scontro, la villa di Vertighel fu avvolta dalle fiamme. Mentre Pikappa riuscì a sfuggire all'ultimo, Leonard Vertighel sembrò perire nell'inferno. Ciononostante, una volta domato l'incendio, e nonostante approfondite ricerche condotte dai Vigili del Fuoco, il corpo del fidato braccio destro di Odin non fu mai ritrovato, lasciando aperto il mistero sulla sua sorte.

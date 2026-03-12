@@ -1,0 +1,17 @@
+# Kilborg
+
+Kilborg è un formidabile guerriero, un alleato di Pikappa, la cui comparsa è legata agli eventi della "Rinascita" e del "Metallo Pesante". È un'anima solitaria e misteriosa, che, come i leggendari cavalieri di epoche remote o i pistoleri delle frontiere selvagge, solca lo spazio, spostandosi da un pianeta all'altro per affrontare il male.
+
+## Carattere e aspetto fisico
+
+Kilborg è un individuo dallo spiccato individualismo, che antepone a ogni cosa la propria libertà, insofferente a qualsiasi forma di vincolo. Il suo temperamento è spesso melanconico e distaccato, sfiorando talvolta l'apatia. Afferma di impugnare le armi unicamente per autodifesa e mal sopporta la fama di eroe; eppure, la sua indole lo spinge invariabilmente a difendere i deboli e gli amici dagli oppressori. Oltre a essere un eccezionale combattente, è anche un pilota di astronavi di rara maestria.
+
+Dall'imponente statura e corporatura robusta, Kilborg è un pellicano antropomorfo dai lunghi capelli castani. La sua fisionomia è celata da un'armatura metallica borchiata, sormontata da una giacca di pelle che ricorda l'equipaggiamento dei motociclisti, completata da pantaloni di pelliccia e stivaloni neri. La sua arma prediletta è un'ascia bipenne, che brandisce con letale abilità e che trasporta fissata a tracolla sulla schiena. Gli occhi sono costantemente celati da un visore, mentre al collo, quale segno distintivo di una passata vittoria, porta una chiave, strappata con forza agli Evroniani.
+
+## Storia
+
+Il passato di Kilborg è avvolto nel mistero, rivelato solo in frammenti delle sue stesse parole a Pikappa. Si sa che per un periodo ha trovato dimora su un pianeta semidesertico, assumendone la protezione; tuttavia, la sua inesausta sete di libertà e la percezione di un abuso da parte dei suoi protetti lo spinsero a ripartire. È noto per aver affrontato gli Evroniani, riuscendo a sottrarre loro la chiave di una tecnologia vitale – il generatore di energia – impedendo così la creazione di nuovi coolflame. Successivamente, è stato confinato nel Pozzo, prigione cosmica di cui si ignorano le ragioni del suo imprigionamento; in quel luogo infernale è divenuto il più formidabile rivale della signora che ne detiene il controllo, Kora.
+
+Fu nel cuore del Pozzo che Pikappa e Kilborg si incrociarono per la prima volta. Ingannato da Gorthan, l'eroe terrestre era stato spedito su quel pianeta-prigione infernale con l'incarico di recuperare la chiave. Senza esitazione, Kilborg e Pikappa unirono le forze, fronteggiando i robot del Controllore e le schiere di Kora. In quel frangente, Kilborg salvò la vita al suo nuovo compagno, che stava per soccombere sotto i colpi di Trauma. I due riuscirono infine a evadere dal Pozzo a bordo di una piccola navicella. Durante il viaggio, un confronto chiarificatore cementò la loro alleanza: decisero di unire le forze contro Gorthan, che fu rapidamente debellato in uno scontro presso uno spazioporto abbandonato, costretto a cedere la preziosa chiave.
+
+A bordo di un'astronave abbandonata, recuperata nello spazioporto, la coppia intraprese il viaggio di ritorno. Fecero una tappa forzata sul pianeta che Kilborg aveva un tempo protetto, ora assediato dai pirati del famigerato Capitano Globen. Sebbene inizialmente riluttante a intervenire, Kilborg, affiancato da Pikappa, ristabilì la pace su quel mondo. Successivamente, accompagnò il suo compagno nel viaggio finale verso il pianeta Terra.
