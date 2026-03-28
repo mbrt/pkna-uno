@@ -32,8 +32,8 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # Settings
-MODEL_NAME = "vertex_ai/claude-opus-4-5@20251101"
-VERSION = "v1"
+MODEL_NAME = "vertex_ai/claude-sonnet-4-6"
+VERSION = "v2"
 MAX_WORKERS = 1
 
 # Paths
@@ -165,6 +165,19 @@ class Panel(BaseModel):
     )
 
 
+class CharacterAppearance(BaseModel):
+    """A character's name paired with a brief visual description from their first appearance."""
+
+    name: str = Field(description="The character's name.")
+    appearance: str = Field(
+        description=(
+            "Brief visual description of the character as they first appear: "
+            "species, build, distinctive clothing, colors, notable features. "
+            "Keep to 1-2 sentences."
+        ),
+    )
+
+
 # ============================================================================
 # DSPy Signatures
 # ============================================================================
@@ -201,7 +214,13 @@ class PageExtractor(dspy.Signature):
     - Use the overall plot summary and key events to inform the page content.
     - Use the previous page summary and panels to maintain continuity.
     - Use the same character names as previously introduced, if the character is the same.
-    - New character can be introduced if they haven't appeared before.
+    - Use the appearance descriptions of previously introduced characters to correctly
+      re-identify them, even if they appear in a different context (e.g. on a screen,
+      in flashback, without costume).
+    - New characters can be introduced if they haven't appeared before. For each character
+      appearing for the first time on this page, provide a brief visual description
+      (species, build, clothing, colors, notable features) in the characters_introduced
+      output.
 
     Output ordering:
     - Maintain the order of panels as they should be read on the page.
@@ -269,9 +288,9 @@ class PageExtractor(dspy.Signature):
         default=None,
         description="The panels from the previous comic book page, if available.",
     )
-    characters_already_introduced: list[str] = dspy.InputField(
+    characters_already_introduced: list[CharacterAppearance] = dspy.InputField(
         default=[],
-        description="A list of character names that have already been introduced in previous pages.",
+        description="Characters already introduced in previous pages, with their visual appearance descriptions.",
     )
     plot_summary: str = dspy.InputField(
         description="A brief summary of the overall plot of the comic book issue."
@@ -293,6 +312,10 @@ class PageExtractor(dspy.Signature):
     new_last_event: str | None = dspy.OutputField(
         default=None,
         description="The last key event that occurred in the comic book issue after this page, if available.",
+    )
+    characters_introduced: list[CharacterAppearance] = dspy.OutputField(
+        default=[],
+        description="Characters appearing for the first time on this page, with a brief visual description.",
     )
 
 
@@ -343,6 +366,7 @@ class ExtractedPage:
     summary: str
     panels: list[Panel]
     last_event: str | None
+    characters_introduced: list[CharacterAppearance]
     meta: ExtractedPageMeta
 
     def to_json(self, path: Path) -> None:
@@ -369,6 +393,10 @@ class ExtractedPage:
                         for panel in self.panels
                     ],
                     "last_event": self.last_event,
+                    "characters_introduced": [
+                        {"name": ca.name, "appearance": ca.appearance}
+                        for ca in self.characters_introduced
+                    ],
                     "meta": {
                         "model_name": self.meta.model_name,
                         "input_page_path": self.meta.input_page_path,
@@ -386,6 +414,7 @@ class ExtractedPage:
             summary=pred.summary,
             panels=pred.panels,
             last_event=pred.new_last_event,
+            characters_introduced=pred.characters_introduced,
             meta=ExtractedPageMeta(
                 model_name=MODEL_NAME,
                 input_page_path=input_page.as_posix(),
@@ -402,6 +431,10 @@ class ExtractedPage:
             summary=data["summary"],
             panels=[Panel(**panel) for panel in data["panels"]],
             last_event=data.get("last_event"),
+            characters_introduced=[
+                CharacterAppearance(**ca)
+                for ca in data.get("characters_introduced", [])
+            ],
             meta=ExtractedPageMeta(
                 model_name=meta["model_name"],
                 input_page_path=meta["input_page_path"],
@@ -436,28 +469,33 @@ class Extractor(dspy.Module):
     def __init__(self, summary: IssueSummary):
         self.issue_summary = summary
 
-        self.prev_characters: set[str] = set()
+        self.prev_characters: dict[str, str] = {}
         self.prev_page_summary: str | None = None
         self.prev_page_panels: list[Panel] | None = None
         self.prev_event: str | None = None
 
         self.page_extractor = dspy.ChainOfThought(PageExtractor)
 
+    def _characters_as_appearances(self) -> list[CharacterAppearance]:
+        return [
+            CharacterAppearance(name=name, appearance=desc)
+            for name, desc in self.prev_characters.items()
+        ]
+
     def forward(self, page: dspy.Image) -> dspy.Prediction:
         page_pred = self.page_extractor(
             page=page,
             previous_page_summary=self.prev_page_summary,
             previous_page_panels=self.prev_page_panels,
-            characters_already_introduced=list(self.prev_characters),
+            characters_already_introduced=self._characters_as_appearances(),
             plot_summary=self.issue_summary.summary,
             key_events=self.issue_summary.key_events,
             last_event=self.prev_event,
         )
         self.prev_page_summary = page_pred.summary
         self.prev_page_panels = page_pred.panels
-        self.prev_characters.update(
-            d.character for panel in page_pred.panels for d in panel.dialogues
-        )
+        for ca in page_pred.characters_introduced:
+            self.prev_characters.setdefault(ca.name, ca.appearance)
         self.prev_event = page_pred.new_last_event
         return page_pred
 
@@ -465,9 +503,8 @@ class Extractor(dspy.Module):
         self.prev_page_summary = extracted.summary
         self.prev_page_panels = extracted.panels
         self.prev_event = extracted.last_event
-        self.prev_characters.update(
-            d.character for panel in extracted.panels for d in panel.dialogues
-        )
+        for ca in extracted.characters_introduced:
+            self.prev_characters.setdefault(ca.name, ca.appearance)
 
 
 # ============================================================================

@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from extract_emotional import (
     SPEECH_ACT_VALUES,
     TONE_VALUES,
+    CharacterAppearance,
     DialogueLine,
     ExtractedPage,
     ExtractedPageMeta,
@@ -147,6 +148,16 @@ class TestExtractedPageJsonRoundTrip:
                 ),
             ],
             last_event="Paperinik arriva alla torre",
+            characters_introduced=[
+                CharacterAppearance(
+                    name="Uno",
+                    appearance="Ologramma blu di un'intelligenza artificiale, proiettato da uno schermo.",
+                ),
+                CharacterAppearance(
+                    name="Paperinik",
+                    appearance="Papero mascherato con costume viola e mantello.",
+                ),
+            ],
             meta=ExtractedPageMeta(
                 model_name="test-model",
                 input_page_path="/input/pkna/pkna-0/page_001.jpg",
@@ -165,6 +176,7 @@ class TestExtractedPageJsonRoundTrip:
         assert loaded.meta.model_name == original.meta.model_name
         assert loaded.meta.input_page_path == original.meta.input_page_path
         assert loaded.meta.lm_usage == original.meta.lm_usage
+        assert loaded.characters_introduced == original.characters_introduced
 
         assert len(loaded.panels) == len(original.panels)
         for loaded_panel, orig_panel in zip(loaded.panels, original.panels):
@@ -207,6 +219,7 @@ class TestExtractedPageJsonRoundTrip:
                 ),
             ],
             last_event=None,
+            characters_introduced=[],
             meta=ExtractedPageMeta(
                 model_name="test-model",
                 input_page_path="/input/page.jpg",
@@ -231,7 +244,7 @@ class TestExtractorStateUpdate:
 
     def test_update_tracks_characters(self):
         extractor = Extractor(summary=self._make_summary())
-        assert extractor.prev_characters == set()
+        assert extractor.prev_characters == {}
 
         page = ExtractedPage(
             summary="Page summary",
@@ -255,11 +268,18 @@ class TestExtractorStateUpdate:
                 ),
             ],
             last_event="Event 1",
+            characters_introduced=[
+                CharacterAppearance(name="Uno", appearance="Ologramma blu."),
+                CharacterAppearance(name="Paperinik", appearance="Papero mascherato."),
+            ],
             meta=ExtractedPageMeta(model_name="test", input_page_path="test.jpg"),
         )
         extractor.update_from_extracted(page)
 
-        assert extractor.prev_characters == {"Uno", "Paperinik"}
+        assert extractor.prev_characters == {
+            "Uno": "Ologramma blu.",
+            "Paperinik": "Papero mascherato.",
+        }
         assert extractor.prev_page_summary == "Page summary"
         assert extractor.prev_event == "Event 1"
         assert extractor.prev_page_panels is not None
@@ -279,10 +299,13 @@ class TestExtractorStateUpdate:
                 ),
             ],
             last_event=None,
+            characters_introduced=[
+                CharacterAppearance(name="Uno", appearance="Ologramma blu."),
+            ],
             meta=ExtractedPageMeta(model_name="test", input_page_path="p1.jpg"),
         )
         extractor.update_from_extracted(page1)
-        assert extractor.prev_characters == {"Uno"}
+        assert extractor.prev_characters == {"Uno": "Ologramma blu."}
 
         page2 = ExtractedPage(
             summary="Page 2",
@@ -295,10 +318,18 @@ class TestExtractorStateUpdate:
                 ),
             ],
             last_event="Event 2",
+            characters_introduced=[
+                CharacterAppearance(
+                    name="Due", appearance="Copia di Uno, ologramma rosso."
+                ),
+            ],
             meta=ExtractedPageMeta(model_name="test", input_page_path="p2.jpg"),
         )
         extractor.update_from_extracted(page2)
-        assert extractor.prev_characters == {"Uno", "Due"}
+        assert extractor.prev_characters == {
+            "Uno": "Ologramma blu.",
+            "Due": "Copia di Uno, ologramma rosso.",
+        }
         assert extractor.prev_page_summary == "Page 2"
         assert extractor.prev_event == "Event 2"
 
@@ -322,6 +353,11 @@ class TestExtractorStateUpdate:
                 ),
             ],
             last_event=None,
+            characters_introduced=[
+                CharacterAppearance(
+                    name="Uno", appearance="Ologramma rosso lampeggiante."
+                ),
+            ],
             meta=ExtractedPageMeta(model_name="test", input_page_path="p.jpg"),
         )
         extractor.update_from_extracted(page)
