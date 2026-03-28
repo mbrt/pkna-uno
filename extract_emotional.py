@@ -205,7 +205,16 @@ class PageExtractor(dspy.Signature):
 
     Output ordering:
     - Maintain the order of panels as they should be read on the page.
-    - Within each panel, maintain the order of lines as they happen chronologically.
+    - Within each panel, use dialogue context and conversational coherence to determine
+      the correct reading order. The flow of conversation (questions before answers,
+      calls before responses) should guide ordering. Do NOT assume a rigid
+      top-to-bottom, left-to-right order.
+
+    Panel boundaries and bubble assignment:
+    - Carefully identify panel boundaries. Do not merge dialogues from adjacent panels
+      into a single panel entry.
+    - A speech bubble belongs to the panel where its tail (pointer) originates, even if
+      the bubble body visually overlaps into an adjacent panel.
 
     Last event tracking:
     - Use the last event to keep track of story progression.
@@ -213,9 +222,20 @@ class PageExtractor(dspy.Signature):
     - In the last event, refer to the key events by their exact wording as provided. DO NOT invent new key events.
 
     Character attribution:
-    - Make extra effort to correctly attribute dialogue lines to the right characters.
-    - The speaker of a line might not always be visible in the panel. Use context from previous and following panels to infer the speaker.
-    - Sounds or onomatopoeias should not be considered dialogue lines. Mention them in the panel description if relevant, but do not include them in the dialogues list.
+    - The tail (pointer) of each speech bubble determines the speaker. Follow the tail
+      to identify who is speaking, regardless of who else is visible or prominent in the
+      panel.
+    - When a character appears on a screen or monitor and another character is physically
+      present, follow the bubble tail to determine the speaker. Do not assume the
+      on-screen character is speaking just because their face is prominent.
+    - Use the dialogue content itself as a signal for attribution. A character would not
+      call out their own name or alias (e.g. "Pikappa!" cannot be spoken by Paperinik,
+      it must be someone addressing him). Check that attributions make conversational
+      sense.
+    - The speaker of a line might not always be visible in the panel. Use context from
+      previous and following panels to infer the speaker.
+    - Sounds or onomatopoeias should not be considered dialogue lines. Mention them in
+      the panel description if relevant, but do not include them in the dialogues list.
 
     Emotional tone:
     - For each dialogue line, infer the emotional tone from the speech bubble shape
