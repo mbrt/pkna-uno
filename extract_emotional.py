@@ -107,7 +107,7 @@ def configure_lm() -> None:
         model=MODEL_NAME,
         vertex_credentials=os.getenv("VERTEX_AI_CREDS"),
         vertex_project=os.getenv("GOOGLE_CLOUD_PROJECT"),
-        vertex_location=os.getenv("GOOGLE_CLOUD_LOCATION"),
+        vertex_location=os.getenv("GOOGLE_CLOUD_LOCATION_CLAUDE"),
         temperature=1.0,
         max_tokens=60000,
     )
