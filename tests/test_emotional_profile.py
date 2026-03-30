@@ -79,8 +79,22 @@ class TestPathValidation:
     @pytest.mark.parametrize(
         "path",
         [
-            "invalid/path",
+            "communication/humor/never",
+            "communication/intent/never",
+            "communication/style/never",
+            "psychology/emotional/triggers/surprise",
             "psychology/nonexistent",
+            "capabilities/new_category",
+        ],
+    )
+    def test_valid_freeform_paths(self, path: str):
+        assert is_valid_claim_path(path)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "invalid/path",
+            "psychology",
             "relationships/pk/invalid_sub",
             "relationships/pk/dynamic/extra",
             "",
@@ -804,10 +818,19 @@ class TestClaimSynthesizer:
         ledger = self._make_ledger()
         client = MagicMock()
         mock_response = MagicMock()
+        # claim id=1 is behavior/does "Uno monitors all tower systems"
         mock_response.text = json.dumps(
             [
-                {"path": "behavior/never", "text": "Uno never abandons his post."},
-                {"path": "behavior/never", "text": "Uno never ignores a threat."},
+                {
+                    "path": "behavior/never",
+                    "text": "Uno never abandons his post.",
+                    "source_claim_ids": [1],
+                },
+                {
+                    "path": "behavior/never",
+                    "text": "Uno never ignores a threat.",
+                    "source_claim_ids": [1],
+                },
             ]
         )
 
@@ -818,10 +841,84 @@ class TestClaimSynthesizer:
             synthesizer = ClaimSynthesizer(client, ledger, threshold=2)
             added = synthesizer.synthesize_negatives()
 
-        # 4 sections * 2 negatives each (if all return the same mock)
-        # but only behavior/never and psychology/never and communication/never
-        # and capabilities paths are valid
         assert added > 0
+
+        # Verify negative claims got real scene evidence from source claim #1
+        neg_claims = [
+            c
+            for c in ledger.get_claims_by_section("behavior").get("behavior", [])
+            if "never" in c.path
+        ]
+        assert len(neg_claims) > 0
+        for nc in neg_claims:
+            assert len(nc.supporting) > 0
+            scene_ids = {ev.scene_id for ev in nc.supporting}
+            # Source claim #1 has evidence from pkna-0_1 and pkna-1_1
+            assert scene_ids & {"pkna-0_1", "pkna-1_1"}
+            assert all("synthesis" != ev.scene_id for ev in nc.supporting)
+
+    def test_synthesize_negatives_fallback_empty_source_ids(self):
+        ledger = self._make_ledger()
+        client = MagicMock()
+        mock_response = MagicMock()
+        # Empty source_claim_ids -- should fall back to synthetic evidence
+        mock_response.text = json.dumps(
+            [
+                {
+                    "path": "behavior/never",
+                    "text": "Uno never gives up.",
+                    "source_claim_ids": [],
+                },
+            ]
+        )
+
+        with patch(
+            "build_emotional_profile.generate_with_retry",
+            return_value=mock_response,
+        ):
+            synthesizer = ClaimSynthesizer(client, ledger, threshold=2)
+            added = synthesizer.synthesize_negatives()
+
+        assert added > 0
+        neg_claims = [
+            c
+            for c in ledger.get_claims_by_section("behavior").get("behavior", [])
+            if c.text == "Uno never gives up."
+        ]
+        assert len(neg_claims) > 0
+        assert neg_claims[0].supporting[0].scene_id == "synthesis"
+
+    def test_synthesize_negatives_fallback_invalid_source_ids(self):
+        ledger = self._make_ledger()
+        client = MagicMock()
+        mock_response = MagicMock()
+        # source_claim_ids reference nonexistent claims
+        mock_response.text = json.dumps(
+            [
+                {
+                    "path": "behavior/never",
+                    "text": "Uno never panics.",
+                    "source_claim_ids": [999, 998],
+                },
+            ]
+        )
+
+        with patch(
+            "build_emotional_profile.generate_with_retry",
+            return_value=mock_response,
+        ):
+            synthesizer = ClaimSynthesizer(client, ledger, threshold=2)
+            added = synthesizer.synthesize_negatives()
+
+        assert added > 0
+        neg_claims = [
+            c
+            for c in ledger.get_claims_by_section("behavior").get("behavior", [])
+            if c.text == "Uno never panics."
+        ]
+        assert len(neg_claims) > 0
+        # Falls back to synthetic evidence
+        assert neg_claims[0].supporting[0].scene_id == "synthesis"
 
     def test_synthesize_negatives_invalid_json(self):
         ledger = self._make_ledger()
@@ -848,7 +945,11 @@ class TestClaimSynthesizer:
         negatives_response = MagicMock()
         negatives_response.text = json.dumps(
             [
-                {"path": "behavior/never", "text": "Uno never gives up."},
+                {
+                    "path": "behavior/never",
+                    "text": "Uno never gives up.",
+                    "source_claim_ids": [1],
+                },
             ]
         )
 
@@ -1128,33 +1229,68 @@ class TestClaimCondenser:
 
     def test_condense_pass1_merges_groups(self):
         ledger = self._make_ledger_with_low_support()
+        claim_ids = [c.id for c in ledger._claims.values() if c.support_count < 2]
+        traits_ids = [
+            c.id
+            for c in ledger._claims.values()
+            if c.path.startswith("psychology/traits")
+        ]
+        emotional_id = next(
+            c.id
+            for c in ledger._claims.values()
+            if c.path.startswith("psychology/emotional")
+        )
         client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = json.dumps(
+
+        pass1_response = MagicMock()
+        pass1_response.text = json.dumps(
             [
                 {
                     "path": "psychology/traits/ocean/openness",
                     "text": "Uno combines curiosity with systematic thinking.",
+                    "source_ids": traits_ids,
                 }
             ]
         )
+        pass2_response = MagicMock()
+
+        call_count = 0
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return pass1_response
+            return pass2_response
 
         with patch(
             "build_emotional_profile.generate_with_retry",
-            return_value=mock_response,
+            side_effect=side_effect,
         ):
+            # Pass 2 will have 2 claims under "psychology" (the merged one + emotional),
+            # but the mock returns None-like empty for pass 2, so they stay.
+            pass2_response.text = json.dumps(
+                [
+                    {
+                        "path": "psychology/traits/ocean/openness",
+                        "text": "Uno combines curiosity with systematic thinking.",
+                        "source_ids": [claim_ids[0]],
+                    },
+                    {
+                        "path": "psychology/emotional/base_mood",
+                        "text": "Uno's default mood is calm analytical.",
+                        "source_ids": [emotional_id],
+                    },
+                ]
+            )
             condenser = ClaimCondenser(client, ledger, threshold=2)
             original, final = condenser.condense_all()
 
         assert original == 3
-        # The 2 psychology/traits claims merged into 1, the psychology/emotional
-        # singleton stays. After pass 2, the two psychology/* claims (both +1)
-        # get grouped again by 1 segment.
-        # But the mock always returns the same response, so pass 2 merges them
-        # into 1 claim with combined evidence from s1+s2+s3.
 
     def test_condense_preserves_above_threshold(self):
         ledger = self._make_ledger_with_low_support()
+        low_ids = [c.id for c in ledger._claims.values() if c.support_count < 2]
         client = MagicMock()
         mock_response = MagicMock()
         mock_response.text = json.dumps(
@@ -1162,6 +1298,7 @@ class TestClaimCondenser:
                 {
                     "path": "psychology/traits/ocean/openness",
                     "text": "Merged claim.",
+                    "source_ids": low_ids,
                 }
             ]
         )
@@ -1196,34 +1333,77 @@ class TestClaimCondenser:
         assert original == 3
         assert final == 3
 
-    def test_condensed_claims_inherit_evidence(self):
+    def test_condensed_claims_inherit_evidence_from_sources(self):
+        """Evidence is attributed per-claim based on source_ids, not pooled."""
         ledger = ClaimLedger()
-        ledger.add_claim(
+        c1 = ledger.add_claim(
             path="communication/voice/formality",
             text="Uno speaks formally.",
             scene_id="s1",
             justification="R1",
         )
-        ledger.add_claim(
+        c2 = ledger.add_claim(
             path="communication/voice/verbosity",
             text="Uno is concise.",
             scene_id="s2",
             justification="R2",
         )
+        c3 = ledger.add_claim(
+            path="communication/voice/tone",
+            text="Uno uses a dry tone.",
+            scene_id="s3",
+            justification="R3",
+        )
         client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = json.dumps(
+
+        def make_response(claims_json: list[dict]) -> MagicMock:
+            r = MagicMock()
+            r.text = json.dumps(claims_json)
+            return r
+
+        pass1_response = make_response(
             [
                 {
                     "path": "communication/voice/formality",
                     "text": "Uno speaks formally and concisely.",
-                }
+                    "source_ids": [c1.id, c2.id],
+                },
+                {
+                    "path": "communication/voice/tone",
+                    "text": "Uno uses a dry tone.",
+                    "source_ids": [c3.id],
+                },
             ]
         )
 
+        def side_effect(client, conversation, config):
+            prompt_text = conversation[0].parts[0].text
+            if "formally and concisely" in prompt_text:
+                new_ids = [
+                    c.id
+                    for c in ledger._claims.values()
+                    if c.text
+                    in ("Uno speaks formally and concisely.", "Uno uses a dry tone.")
+                ]
+                return make_response(
+                    [
+                        {
+                            "path": "communication/voice/formality",
+                            "text": "Uno speaks formally and concisely.",
+                            "source_ids": [new_ids[0]],
+                        },
+                        {
+                            "path": "communication/voice/tone",
+                            "text": "Uno uses a dry tone.",
+                            "source_ids": [new_ids[1]],
+                        },
+                    ]
+                )
+            return pass1_response
+
         with patch(
             "build_emotional_profile.generate_with_retry",
-            return_value=mock_response,
+            side_effect=side_effect,
         ):
             condenser = ClaimCondenser(client, ledger, threshold=3)
             condenser.condense_all()
@@ -1231,17 +1411,21 @@ class TestClaimCondenser:
         comm_claims = ledger.get_claims_by_section("communication").get(
             "communication", []
         )
-        assert len(comm_claims) == 1
-        assert comm_claims[0].text == "Uno speaks formally and concisely."
-        assert len(comm_claims[0].supporting) == 2
+        assert len(comm_claims) == 2
+        merged = next(c for c in comm_claims if "formally" in c.text)
+        separate = next(c for c in comm_claims if "dry tone" in c.text)
+        assert len(merged.supporting) == 2
+        assert {e.scene_id for e in merged.supporting} == {"s1", "s2"}
+        assert len(separate.supporting) == 1
+        assert separate.supporting[0].scene_id == "s3"
 
 
 # ============================================================================
-# SoulDocumentGenerator tentative formatting
+# SoulDocumentGenerator claim formatting
 # ============================================================================
 
 
-class TestTentativeFormatting:
+class TestClaimFormatting:
     def _make_ledger(self) -> ClaimLedger:
         ledger = ClaimLedger()
         # Above threshold (support=2)
@@ -1252,7 +1436,7 @@ class TestTentativeFormatting:
             justification="R1",
         )
         ledger.support_claim(claim_id=c1.id, scene_id="s2", justification="R2")
-        # Below threshold (support=1) -- tentative
+        # Below threshold (support=1)
         ledger.add_claim(
             path="identity/origin",
             text="Uno was created by Everett Ducklair",
@@ -1261,20 +1445,16 @@ class TestTentativeFormatting:
         )
         return ledger
 
-    def test_format_section_includes_tentative(self):
+    def test_format_section_excludes_below_threshold(self):
         ledger = self._make_ledger()
         client = MagicMock()
         gen = SoulDocumentGenerator(client, ledger, threshold=2)
         output = gen._format_section_claims("identity")
         assert "**Claim (support: +2):** Uno is an AI" in output
-        assert (
-            "**Claim (tentative, support: +1):** Uno was created by Everett Ducklair"
-            in output
-        )
+        assert "Uno was created by Everett Ducklair" not in output
 
     def test_format_section_excludes_zero_support(self):
         ledger = self._make_ledger()
-        # Add a claim and contradict it so support_count = 0
         c = ledger.add_claim(
             path="identity/names",
             text="Uno is called X",
@@ -1287,7 +1467,7 @@ class TestTentativeFormatting:
         output = gen._format_section_claims("identity")
         assert "Uno is called X" not in output
 
-    def test_vignettes_still_use_threshold(self):
+    def test_vignettes_use_threshold(self):
         ledger = self._make_ledger()
         client = MagicMock()
         gen = SoulDocumentGenerator(client, ledger, threshold=2)

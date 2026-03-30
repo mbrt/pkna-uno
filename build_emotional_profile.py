@@ -176,6 +176,7 @@ VALID_PATHS = {
     "capabilities/knowledge_boundaries/temporal",
     "capabilities/knowledge_boundaries/domain",
     "capabilities/knowledge_boundaries/forbidden",
+    "capabilities/never",
     # Behavior
     "behavior/does",
     "behavior/avoids",
@@ -201,21 +202,26 @@ RELATIONSHIP_SUB_PATHS = {
 
 
 def is_valid_claim_path(path: str) -> bool:
-    """Check whether a claim path is valid."""
-    section = path.split("/")[0]
+    """Check whether a claim path is valid.
+
+    Any path with a valid section and at least two segments is accepted.
+    VALID_PATHS serves as documentation of the suggested taxonomy, not an
+    exhaustive allowlist. Relationships keep stricter validation to enforce
+    the {name}/{sub_path} structure.
+    """
+    parts = path.split("/")
+    if len(parts) < 2:
+        return False
+    section = parts[0]
     if section not in VALID_SECTIONS:
         return False
     if section == "relationships":
-        parts = path.split("/")
-        # relationships/{name} or relationships/{name}/{sub_path}
         if len(parts) == 2:
             return True
         if len(parts) == 3 and parts[2] in RELATIONSHIP_SUB_PATHS:
             return True
         return False
-    if section == "vignettes":
-        return True
-    return path in VALID_PATHS
+    return True
 
 
 def count_tokens(text: str) -> int:
@@ -306,6 +312,18 @@ class Claim(BaseModel):
     @property
     def support_count(self) -> int:
         return len(self.supporting) - len(self.contradicting)
+
+
+class NegativeClaim(BaseModel):
+    path: str
+    text: str
+    source_claim_ids: list[int]
+
+
+class CondensedClaim(BaseModel):
+    path: str
+    text: str
+    source_ids: list[int]
 
 
 # ============================================================================
@@ -770,7 +788,7 @@ Self-Perception:
 - psychology/self_model/mortality: How he relates to shutdown/death
 
 Negative (what Uno would NEVER think/feel):
-- psychology/never
+- psychology/never (or psychology/{sub_path}/never for specific sub-domains)
 
 ### communication/ - How Uno speaks
 
@@ -802,7 +820,7 @@ Humor (central to Uno's character):
 - communication/humor/targets: What/who Uno jokes about
 
 Negative (what Uno would NEVER say):
-- communication/never
+- communication/never (or communication/{sub_path}/never for specific sub-domains)
 
 ### motivations/ - What drives Uno
 - motivations/core_drive
@@ -821,7 +839,7 @@ Negative (what Uno would NEVER say):
 ### behavior/ - Actions and habits
 - behavior/does: Positive behaviors, protocols, habits
 - behavior/avoids: Self-imposed constraints
-- behavior/never: Things Uno would NEVER do (strong negative claims)
+- behavior/never: Things Uno would NEVER do (or behavior/{sub_path}/never for specific sub-domains)
 - behavior/evolution: Behaviors that appear or disappear over the series
 - behavior/adaptation/by_audience: How behavior changes by interlocutor
 - behavior/adaptation/by_situation: How behavior changes in crisis vs. calm
@@ -1043,14 +1061,8 @@ def get_section_prompt(section: str, threshold: int) -> str:
 You MUST incorporate ALL claims provided. Every single claim represents evidence
 about this character and must be reflected in your output.
 
-Claims come in two kinds:
-- **Validated claims** (support >= {threshold}): These are well-established facts.
-  Present them as definitive statements.
-- **Tentative claims** (marked "tentative"): These have some evidence but are not
-  fully confirmed. Present them with hedging language such as "there is some evidence
-  that...", "possibly...", "in at least one instance...", or "it appears that...".
-  Do NOT skip tentative claims — include them, but clearly distinguish them from
-  validated ones.
+All claims provided have been validated with sufficient evidence. Present them as
+definitive statements.
 
 ## Output Format
 
@@ -1061,7 +1073,6 @@ Claims come in two kinds:
 - Italian quotes format: "Quote" (English translation)
 - Merge very similar claims into coherent prose rather than repeating
 - Be comprehensive — every claim must appear in the output
-- Present tentative claims with appropriate hedging, grouped after validated claims
 - Capture the character's distinctive voice and personality
 - Output ONLY the section content (starting with the ## heading), no preamble
 """
@@ -1124,32 +1135,23 @@ def get_claim_condensation_prompt() -> str:
     return """You condense multiple low-evidence character claims into fewer, broader claims.
 
 ## Task
-Given a group of related claims about a character, merge them into fewer claims that
-capture the combined insight. Each output claim should be a broader statement that
-subsumes the input claims it merges.
+Given a group of related claims about a character (each with an id), merge claims that
+genuinely overlap into broader statements. Each output claim must list the "source_ids"
+of the input claims it subsumes.
 
 ## Rules
-- Output a JSON array of objects, each with "path" and "text" fields.
+- Only merge claims that generalize to the same concept.
+  For example, "calm under pressure" and "deep loneliness" do NOT generalize together.
+  Keep them as separate claims even if both fall under "psychology/emotional".
+  Similarly, "uses computer terminology" and "adopts duck-centric idioms" are distinct
+  speech patterns that do not generalize: keep them separate.
 - The "path" should be the most appropriate path from the input claims.
-- Merge claims that overlap or describe facets of the same trait/behavior.
 - Preserve the most specific and distinctive insights — don't over-generalize.
 - Keep each claim concise: 1-3 sentences in English.
-- If two claims genuinely describe different things, keep them separate.
-- Output ONLY the JSON array, no preamble.
-- Produce FEWER claims than the input (that's the whole point).
-
-## Example
-
-Input claims:
-- [psychology/traits/ocean/openness] "Uno shows curiosity about human emotions." [+1]
-- [psychology/traits/ocean/openness] "Uno experiments with new approaches to problems." [+1]
-- [psychology/traits/ocean/conscientiousness] "Uno follows systematic procedures." [+1]
-
-Output:
-[
-  {"path": "psychology/traits/ocean/openness", "text": "Uno demonstrates high openness through curiosity about human emotions and willingness to experiment with new problem-solving approaches."},
-  {"path": "psychology/traits/ocean/conscientiousness", "text": "Uno follows systematic procedures."}
-]
+- "source_ids" must list the ids of the input claims that the output claim subsumes.
+  Every input claim id must appear in exactly one output claim's source_ids.
+- It is acceptable to return the same number of claims as the input if they are all
+  genuinely distinct. Reducing count is a goal, not a requirement.
 """
 
 
@@ -1157,29 +1159,24 @@ def get_claim_synthesis_negatives_prompt() -> str:
     return """You identify negative claims (things a character would NEVER do) from existing evidence.
 
 ## Task
-Given all existing claims about a character in a specific domain, identify what the
-character would NEVER do, say, or think in that domain. These are patterns that are
-conspicuously absent from the evidence — things that would be out of character.
+Given all existing claims about a character in a specific domain (each with an id),
+identify what the character would NEVER do, say, or think in that domain. These are
+patterns that are conspicuously absent from the evidence — things that would be out
+of character.
+
+For each negative claim, reference the source claim ids whose positive evidence
+supports the negative by inversion.
 
 ## Rules
-- Output a JSON array of objects, each with "path" and "text" fields.
+- "source_claim_ids" must contain the ids from the input claims that the negative
+  is derived from. Every negative MUST reference at least one source claim.
 - Each negative claim must be the INVERSE of well-supported positive evidence.
 - Be specific: "Uno never insults Paperinik's intelligence" not "Uno is never mean".
 - Only include claims that are strongly supported by the absence pattern.
-- Use the appropriate */never path for the domain being analyzed.
+- Use a */never or */{sub_path}/never path for the domain being analyzed.
+  For example: "behavior/never" for general behavioral negatives, or
+  "communication/humor/never" for humor-specific negatives.
 - Output 3-8 negative claims per domain. Fewer if the evidence is thin.
-- Output ONLY the JSON array, no preamble.
-
-## Example
-
-Domain: behavior
-Existing claims: "Uno monitors all tower systems continuously", "Uno provides tactical support during missions", "Uno uses humor to defuse tension"
-Output:
-[
-  {"path": "behavior/never", "text": "Uno never abandons his post or stops monitoring tower systems, even during personal crises."},
-  {"path": "behavior/never", "text": "Uno never withholds critical tactical information from Paperinik during missions, regardless of personal disagreements."},
-  {"path": "behavior/never", "text": "Uno never uses humor at the expense of someone who is genuinely suffering or in mortal danger."}
-]
 """
 
 
@@ -1614,6 +1611,8 @@ class ClaimSynthesizer:
             system_instruction=get_claim_synthesis_negatives_prompt(),
             temperature=0.5,
             top_p=0.95,
+            response_mime_type="application/json",
+            response_schema=list[NegativeClaim],
         )
 
     def _eligible_claims_for_reasoning(self) -> list[Claim]:
@@ -1676,14 +1675,14 @@ class ClaimSynthesizer:
 
         return enriched_count, failed_count
 
-    def _synthesize_negatives_for_section(self, section: str) -> list[dict[str, str]]:
+    def _synthesize_negatives_for_section(self, section: str) -> list[NegativeClaim]:
         claims_by_section = self._ledger.get_claims_by_section(section=section)
         claims = claims_by_section.get(section, [])
         if not claims:
             return []
 
         claims_summary = "\n".join(
-            f"- [{c.path}] {c.text} [+{c.support_count}]"
+            f"- [id={c.id}] [{c.path}] {c.text} [+{c.support_count}]"
             for c in claims
             if c.support_count >= self._threshold
         )
@@ -1711,13 +1710,38 @@ class ClaimSynthesizer:
             return []
 
         try:
-            negatives = json.loads(text)
-            if not isinstance(negatives, list):
-                return []
-            return negatives
-        except json.JSONDecodeError:
-            log.warning(f"Failed to parse negatives JSON for {section}: {text[:100]}")
+            return [NegativeClaim.model_validate(item) for item in json.loads(text)]
+        except (json.JSONDecodeError, ValueError) as e:
+            log.warning(f"Failed to parse negatives for {section}: {e}")
             return []
+
+    def _gather_source_evidence(
+        self, source_claim_ids: list[int]
+    ) -> list[SceneEvidence]:
+        """Collect scene evidence from source claims, reframing justifications."""
+        evidence: list[SceneEvidence] = []
+        seen_scenes: set[str] = set()
+
+        for claim_id in source_claim_ids:
+            source = self._ledger.get_claim(claim_id)
+            if source is None:
+                continue
+            source_label = f"Source claim #{claim_id} ('{source.text[:60]}...')"
+            for ev in source.supporting:
+                if ev.scene_id in seen_scenes:
+                    continue
+                seen_scenes.add(ev.scene_id)
+                evidence.append(
+                    SceneEvidence(
+                        scene_id=ev.scene_id,
+                        justification=(
+                            f"{source_label} demonstrates the positive pattern "
+                            f"that this negative claim inverts"
+                        ),
+                    )
+                )
+
+        return evidence
 
     def synthesize_negatives(self) -> int:
         total_added = 0
@@ -1725,24 +1749,36 @@ class ClaimSynthesizer:
         for section in _NEGATIVE_SECTIONS:
             negatives = self._synthesize_negatives_for_section(section)
             for neg in negatives:
-                path = neg.get("path", "")
-                text = neg.get("text", "")
-                if not path or not text:
+                if not neg.path or not neg.text:
                     continue
-                if not is_valid_claim_path(path):
-                    log.warning(f"Invalid negative claim path: {path}")
+                if not is_valid_claim_path(neg.path):
+                    log.warning(f"Invalid negative claim path: {neg.path}")
                     continue
 
-                try:
-                    self._ledger.add_claim(
-                        path=path,
-                        text=text,
-                        scene_id="synthesis",
-                        justification="Inferred from absence patterns across all scenes",
+                evidence = self._gather_source_evidence(neg.source_claim_ids)
+
+                if evidence:
+                    claim = Claim(
+                        id=self._ledger._next_id,
+                        text=neg.text,
+                        path=neg.path,
+                        supporting=evidence,
                     )
-                    total_added += 1
-                except ValueError as e:
-                    log.warning(f"Failed to add negative claim: {e}")
+                    self._ledger._claims[claim.id] = claim
+                    self._ledger._next_id += 1
+                else:
+                    try:
+                        self._ledger.add_claim(
+                            path=neg.path,
+                            text=neg.text,
+                            scene_id="synthesis",
+                            justification="Inferred from absence patterns across all scenes",
+                        )
+                    except ValueError as e:
+                        log.warning(f"Failed to add negative claim: {e}")
+                        continue
+
+                total_added += 1
 
         return total_added
 
@@ -1812,6 +1848,8 @@ class ClaimCondenser:
             system_instruction=get_claim_condensation_prompt(),
             temperature=0.3,
             top_p=0.95,
+            response_mime_type="application/json",
+            response_schema=list[CondensedClaim],
         )
 
     def _low_support_claims(self) -> list[Claim]:
@@ -1822,9 +1860,9 @@ class ClaimCondenser:
                     result.append(claim)
         return result
 
-    def _condense_group(self, claims: list[Claim]) -> list[dict[str, str]]:
+    def _condense_group(self, claims: list[Claim]) -> list[CondensedClaim]:
         claims_text = "\n".join(
-            f'- [{c.path}] "{c.text}" [+{c.support_count}]' for c in claims
+            f'- [id={c.id}] [{c.path}] "{c.text}" [+{c.support_count}]' for c in claims
         )
         prompt = f"Condense these related claims:\n{claims_text}"
         conversation: list[Content] = [
@@ -1841,12 +1879,9 @@ class ClaimCondenser:
             return []
 
         try:
-            condensed = json.loads(text)
-            if not isinstance(condensed, list):
-                return []
-            return condensed
-        except json.JSONDecodeError:
-            log.warning(f"Failed to parse condensation JSON: {text[:100]}")
+            return [CondensedClaim.model_validate(item) for item in json.loads(text)]
+        except (json.JSONDecodeError, ValueError) as e:
+            log.warning(f"Failed to parse condensation response: {e}")
             return []
 
     def _apply_condensation(self, claims: list[Claim], segments: int) -> list[Claim]:
@@ -1862,33 +1897,36 @@ class ClaimCondenser:
                 result.extend(group)
                 continue
 
-            condensed_dicts = self._condense_group(group)
-            if not condensed_dicts:
+            condensed = self._condense_group(group)
+            if not condensed:
                 result.extend(group)
                 continue
 
-            merged_evidence = _merge_evidence(group)
-            merged_quotes = _merge_quotes(group)
+            claims_by_id = {c.id: c for c in group}
 
             for orig in group:
                 self._ledger.remove_claim(orig.id)
 
-            for cd in condensed_dicts:
-                path = cd.get("path", "")
-                text = cd.get("text", "")
-                if not path or not text:
+            for cd in condensed:
+                if not cd.path or not cd.text:
                     continue
-                if not is_valid_claim_path(path):
-                    log.warning(f"Invalid condensed claim path: {path}")
+                if not is_valid_claim_path(cd.path):
+                    log.warning(f"Invalid condensed claim path: {cd.path}")
                     continue
+
+                sources = [
+                    claims_by_id[sid] for sid in cd.source_ids if sid in claims_by_id
+                ]
+                if not sources:
+                    sources = group
 
                 claim = Claim(
                     id=self._ledger._next_id,
-                    text=text,
-                    path=path,
-                    supporting=list(merged_evidence),
+                    text=cd.text,
+                    path=cd.path,
+                    supporting=_merge_evidence(sources),
                     contradicting=[],
-                    quotes=list(merged_quotes),
+                    quotes=_merge_quotes(sources),
                 )
                 self._ledger._claims[claim.id] = claim
                 self._ledger._next_id += 1
@@ -1896,7 +1934,7 @@ class ClaimCondenser:
 
             log.debug(
                 f"Condensed {len(group)} claims under '{prefix}' "
-                f"into {len(condensed_dicts)} claims"
+                f"into {len(condensed)} claims"
             )
 
         return result
@@ -1951,7 +1989,11 @@ class SoulDocumentGenerator:
 
     def _format_section_claims(self, section: str) -> str:
         claims_by_section = self._ledger.get_claims_by_section(section=section)
-        claims = [c for c in claims_by_section.get(section, []) if c.support_count > 0]
+        claims = [
+            c
+            for c in claims_by_section.get(section, [])
+            if c.support_count >= self._threshold
+        ]
         if not claims:
             return ""
 
@@ -1963,14 +2005,9 @@ class SoulDocumentGenerator:
         for path in sorted(by_path.keys()):
             lines.append(f"### Path: {path}")
             for claim in by_path[path]:
-                if claim.support_count >= self._threshold:
-                    lines.append(
-                        f"**Claim (support: +{claim.support_count}):** {claim.text}"
-                    )
-                else:
-                    lines.append(
-                        f"**Claim (tentative, support: +{claim.support_count}):** {claim.text}"
-                    )
+                lines.append(
+                    f"**Claim (support: +{claim.support_count}):** {claim.text}"
+                )
                 if claim.quotes:
                     for q in claim.quotes:
                         lines.append(f'  - "{q.text}" — {q.context}')
@@ -2009,12 +2046,8 @@ class SoulDocumentGenerator:
             claim_count = claims_text.count("- [")
         else:
             claim_count = claims_text.count("**Claim (")
-        tentative_count = claims_text.count("**Claim (tentative,")
 
-        log.info(
-            f"Section '{section}': generating from {claim_count} claims "
-            f"({tentative_count} tentative)"
-        )
+        log.info(f"Section '{section}': generating from {claim_count} claims")
 
         config = GenerateContentConfig(
             system_instruction=get_section_prompt(section, self._threshold),
@@ -2031,7 +2064,7 @@ class SoulDocumentGenerator:
         else:
             prompt = (
                 f"Generate the '{section}' section from the following "
-                f"{claim_count} claims ({tentative_count} tentative). "
+                f"{claim_count} claims. "
                 f"Every claim must be reflected in your output.\n\n"
                 f"{claims_text}"
             )
@@ -2332,16 +2365,7 @@ def run_document_generation(
             for c in claims
             if c.support_count >= threshold
         )
-        tentative = sum(
-            1
-            for claims in ledger.get_claims_by_section().values()
-            for c in claims
-            if 0 < c.support_count < threshold
-        )
-        console.print(
-            f"Claims: {validated} validated + {tentative} tentative "
-            f"/ {ledger.claim_count()} total"
-        )
+        console.print(f"Claims: {validated} validated / {ledger.claim_count()} total")
     else:
         console.print(
             f"\n[bold red]Soul document generation failed:[/bold red] {result}"
