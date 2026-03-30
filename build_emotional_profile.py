@@ -13,25 +13,33 @@ Compared to build_claim_ledger_profile.py (v11), this script:
 """
 
 import argparse
+import inspect
 import json
 import logging
+import os
 import random
+import re
 import time
+from abc import ABC, abstractmethod
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
+import anthropic
 import tiktoken
+from anthropic import AnthropicBedrock
+from anthropic.types import MessageParam, ToolParam
 from dotenv import load_dotenv
 from google import genai
 from google.genai.types import (
     Content,
     GenerateContentConfig,
-    GenerateContentResponse,
     HttpOptions,
     Part,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
@@ -52,7 +60,8 @@ log.setLevel(logging.DEBUG)
 
 
 # Settings
-MODEL_NAME = "gemini-3.1-pro-preview"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview"
+DEFAULT_ANTHROPIC_MODEL = "eu.anthropic.claude-sonnet-4-6"
 CHARACTER_NAME = "Uno"
 ENCODING_NAME = "cl100k_base"
 VERSION_TAG = "v12"
@@ -237,48 +246,383 @@ def path_str(path: Path) -> str:
     return str(rel_path)
 
 
-def generate_with_retry(
-    client: genai.Client,
-    conversation: list[Content],
-    config: GenerateContentConfig,
-) -> GenerateContentResponse | None:
+def _retry_with_backoff(
+    fn: Callable[[], Any],
+    is_retryable: Callable[[Exception], bool],
+) -> Any | None:
     backoff = INITIAL_BACKOFF_SECONDS
-
     for attempt in range(MAX_RETRIES):
         try:
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=conversation,  # type: ignore[arg-type]
-                config=config,
-            )
-            return response
+            return fn()
         except Exception as e:
-            error_str = str(e).lower()
-            is_timeout = "timeout" in error_str or "timed out" in error_str
-            is_rate_limited = (
-                "resource" in error_str and "exhausted" in error_str
-            ) or "429" in error_str
-            is_retryable = is_timeout or is_rate_limited
-
-            if not is_retryable:
+            if not is_retryable(e):
                 raise
-
             if attempt == MAX_RETRIES - 1:
                 log.error(f"Max retries ({MAX_RETRIES}) exceeded: {e}")
                 return None
-
             jitter = backoff * 0.25 * (2 * random.random() - 1)
             sleep_time = min(backoff + jitter, MAX_BACKOFF_SECONDS)
-
-            error_type = "Timeout" if is_timeout else "Resource exhausted"
             log.warning(
-                f"{error_type} (attempt {attempt + 1}/{MAX_RETRIES}), "
-                f"retrying in {sleep_time:.1f}s..."
+                f"Retryable error (attempt {attempt + 1}/{MAX_RETRIES}), "
+                f"retrying in {sleep_time:.1f}s: {e}"
             )
             time.sleep(sleep_time)
             backoff = min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF_SECONDS)
-
     return None
+
+
+# ============================================================================
+# LLM Backend Abstraction
+# ============================================================================
+
+
+class LLMBackend(ABC):
+    @abstractmethod
+    def generate(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        tools: list[Callable[..., str]] | None = None,
+        response_schema: type[BaseModel] | None = None,
+    ) -> str | None:
+        """Generate a response from the LLM.
+
+        Args:
+            system: System prompt.
+            messages: Conversation as [{"role": "user"|"assistant", "content": "..."}].
+            tools: Python callables the model may invoke. The backend runs the
+                tool-call loop internally and returns the final text.
+            response_schema: If set, constrain output to JSON matching this
+                Pydantic model's schema.
+        """
+        ...
+
+
+# ============================================================================
+# Gemini Backend
+# ============================================================================
+
+
+class GeminiBackend(LLMBackend):
+    def __init__(self, model: str):
+        self._model = model
+        self._client = genai.Client(
+            http_options=HttpOptions(timeout=API_TIMEOUT_SECONDS * 1000)
+        )
+
+    def generate(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        tools: list[Callable[..., str]] | None = None,
+        response_schema: type[BaseModel] | None = None,
+    ) -> str | None:
+        config_kwargs: dict[str, Any] = {
+            "system_instruction": system,
+            "temperature": 0.7,
+            "top_p": 0.95,
+        }
+        if tools:
+            config_kwargs["tools"] = tools
+        if response_schema:
+            config_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_schema"] = list[response_schema]
+
+        config = GenerateContentConfig(**config_kwargs)
+        conversation = [
+            Content(role=m["role"], parts=[Part.from_text(text=m["content"])])
+            for m in messages
+        ]
+
+        def _is_retryable(e: Exception) -> bool:
+            s = str(e).lower()
+            is_timeout = "timeout" in s or "timed out" in s
+            is_rate = ("resource" in s and "exhausted" in s) or "429" in s
+            return is_timeout or is_rate
+
+        def _call():
+            return self._client.models.generate_content(
+                model=self._model,
+                contents=conversation,
+                config=config,
+            )
+
+        response = _retry_with_backoff(_call, _is_retryable)
+        if response is None:
+            return None
+        return response.text or ""
+
+
+# ============================================================================
+# Anthropic Tool Schema Helpers
+# ============================================================================
+
+
+def _python_type_to_json_schema(annotation: Any) -> dict[str, Any]:
+    """Convert a Python type annotation to a JSON Schema fragment."""
+    if annotation is inspect.Parameter.empty or annotation is type(None):
+        return {"type": "string"}
+
+    origin = getattr(annotation, "__origin__", None)
+
+    # Handle Optional (X | None or Union[X, None])
+    if origin is type(None):
+        return {"type": "string"}
+    args = getattr(annotation, "__args__", None)
+    if args and type(None) in args:
+        non_none = [a for a in args if a is not type(None)]
+        if len(non_none) == 1:
+            base = _python_type_to_json_schema(non_none[0])
+            return {**base, "nullable": True}
+
+    if annotation is str:
+        return {"type": "string"}
+    if annotation is int:
+        return {"type": "integer"}
+    if annotation is float:
+        return {"type": "number"}
+    if annotation is bool:
+        return {"type": "boolean"}
+
+    if origin is list:
+        item_args = getattr(annotation, "__args__", None)
+        if item_args:
+            return {"type": "array", "items": _python_type_to_json_schema(item_args[0])}
+        return {"type": "array"}
+
+    return {"type": "string"}
+
+
+def _parse_google_docstring(docstring: str) -> tuple[str, dict[str, str]]:
+    """Parse a Google-style docstring into description and param descriptions."""
+    lines = docstring.strip().split("\n")
+    desc_lines: list[str] = []
+    param_descs: dict[str, str] = {}
+    in_args = False
+    current_param: str | None = None
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.lower().startswith("args:"):
+            in_args = True
+            continue
+        if stripped.lower().startswith("returns:"):
+            in_args = False
+            continue
+        if in_args:
+            match = re.match(r"^(\w+)\s*(?:\(.*?\))?:\s*(.+)", stripped)
+            if match:
+                current_param = match.group(1)
+                param_descs[current_param] = match.group(2).strip()
+            elif current_param and stripped:
+                param_descs[current_param] += " " + stripped
+        elif not in_args and not stripped.startswith("---"):
+            desc_lines.append(stripped)
+
+    description = " ".join(desc_lines).strip()
+    return description, param_descs
+
+
+def _callable_to_anthropic_tool(fn: Any) -> ToolParam:
+    """Convert a Python callable to an Anthropic tool definition dict."""
+    sig = inspect.signature(fn)
+    hints = dict(inspect.get_annotations(fn))
+    hints.pop("return", None)
+    docstring = inspect.getdoc(fn) or ""
+    description, param_descs = _parse_google_docstring(docstring)
+
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+
+    for name, param in sig.parameters.items():
+        if name == "self":
+            continue
+        annotation = hints.get(name, param.annotation)
+        schema = _python_type_to_json_schema(annotation)
+        if name in param_descs:
+            schema["description"] = param_descs[name]
+        properties[name] = schema
+
+        origin = getattr(annotation, "__origin__", None)
+        args = getattr(annotation, "__args__", None)
+        is_optional = args and type(None) in args
+        has_default = param.default is not inspect.Parameter.empty
+        if not is_optional and not has_default and origin is not type(None):
+            required.append(name)
+
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+    }
+    if required:
+        input_schema["required"] = required
+
+    return ToolParam(
+        name=fn.__name__,
+        description=description,
+        input_schema=input_schema,
+    )
+
+
+# ============================================================================
+# Anthropic (Bedrock) Backend
+# ============================================================================
+
+
+def _to_anthropic_messages(messages: list[dict[str, str]]) -> list[MessageParam]:
+    return [
+        MessageParam(role=m["role"], content=m["content"])  # type: ignore[typeddict-item]
+        for m in messages
+    ]
+
+
+class AnthropicBackend(LLMBackend):
+    def __init__(self, model: str):
+        self._model = model
+        self._client = AnthropicBedrock(
+            aws_access_key=os.getenv("AWS_ACCESS_KEY"),
+            aws_secret_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+            aws_region=os.getenv("AWS_REGION"),
+        )
+
+    def _is_retryable(self, e: Exception) -> bool:
+        if isinstance(e, anthropic.RateLimitError | anthropic.APITimeoutError):
+            return True
+        if isinstance(e, anthropic.APIStatusError) and e.status_code in (429, 529):
+            return True
+        return False
+
+    def generate(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        tools: list[Callable[..., str]] | None = None,
+        response_schema: type[BaseModel] | None = None,
+    ) -> str | None:
+        if tools:
+            return self._generate_with_tools(system, messages, tools)
+        if response_schema:
+            return self._generate_with_schema(system, messages, response_schema)
+        return self._generate_plain(system, messages)
+
+    def _generate_plain(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+    ) -> str | None:
+        api_messages = _to_anthropic_messages(messages)
+
+        def _call():
+            return self._client.messages.create(
+                model=self._model,
+                max_tokens=8192,
+                temperature=1.0,
+                system=system,
+                messages=api_messages,
+            )
+
+        response = _retry_with_backoff(_call, self._is_retryable)
+        if response is None:
+            return None
+        return self._extract_text(response)
+
+    def _generate_with_schema(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        schema: type[BaseModel],
+    ) -> str | None:
+        json_schema = TypeAdapter(list[schema]).json_schema()  # type: ignore[valid-type]
+        api_messages = _to_anthropic_messages(messages)
+
+        def _call():
+            return self._client.messages.create(
+                model=self._model,
+                max_tokens=8192,
+                temperature=1.0,
+                system=system,
+                messages=api_messages,
+                output_config={
+                    "format": {
+                        "type": "json_schema",
+                        "schema": json_schema,
+                    }
+                },
+            )
+
+        response = _retry_with_backoff(_call, self._is_retryable)
+        if response is None:
+            return None
+        return self._extract_text(response)
+
+    def _generate_with_tools(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        tools: list[Any],
+    ) -> str | None:
+        tool_defs = [_callable_to_anthropic_tool(fn) for fn in tools]
+        tool_map: dict[str, Any] = {fn.__name__: fn for fn in tools}
+
+        api_messages: list[MessageParam] = _to_anthropic_messages(messages)
+
+        for _ in range(MAX_TOOL_ITERATIONS):
+
+            def _call():
+                return self._client.messages.create(
+                    model=self._model,
+                    max_tokens=8192,
+                    temperature=1.0,
+                    system=system,
+                    messages=api_messages,
+                    tools=tool_defs,
+                )
+
+            response = _retry_with_backoff(_call, self._is_retryable)
+            if response is None:
+                return None
+
+            if response.stop_reason != "tool_use":
+                return self._extract_text(response)
+
+            api_messages.append(
+                MessageParam(role="assistant", content=response.content)
+            )
+
+            tool_results: list[dict[str, Any]] = []
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+                fn = tool_map.get(block.name)
+                if fn is None:
+                    result_text = f"Error: unknown tool '{block.name}'"
+                else:
+                    try:
+                        result_text = fn(**block.input)
+                    except Exception as e:
+                        result_text = f"Error: {e}"
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result_text,
+                    }
+                )
+
+            api_messages.append(
+                MessageParam(role="user", content=tool_results)  # type: ignore[typeddict-item]
+            )
+
+        log.warning("Max tool iterations reached")
+        return None
+
+    @staticmethod
+    def _extract_text(response: Any) -> str:
+        parts: list[str] = []
+        for block in response.content:
+            if hasattr(block, "text"):
+                parts.append(block.text)
+        return "\n".join(parts)
 
 
 # ============================================================================
@@ -1463,21 +1807,11 @@ class LedgerTools:
 
 
 class SceneProcessor:
-    def __init__(self, client: genai.Client, ledger: ClaimLedger):
-        self._client = client
+    def __init__(self, backend: LLMBackend, ledger: ClaimLedger):
+        self._backend = backend
         self._ledger = ledger
         self._tools = LedgerTools(ledger)
-        self._config = GenerateContentConfig(
-            system_instruction=get_scene_processing_prompt(),
-            temperature=0.7,
-            top_p=0.95,
-            tools=self._tools.all,
-        )
-
-    def _generate_with_retry(
-        self, conversation: list[Content]
-    ) -> GenerateContentResponse | None:
-        return generate_with_retry(self._client, conversation, self._config)
+        self._system = get_scene_processing_prompt()
 
     def process_scene(self, scene: Scene, scene_number: int) -> tuple[bool, str]:
         self._tools._current_scene_id = scene.scene_id
@@ -1490,16 +1824,18 @@ class SceneProcessor:
 
 Use list_claims() to see existing claims, then add supporting/contradicting evidence or new claims as appropriate. Pay attention to tone annotations and context dialogues for relationship and theory-of-mind evidence. When done, provide a brief one-line summary of your updates."""
 
-        conversation: list[Content] = [
-            Content(role="user", parts=[Part.from_text(text=scene_prompt)])
-        ]
+        messages = [{"role": "user", "content": scene_prompt}]
 
         try:
-            response = self._generate_with_retry(conversation)
-            if response is None:
+            result = self._backend.generate(
+                system=self._system,
+                messages=messages,
+                tools=self._tools.all,
+            )
+            if result is None:
                 return False, "API call failed after retries"
 
-            summary = response.text or "No summary provided"
+            summary = result or "No summary provided"
             self._ledger.add_scene(scene)
 
             log.info(f"Scene {scene_number}: {summary[:256]}...")
@@ -1516,16 +1852,10 @@ Use list_claims() to see existing claims, then add supporting/contradicting evid
 
 
 class ClaimRefiner:
-    def __init__(self, client: genai.Client, ledger: ClaimLedger):
-        self._client = client
+    def __init__(self, backend: LLMBackend, ledger: ClaimLedger):
+        self._backend = backend
         self._ledger = ledger
-        self._tools = LedgerTools(ledger)
-        self._config = GenerateContentConfig(
-            system_instruction=get_claim_refinement_prompt(),
-            temperature=0.3,
-            top_p=0.95,
-            tools=self._tools.all,
-        )
+        self._system = get_claim_refinement_prompt()
 
     def _find_contradicted_claims(self) -> list[Claim]:
         result = []
@@ -1538,15 +1868,13 @@ class ClaimRefiner:
     def refine_claim(self, claim: Claim) -> tuple[bool, str]:
         claim_detail = format_claims_detail(self._ledger, [claim.id])
         prompt = f"Refine this contradicted claim:\n\n{claim_detail}"
-        conversation: list[Content] = [
-            Content(role="user", parts=[Part.from_text(text=prompt)])
-        ]
+        messages = [{"role": "user", "content": prompt}]
 
-        response = generate_with_retry(self._client, conversation, self._config)
-        if response is None:
+        result = self._backend.generate(system=self._system, messages=messages)
+        if result is None:
             return False, "API call failed after retries"
 
-        refined_text = (response.text or "").strip()
+        refined_text = result.strip()
         if not refined_text:
             return False, "Empty response from LLM"
 
@@ -1598,22 +1926,12 @@ _NEGATIVE_SECTIONS = {"behavior", "communication", "psychology", "capabilities"}
 class ClaimSynthesizer:
     """Enriches claims with causal reasoning and adds negative/boundary claims."""
 
-    def __init__(self, client: genai.Client, ledger: ClaimLedger, threshold: int):
-        self._client = client
+    def __init__(self, backend: LLMBackend, ledger: ClaimLedger, threshold: int):
+        self._backend = backend
         self._ledger = ledger
         self._threshold = threshold
-        self._reasoning_config = GenerateContentConfig(
-            system_instruction=get_claim_synthesis_reasoning_prompt(),
-            temperature=0.3,
-            top_p=0.95,
-        )
-        self._negatives_config = GenerateContentConfig(
-            system_instruction=get_claim_synthesis_negatives_prompt(),
-            temperature=0.5,
-            top_p=0.95,
-            response_mime_type="application/json",
-            response_schema=list[NegativeClaim],
-        )
+        self._reasoning_system = get_claim_synthesis_reasoning_prompt()
+        self._negatives_system = get_claim_synthesis_negatives_prompt()
 
     def _eligible_claims_for_reasoning(self) -> list[Claim]:
         result = []
@@ -1631,17 +1949,15 @@ class ClaimSynthesizer:
             f"Enrich this claim with causal reasoning (add 'because...'):\n\n"
             f"{claim_detail}"
         )
-        conversation: list[Content] = [
-            Content(role="user", parts=[Part.from_text(text=prompt)])
-        ]
+        messages = [{"role": "user", "content": prompt}]
 
-        response = generate_with_retry(
-            self._client, conversation, self._reasoning_config
+        result = self._backend.generate(
+            system=self._reasoning_system, messages=messages
         )
-        if response is None:
+        if result is None:
             return False, "API call failed after retries"
 
-        enriched = (response.text or "").strip()
+        enriched = result.strip()
         if not enriched:
             return False, "Empty response from LLM"
 
@@ -1694,18 +2010,18 @@ class ClaimSynthesizer:
             f"Existing claims:\n{claims_summary}\n\n"
             f"Identify what this character would NEVER do/say/think in this domain."
         )
-        conversation: list[Content] = [
-            Content(role="user", parts=[Part.from_text(text=prompt)])
-        ]
+        messages = [{"role": "user", "content": prompt}]
 
-        response = generate_with_retry(
-            self._client, conversation, self._negatives_config
+        result = self._backend.generate(
+            system=self._negatives_system,
+            messages=messages,
+            response_schema=NegativeClaim,
         )
-        if response is None:
+        if result is None:
             log.warning(f"Failed to synthesize negatives for {section}")
             return []
 
-        text = (response.text or "").strip()
+        text = result.strip()
         if not text:
             return []
 
@@ -1840,17 +2156,11 @@ def _merge_quotes(claims: list[Claim]) -> list[Quote]:
 class ClaimCondenser:
     """Condenses low-support claims into fewer, broader claims via LLM merging."""
 
-    def __init__(self, client: genai.Client, ledger: ClaimLedger, threshold: int):
-        self._client = client
+    def __init__(self, backend: LLMBackend, ledger: ClaimLedger, threshold: int):
+        self._backend = backend
         self._ledger = ledger
         self._threshold = threshold
-        self._config = GenerateContentConfig(
-            system_instruction=get_claim_condensation_prompt(),
-            temperature=0.3,
-            top_p=0.95,
-            response_mime_type="application/json",
-            response_schema=list[CondensedClaim],
-        )
+        self._system = get_claim_condensation_prompt()
 
     def _low_support_claims(self) -> list[Claim]:
         result = []
@@ -1865,16 +2175,18 @@ class ClaimCondenser:
             f'- [id={c.id}] [{c.path}] "{c.text}" [+{c.support_count}]' for c in claims
         )
         prompt = f"Condense these related claims:\n{claims_text}"
-        conversation: list[Content] = [
-            Content(role="user", parts=[Part.from_text(text=prompt)])
-        ]
+        messages = [{"role": "user", "content": prompt}]
 
-        response = generate_with_retry(self._client, conversation, self._config)
-        if response is None:
+        result = self._backend.generate(
+            system=self._system,
+            messages=messages,
+            response_schema=CondensedClaim,
+        )
+        if result is None:
             log.warning("Failed to condense claim group")
             return []
 
-        text = (response.text or "").strip()
+        text = result.strip()
         if not text:
             return []
 
@@ -1982,8 +2294,8 @@ class ClaimCondenser:
 
 
 class SoulDocumentGenerator:
-    def __init__(self, client: genai.Client, ledger: ClaimLedger, threshold: int):
-        self._client = client
+    def __init__(self, backend: LLMBackend, ledger: ClaimLedger, threshold: int):
+        self._backend = backend
         self._ledger = ledger
         self._threshold = threshold
 
@@ -2049,11 +2361,7 @@ class SoulDocumentGenerator:
 
         log.info(f"Section '{section}': generating from {claim_count} claims")
 
-        config = GenerateContentConfig(
-            system_instruction=get_section_prompt(section, self._threshold),
-            temperature=0.7,
-            top_p=0.95,
-        )
+        system = get_section_prompt(section, self._threshold)
 
         if section == "vignettes":
             prompt = (
@@ -2069,15 +2377,13 @@ class SoulDocumentGenerator:
                 f"{claims_text}"
             )
 
-        conversation: list[Content] = [
-            Content(role="user", parts=[Part.from_text(text=prompt)])
-        ]
+        messages = [{"role": "user", "content": prompt}]
 
-        response = generate_with_retry(self._client, conversation, config)
-        if response is None:
+        result = self._backend.generate(system=system, messages=messages)
+        if result is None:
             return False, f"Generation failed for section '{section}'"
 
-        return True, response.text or ""
+        return True, result
 
     def generate(self) -> tuple[bool, str]:
         sections: list[str] = []
@@ -2146,7 +2452,7 @@ def find_latest_checkpoint() -> tuple[int, ClaimLedger] | None:
 # ============================================================================
 
 
-def run_claim_generation(client: genai.Client, max_scenes: int | None) -> ClaimLedger:
+def run_claim_generation(backend: LLMBackend, max_scenes: int | None) -> ClaimLedger:
     final_ledger_path = OUTPUT_DIR / "final_ledger.json"
 
     if final_ledger_path.exists():
@@ -2169,7 +2475,7 @@ def run_claim_generation(client: genai.Client, max_scenes: int | None) -> ClaimL
         checkpoint_num = 0
         log.info("Starting fresh")
 
-    processor = SceneProcessor(client, ledger)
+    processor = SceneProcessor(backend, ledger)
 
     log.info("Scanning for scenes containing Uno...")
     all_scenes: list[Scene] = []
@@ -2246,7 +2552,7 @@ def run_claim_generation(client: genai.Client, max_scenes: int | None) -> ClaimL
     return ledger
 
 
-def run_claim_refinement(client: genai.Client, ledger: ClaimLedger) -> ClaimLedger:
+def run_claim_refinement(backend: LLMBackend, ledger: ClaimLedger) -> ClaimLedger:
     refined_ledger_path = OUTPUT_DIR / "refined_ledger.json"
 
     if refined_ledger_path.exists():
@@ -2258,7 +2564,7 @@ def run_claim_refinement(client: genai.Client, ledger: ClaimLedger) -> ClaimLedg
         return ClaimLedger.from_json(data)
 
     console.print("\n[bold cyan]Refining contradicted claims...[/bold cyan]")
-    refiner = ClaimRefiner(client, ledger)
+    refiner = ClaimRefiner(backend, ledger)
     refined_count, failed_count = refiner.refine_all()
 
     if refined_count > 0 or failed_count > 0:
@@ -2274,7 +2580,7 @@ def run_claim_refinement(client: genai.Client, ledger: ClaimLedger) -> ClaimLedg
 
 
 def run_claim_synthesis(
-    client: genai.Client, ledger: ClaimLedger, threshold: int
+    backend: LLMBackend, ledger: ClaimLedger, threshold: int
 ) -> ClaimLedger:
     synthesized_ledger_path = OUTPUT_DIR / "synthesized_ledger.json"
 
@@ -2289,7 +2595,7 @@ def run_claim_synthesis(
     console.print(
         "\n[bold cyan]Synthesizing claims (reasoning + negatives)...[/bold cyan]"
     )
-    synthesizer = ClaimSynthesizer(client, ledger, threshold)
+    synthesizer = ClaimSynthesizer(backend, ledger, threshold)
     enriched, failed, negatives = synthesizer.synthesize_all()
 
     console.print(
@@ -2305,7 +2611,7 @@ def run_claim_synthesis(
 
 
 def run_claim_condensation(
-    client: genai.Client, ledger: ClaimLedger, threshold: int
+    backend: LLMBackend, ledger: ClaimLedger, threshold: int
 ) -> ClaimLedger:
     condensed_ledger_path = OUTPUT_DIR / "condensed_ledger.json"
 
@@ -2318,7 +2624,7 @@ def run_claim_condensation(
         return ClaimLedger.from_json(data)
 
     console.print("\n[bold cyan]Condensing low-support claims...[/bold cyan]")
-    condenser = ClaimCondenser(client, ledger, threshold)
+    condenser = ClaimCondenser(backend, ledger, threshold)
     original, final = condenser.condense_all()
 
     if original > 0:
@@ -2334,7 +2640,7 @@ def run_claim_condensation(
 
 
 def run_document_generation(
-    client: genai.Client, ledger: ClaimLedger, threshold: int
+    backend: LLMBackend, ledger: ClaimLedger, threshold: int
 ) -> None:
     soul_doc_path = OUTPUT_DIR / "uno_soul_document.md"
 
@@ -2344,7 +2650,7 @@ def run_document_generation(
 
     console.print("\n[bold cyan]Generating soul document...[/bold cyan]")
 
-    generator = SoulDocumentGenerator(client, ledger, threshold)
+    generator = SoulDocumentGenerator(backend, ledger, threshold)
     success, result = generator.generate()
 
     if success:
@@ -2372,6 +2678,14 @@ def run_document_generation(
         )
 
 
+def _create_backend(backend_name: str, model: str | None) -> LLMBackend:
+    if backend_name == "gemini":
+        return GeminiBackend(model=model or DEFAULT_GEMINI_MODEL)
+    if backend_name == "anthropic":
+        return AnthropicBackend(model=model or DEFAULT_ANTHROPIC_MODEL)
+    raise ValueError(f"Unknown backend: {backend_name}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build character profile using emotional claim ledger approach"
@@ -2388,6 +2702,18 @@ def main() -> None:
         default=CLAIM_SUPPORT_THRESHOLD,
         help=f"Minimum support count for claims in final document (default: {CLAIM_SUPPORT_THRESHOLD})",
     )
+    parser.add_argument(
+        "--backend",
+        choices=["gemini", "anthropic"],
+        default="gemini",
+        help="LLM backend to use (default: gemini)",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Override the default model for the selected backend",
+    )
     args = parser.parse_args()
 
     console.print(
@@ -2397,13 +2723,14 @@ def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    client = genai.Client(http_options=HttpOptions(timeout=API_TIMEOUT_SECONDS * 1000))
+    backend = _create_backend(args.backend, args.model)
+    console.print(f"Backend: {args.backend}, Model: {args.model or 'default'}")
 
-    ledger = run_claim_generation(client, args.max_scenes)
-    ledger = run_claim_refinement(client, ledger)
-    ledger = run_claim_synthesis(client, ledger, args.threshold)
-    ledger = run_claim_condensation(client, ledger, args.threshold)
-    run_document_generation(client, ledger, args.threshold)
+    ledger = run_claim_generation(backend, args.max_scenes)
+    ledger = run_claim_refinement(backend, ledger)
+    ledger = run_claim_synthesis(backend, ledger, args.threshold)
+    ledger = run_claim_condensation(backend, ledger, args.threshold)
+    run_document_generation(backend, ledger, args.threshold)
 
     console.print(f"\n[bold]Output directory:[/bold] {path_str(OUTPUT_DIR)}")
     console.print(f"Checkpoints: {path_str(CHECKPOINTS_DIR)}/")

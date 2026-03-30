@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 # Settings
 MODEL_NAME = "vertex_ai/claude-sonnet-4-6"
 VERSION = "v2"
-MAX_WORKERS = 1
+MAX_WORKERS = 4
 
 # Paths
 BASE_DIR = Path(__file__).parent
