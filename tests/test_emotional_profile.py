@@ -6,23 +6,20 @@ from collections.abc import Callable
 import pytest
 
 from build_emotional_profile import (
-    AnnotatedDialogue,
     ClaimCondenser,
     ClaimLedger,
     ClaimRefiner,
     ClaimSynthesizer,
-    LLMBackend,
-    Panel,
-    Scene,
     SoulDocumentGenerator,
     _group_claims_by_prefix,
     _merge_evidence,
     _path_prefix,
     format_claims_compact,
     format_claims_detail,
-    format_scene_view,
     is_valid_claim_path,
 )
+from llm_backends import LLMBackend
+from pkna_scenes import AnnotatedDialogue, Panel, Scene, format_scene_view
 from pydantic import BaseModel
 
 
@@ -938,7 +935,7 @@ class TestClaimSynthesizer:
 
 class TestSceneExtraction:
     def test_create_scene_from_panels_with_annotations(self):
-        from build_emotional_profile import _create_scene_from_panels
+        from pkna_scenes import _create_scene_from_panels
 
         raw_panels = [
             {
@@ -995,7 +992,7 @@ class TestSceneExtraction:
         assert "Paperinik" in scene.other_characters
 
     def test_create_scene_no_uno(self):
-        from build_emotional_profile import _create_scene_from_panels
+        from pkna_scenes import _create_scene_from_panels
 
         raw_panels = [
             {

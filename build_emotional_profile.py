@@ -13,36 +13,26 @@ Compared to build_claim_ledger_profile.py (v11), this script:
 """
 
 import argparse
-import inspect
 import json
 import logging
-import os
-import random
-import re
-import time
-from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Callable
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
-import anthropic
 import tiktoken
-from anthropic import AnthropicBedrock
-from anthropic.types import MessageParam, ToolParam
 from dotenv import load_dotenv
-from google import genai
-from google.genai.types import (
-    Content,
-    GenerateContentConfig,
-    HttpOptions,
-    Part,
-)
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
+
+from llm_backends import LLMBackend, create_backend
+from pkna_scenes import (
+    Scene,
+    extract_scenes_from_issue,
+    format_scene_view,
+    natural_sort_key,
+)
+from reflect_scenes import SceneReflection, load_reflections
 
 load_dotenv()
 
@@ -60,20 +50,10 @@ log.setLevel(logging.DEBUG)
 
 
 # Settings
-DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview"
-DEFAULT_ANTHROPIC_MODEL = "eu.anthropic.claude-sonnet-4-6"
 CHARACTER_NAME = "Uno"
 ENCODING_NAME = "cl100k_base"
-VERSION_TAG = "v12"
-MAX_TOOL_ITERATIONS = 64
+VERSION_TAG = "v13"
 CLAIM_SUPPORT_THRESHOLD = 2
-
-# Retry settings for API calls
-MAX_RETRIES = 5
-INITIAL_BACKOFF_SECONDS = 2.0
-MAX_BACKOFF_SECONDS = 60.0
-BACKOFF_MULTIPLIER = 2.0
-API_TIMEOUT_SECONDS = 300
 
 # Paths
 BASE_DIR = Path(__file__).parent
@@ -246,385 +226,6 @@ def path_str(path: Path) -> str:
     return str(rel_path)
 
 
-def _retry_with_backoff(
-    fn: Callable[[], Any],
-    is_retryable: Callable[[Exception], bool],
-) -> Any | None:
-    backoff = INITIAL_BACKOFF_SECONDS
-    for attempt in range(MAX_RETRIES):
-        try:
-            return fn()
-        except Exception as e:
-            if not is_retryable(e):
-                raise
-            if attempt == MAX_RETRIES - 1:
-                log.error(f"Max retries ({MAX_RETRIES}) exceeded: {e}")
-                return None
-            jitter = backoff * 0.25 * (2 * random.random() - 1)
-            sleep_time = min(backoff + jitter, MAX_BACKOFF_SECONDS)
-            log.warning(
-                f"Retryable error (attempt {attempt + 1}/{MAX_RETRIES}), "
-                f"retrying in {sleep_time:.1f}s: {e}"
-            )
-            time.sleep(sleep_time)
-            backoff = min(backoff * BACKOFF_MULTIPLIER, MAX_BACKOFF_SECONDS)
-    return None
-
-
-# ============================================================================
-# LLM Backend Abstraction
-# ============================================================================
-
-
-class LLMBackend(ABC):
-    @abstractmethod
-    def generate(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
-    ) -> str | None:
-        """Generate a response from the LLM.
-
-        Args:
-            system: System prompt.
-            messages: Conversation as [{"role": "user"|"assistant", "content": "..."}].
-            tools: Python callables the model may invoke. The backend runs the
-                tool-call loop internally and returns the final text.
-            response_schema: If set, constrain output to JSON matching this
-                Pydantic model's schema.
-        """
-        ...
-
-
-# ============================================================================
-# Gemini Backend
-# ============================================================================
-
-
-class GeminiBackend(LLMBackend):
-    def __init__(self, model: str):
-        self._model = model
-        self._client = genai.Client(
-            http_options=HttpOptions(timeout=API_TIMEOUT_SECONDS * 1000)
-        )
-
-    def generate(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
-    ) -> str | None:
-        config_kwargs: dict[str, Any] = {
-            "system_instruction": system,
-            "temperature": 0.7,
-            "top_p": 0.95,
-        }
-        if tools:
-            config_kwargs["tools"] = tools
-        if response_schema:
-            config_kwargs["response_mime_type"] = "application/json"
-            config_kwargs["response_schema"] = list[response_schema]
-
-        config = GenerateContentConfig(**config_kwargs)
-        conversation = [
-            Content(role=m["role"], parts=[Part.from_text(text=m["content"])])
-            for m in messages
-        ]
-
-        def _is_retryable(e: Exception) -> bool:
-            s = str(e).lower()
-            is_timeout = "timeout" in s or "timed out" in s
-            is_rate = ("resource" in s and "exhausted" in s) or "429" in s
-            return is_timeout or is_rate
-
-        def _call():
-            return self._client.models.generate_content(
-                model=self._model,
-                contents=conversation,
-                config=config,
-            )
-
-        response = _retry_with_backoff(_call, _is_retryable)
-        if response is None:
-            return None
-        return response.text or ""
-
-
-# ============================================================================
-# Anthropic Tool Schema Helpers
-# ============================================================================
-
-
-def _python_type_to_json_schema(annotation: Any) -> dict[str, Any]:
-    """Convert a Python type annotation to a JSON Schema fragment."""
-    if annotation is inspect.Parameter.empty or annotation is type(None):
-        return {"type": "string"}
-
-    origin = getattr(annotation, "__origin__", None)
-
-    # Handle Optional (X | None or Union[X, None])
-    if origin is type(None):
-        return {"type": "string"}
-    args = getattr(annotation, "__args__", None)
-    if args and type(None) in args:
-        non_none = [a for a in args if a is not type(None)]
-        if len(non_none) == 1:
-            base = _python_type_to_json_schema(non_none[0])
-            return {**base, "nullable": True}
-
-    if annotation is str:
-        return {"type": "string"}
-    if annotation is int:
-        return {"type": "integer"}
-    if annotation is float:
-        return {"type": "number"}
-    if annotation is bool:
-        return {"type": "boolean"}
-
-    if origin is list:
-        item_args = getattr(annotation, "__args__", None)
-        if item_args:
-            return {"type": "array", "items": _python_type_to_json_schema(item_args[0])}
-        return {"type": "array"}
-
-    return {"type": "string"}
-
-
-def _parse_google_docstring(docstring: str) -> tuple[str, dict[str, str]]:
-    """Parse a Google-style docstring into description and param descriptions."""
-    lines = docstring.strip().split("\n")
-    desc_lines: list[str] = []
-    param_descs: dict[str, str] = {}
-    in_args = False
-    current_param: str | None = None
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.lower().startswith("args:"):
-            in_args = True
-            continue
-        if stripped.lower().startswith("returns:"):
-            in_args = False
-            continue
-        if in_args:
-            match = re.match(r"^(\w+)\s*(?:\(.*?\))?:\s*(.+)", stripped)
-            if match:
-                current_param = match.group(1)
-                param_descs[current_param] = match.group(2).strip()
-            elif current_param and stripped:
-                param_descs[current_param] += " " + stripped
-        elif not in_args and not stripped.startswith("---"):
-            desc_lines.append(stripped)
-
-    description = " ".join(desc_lines).strip()
-    return description, param_descs
-
-
-def _callable_to_anthropic_tool(fn: Any) -> ToolParam:
-    """Convert a Python callable to an Anthropic tool definition dict."""
-    sig = inspect.signature(fn)
-    hints = dict(inspect.get_annotations(fn))
-    hints.pop("return", None)
-    docstring = inspect.getdoc(fn) or ""
-    description, param_descs = _parse_google_docstring(docstring)
-
-    properties: dict[str, Any] = {}
-    required: list[str] = []
-
-    for name, param in sig.parameters.items():
-        if name == "self":
-            continue
-        annotation = hints.get(name, param.annotation)
-        schema = _python_type_to_json_schema(annotation)
-        if name in param_descs:
-            schema["description"] = param_descs[name]
-        properties[name] = schema
-
-        origin = getattr(annotation, "__origin__", None)
-        args = getattr(annotation, "__args__", None)
-        is_optional = args and type(None) in args
-        has_default = param.default is not inspect.Parameter.empty
-        if not is_optional and not has_default and origin is not type(None):
-            required.append(name)
-
-    input_schema: dict[str, Any] = {
-        "type": "object",
-        "properties": properties,
-    }
-    if required:
-        input_schema["required"] = required
-
-    return ToolParam(
-        name=fn.__name__,
-        description=description,
-        input_schema=input_schema,
-    )
-
-
-# ============================================================================
-# Anthropic (Bedrock) Backend
-# ============================================================================
-
-
-def _to_anthropic_messages(messages: list[dict[str, str]]) -> list[MessageParam]:
-    return [
-        MessageParam(role=m["role"], content=m["content"])  # type: ignore[typeddict-item]
-        for m in messages
-    ]
-
-
-class AnthropicBackend(LLMBackend):
-    def __init__(self, model: str):
-        self._model = model
-        self._client = AnthropicBedrock(
-            aws_access_key=os.getenv("AWS_ACCESS_KEY"),
-            aws_secret_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-            aws_region=os.getenv("AWS_REGION"),
-        )
-
-    def _is_retryable(self, e: Exception) -> bool:
-        if isinstance(e, anthropic.RateLimitError | anthropic.APITimeoutError):
-            return True
-        if isinstance(e, anthropic.APIStatusError) and e.status_code in (429, 529):
-            return True
-        return False
-
-    def generate(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
-    ) -> str | None:
-        if tools:
-            return self._generate_with_tools(system, messages, tools)
-        if response_schema:
-            return self._generate_with_schema(system, messages, response_schema)
-        return self._generate_plain(system, messages)
-
-    def _generate_plain(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-    ) -> str | None:
-        api_messages = _to_anthropic_messages(messages)
-
-        def _call():
-            return self._client.messages.create(
-                model=self._model,
-                max_tokens=8192,
-                temperature=1.0,
-                system=system,
-                messages=api_messages,
-            )
-
-        response = _retry_with_backoff(_call, self._is_retryable)
-        if response is None:
-            return None
-        return self._extract_text(response)
-
-    def _generate_with_schema(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        schema: type[BaseModel],
-    ) -> str | None:
-        json_schema = TypeAdapter(list[schema]).json_schema()  # type: ignore[valid-type]
-        api_messages = _to_anthropic_messages(messages)
-
-        def _call():
-            return self._client.messages.create(
-                model=self._model,
-                max_tokens=8192,
-                temperature=1.0,
-                system=system,
-                messages=api_messages,
-                output_config={
-                    "format": {
-                        "type": "json_schema",
-                        "schema": json_schema,
-                    }
-                },
-            )
-
-        response = _retry_with_backoff(_call, self._is_retryable)
-        if response is None:
-            return None
-        return self._extract_text(response)
-
-    def _generate_with_tools(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Any],
-    ) -> str | None:
-        tool_defs = [_callable_to_anthropic_tool(fn) for fn in tools]
-        tool_map: dict[str, Any] = {fn.__name__: fn for fn in tools}
-
-        api_messages: list[MessageParam] = _to_anthropic_messages(messages)
-
-        for _ in range(MAX_TOOL_ITERATIONS):
-
-            def _call():
-                return self._client.messages.create(
-                    model=self._model,
-                    max_tokens=8192,
-                    temperature=1.0,
-                    system=system,
-                    messages=api_messages,
-                    tools=tool_defs,
-                )
-
-            response = _retry_with_backoff(_call, self._is_retryable)
-            if response is None:
-                return None
-
-            if response.stop_reason != "tool_use":
-                return self._extract_text(response)
-
-            api_messages.append(
-                MessageParam(role="assistant", content=response.content)
-            )
-
-            tool_results: list[dict[str, Any]] = []
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
-                fn = tool_map.get(block.name)
-                if fn is None:
-                    result_text = f"Error: unknown tool '{block.name}'"
-                else:
-                    try:
-                        result_text = fn(**block.input)
-                    except Exception as e:
-                        result_text = f"Error: {e}"
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result_text,
-                    }
-                )
-
-            api_messages.append(
-                MessageParam(role="user", content=tool_results)  # type: ignore[typeddict-item]
-            )
-
-        log.warning("Max tool iterations reached")
-        return None
-
-    @staticmethod
-    def _extract_text(response: Any) -> str:
-        parts: list[str] = []
-        for block in response.content:
-            if hasattr(block, "text"):
-                parts.append(block.text)
-        return "\n".join(parts)
-
-
 # ============================================================================
 # Pydantic Models for Claims
 # ============================================================================
@@ -668,204 +269,6 @@ class CondensedClaim(BaseModel):
     path: str
     text: str
     source_ids: list[int]
-
-
-# ============================================================================
-# Scene Data Structures (enriched for emotional extraction)
-# ============================================================================
-
-
-@dataclass
-class AnnotatedDialogue:
-    """A dialogue line with emotional annotations from extract_emotional."""
-
-    character: str
-    line: str
-    tone: str = "neutral"
-    speech_act: str = "informing"
-
-
-@dataclass
-class Panel:
-    """A single comic panel with its description, dialogues, and visual cues."""
-
-    description: str
-    dialogues: list[AnnotatedDialogue]
-    visual_cues: list[str] = field(default_factory=list)
-
-
-@dataclass
-class Scene:
-    """A scene from the comics containing Uno, with enriched emotional data."""
-
-    issue: str
-    page_numbers: list[int]
-    panels: list[Panel]
-    other_characters: set[str]
-
-    @property
-    def scene_id(self) -> str:
-        return f"{self.issue}_{self.page_numbers[0]}"
-
-    @property
-    def summary(self) -> str:
-        return " ".join(p.description for p in self.panels)
-
-    def to_context_string(self) -> str:
-        pages_str = ", ".join(f"page {p}" for p in self.page_numbers)
-        chars_str = (
-            ", ".join(sorted(self.other_characters))
-            if self.other_characters
-            else "none"
-        )
-        return (
-            f"Issue: {self.issue}, {pages_str}. Other characters present: {chars_str}"
-        )
-
-    def to_dict(self) -> dict:
-        return {
-            "issue": self.issue,
-            "page_numbers": self.page_numbers,
-            "panels": [
-                {
-                    "description": p.description,
-                    "dialogues": [
-                        {
-                            "character": d.character,
-                            "line": d.line,
-                            "tone": d.tone,
-                            "speech_act": d.speech_act,
-                        }
-                        for d in p.dialogues
-                    ],
-                    "visual_cues": p.visual_cues,
-                }
-                for p in self.panels
-            ],
-            "other_characters": list(self.other_characters),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "Scene":
-        panels = [
-            Panel(
-                description=p["description"],
-                dialogues=[AnnotatedDialogue(**d) for d in p["dialogues"]],
-                visual_cues=p.get("visual_cues", []),
-            )
-            for p in data["panels"]
-        ]
-        return cls(
-            issue=data["issue"],
-            page_numbers=data["page_numbers"],
-            panels=panels,
-            other_characters=set(data["other_characters"]),
-        )
-
-
-# ============================================================================
-# Scene Extraction from emotional output
-# ============================================================================
-
-
-@dataclass
-class _PanelAccumulator:
-    """Temporary accumulator for building scenes from panels."""
-
-    panels: list[dict] = field(default_factory=list)
-    pages: list[int] = field(default_factory=list)
-
-
-def extract_scenes_from_issue(issue_dir: Path) -> list[Scene]:
-    page_files = sorted(issue_dir.glob("page_*.json"))
-    scenes: list[Scene] = []
-    current = _PanelAccumulator()
-
-    for page_file in page_files:
-        page_num = int(page_file.stem.split("_")[1])
-
-        with open(page_file, encoding="utf-8") as f:
-            page_data = json.load(f)
-
-        panels = page_data.get("panels", [])
-        if not panels:
-            continue
-
-        for panel in panels:
-            if panel.get("is_new_scene", False) and current.panels:
-                scene = _create_scene_from_panels(
-                    issue_dir.name, current.pages, current.panels
-                )
-                if scene:
-                    scenes.append(scene)
-                current = _PanelAccumulator()
-
-            current.panels.append(panel)
-            if page_num not in current.pages:
-                current.pages.append(page_num)
-
-    if current.panels:
-        scene = _create_scene_from_panels(issue_dir.name, current.pages, current.panels)
-        if scene:
-            scenes.append(scene)
-
-    return scenes
-
-
-def _create_scene_from_panels(
-    issue: str, page_numbers: list[int], raw_panels: list[dict]
-) -> Scene | None:
-    """Create a Scene from panels, only if Uno is present."""
-    panels: list[Panel] = []
-    other_characters: set[str] = set()
-    has_uno = False
-
-    for raw in raw_panels:
-        desc = raw.get("description", "")
-        cues = [c for c in raw.get("visual_cues", []) if c]
-        dialogues: list[AnnotatedDialogue] = []
-
-        for dialogue in raw.get("dialogues", []):
-            character = dialogue.get("character", "").strip()
-            line = dialogue.get("line", "").strip()
-            if not character or not line:
-                continue
-
-            ad = AnnotatedDialogue(
-                character=character,
-                line=line,
-                tone=dialogue.get("tone", "neutral"),
-                speech_act=dialogue.get("speech_act", "informing"),
-            )
-            dialogues.append(ad)
-
-            if character.lower() == "uno":
-                has_uno = True
-            else:
-                other_characters.add(character)
-
-        panels.append(Panel(description=desc, dialogues=dialogues, visual_cues=cues))
-
-    if not has_uno:
-        return None
-
-    return Scene(
-        issue=issue,
-        page_numbers=page_numbers,
-        panels=panels,
-        other_characters=other_characters,
-    )
-
-
-def natural_sort_key(path: Path) -> tuple:
-    parts = path.name.split("-")
-    key: list[int | str] = []
-    for part in parts:
-        try:
-            key.append(int(part))
-        except ValueError:
-            key.append(part)
-    return tuple(key)
 
 
 # ============================================================================
@@ -1588,25 +991,6 @@ def format_claims_detail(ledger: ClaimLedger, claim_ids: list[int]) -> str:
     return "\n".join(lines)
 
 
-def format_scene_view(scene: Scene) -> str:
-    lines = [
-        f"Scene: {scene.scene_id}",
-        f"Issue: {scene.issue}, pages {'-'.join(map(str, scene.page_numbers))}",
-        f"Characters present: {', '.join(sorted(scene.other_characters)) if scene.other_characters else 'Uno only'}",
-    ]
-
-    for i, panel in enumerate(scene.panels, 1):
-        lines.append("")
-        lines.append(f"--- Panel {i} ---")
-        lines.append(f"[{panel.description}]")
-        if panel.visual_cues:
-            lines.append(f"Visual: {'; '.join(panel.visual_cues)}")
-        for d in panel.dialogues:
-            lines.append(f'{d.character}: "{d.line}" [{d.tone}, {d.speech_act}]')
-
-    return "\n".join(lines)
-
-
 # ============================================================================
 # LedgerTools
 # ============================================================================
@@ -1813,16 +1197,39 @@ class SceneProcessor:
         self._tools = LedgerTools(ledger)
         self._system = get_scene_processing_prompt()
 
-    def process_scene(self, scene: Scene, scene_number: int) -> tuple[bool, str]:
+    def process_scene(
+        self,
+        scene: Scene,
+        scene_number: int,
+        reflection: SceneReflection | None = None,
+    ) -> tuple[bool, str]:
         self._tools._current_scene_id = scene.scene_id
 
         panels_text = format_scene_view(scene)
 
-        scene_prompt = f"""Analyze this scene and update the claim ledger.
+        parts = ["Analyze this scene and update the claim ledger.\n"]
 
-{panels_text}
+        if reflection:
+            parts.append("## Emotional Context (from prior reflection)\n")
+            parts.append(f"**Emotional state:** {reflection.emotional_state}")
+            if reflection.emotional_shifts:
+                shifts = "; ".join(reflection.emotional_shifts)
+                parts.append(f"**Emotional shifts:** {shifts}")
+            parts.append(f"**Behavioral drivers:** {reflection.behavioral_drivers}")
+            parts.append(
+                f"**Relationship dynamics:** {reflection.relationship_dynamics}"
+            )
+            parts.append(f"**Subtext:** {reflection.subtext}")
+            parts.append(
+                "\nUse these observations as additional evidence when updating claims.\n"
+            )
 
-Use list_claims() to see existing claims, then add supporting/contradicting evidence or new claims as appropriate. Pay attention to tone annotations and context dialogues for relationship and theory-of-mind evidence. When done, provide a brief one-line summary of your updates."""
+        parts.append(panels_text)
+        parts.append(
+            "\nUse list_claims() to see existing claims, then add supporting/contradicting evidence or new claims as appropriate. Pay attention to tone annotations and context dialogues for relationship and theory-of-mind evidence. When done, provide a brief one-line summary of your updates."
+        )
+
+        scene_prompt = "\n".join(parts)
 
         messages = [{"role": "user", "content": scene_prompt}]
 
@@ -2477,6 +1884,10 @@ def run_claim_generation(backend: LLMBackend, max_scenes: int | None) -> ClaimLe
 
     processor = SceneProcessor(backend, ledger)
 
+    reflections = load_reflections()
+    if reflections:
+        log.info(f"Loaded {len(reflections)} scene reflections")
+
     log.info("Scanning for scenes containing Uno...")
     all_scenes: list[Scene] = []
     issue_dirs = sorted(
@@ -2518,7 +1929,8 @@ def run_claim_generation(backend: LLMBackend, max_scenes: int | None) -> ClaimLe
                         f"\nProcessing scene {i}/{len(unprocessed_scenes)}: {scene.scene_id}"
                     )
 
-                    success, summary = processor.process_scene(scene, i)
+                    reflection = reflections.get(scene.scene_id)
+                    success, summary = processor.process_scene(scene, i, reflection)
 
                     if success:
                         successful_count += 1
@@ -2678,14 +2090,6 @@ def run_document_generation(
         )
 
 
-def _create_backend(backend_name: str, model: str | None) -> LLMBackend:
-    if backend_name == "gemini":
-        return GeminiBackend(model=model or DEFAULT_GEMINI_MODEL)
-    if backend_name == "anthropic":
-        return AnthropicBackend(model=model or DEFAULT_ANTHROPIC_MODEL)
-    raise ValueError(f"Unknown backend: {backend_name}")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build character profile using emotional claim ledger approach"
@@ -2723,7 +2127,7 @@ def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    backend = _create_backend(args.backend, args.model)
+    backend = create_backend(args.backend, args.model)
     console.print(f"Backend: {args.backend}, Model: {args.model or 'default'}")
 
     ledger = run_claim_generation(backend, args.max_scenes)
