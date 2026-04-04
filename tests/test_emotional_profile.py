@@ -67,16 +67,13 @@ class TestPathValidation:
             "psychology/self_model/mortality",
             "psychology/moral_compass/value_hierarchy",
             "psychology/moral_compass/dilemma_patterns",
-            "psychology/never",
             "communication/humor/type",
             "communication/humor/timing",
             "communication/humor/targets",
             "communication/voice/register_shifts",
-            "communication/never",
             "capabilities/knowledge_boundaries/temporal",
             "capabilities/knowledge_boundaries/domain",
             "capabilities/knowledge_boundaries/forbidden",
-            "behavior/never",
             "behavior/evolution",
             "behavior/adaptation/by_audience",
             "behavior/adaptation/by_situation",
@@ -103,9 +100,6 @@ class TestPathValidation:
     @pytest.mark.parametrize(
         "path",
         [
-            "communication/humor/never",
-            "communication/intent/never",
-            "communication/style/never",
             "psychology/emotional/triggers/surprise",
             "psychology/nonexistent",
             "capabilities/new_category",
@@ -269,7 +263,6 @@ class TestClaimLedger:
         for path in [
             "psychology/growth/emotional_arc",
             "communication/humor/type",
-            "behavior/never",
             "capabilities/knowledge_boundaries/temporal",
             "psychology/self_model/identity_stance",
         ]:
@@ -279,7 +272,7 @@ class TestClaimLedger:
                 scene_id="pkna-0_1",
                 justification="Test",
             )
-        assert ledger.claim_count() == 5
+        assert ledger.claim_count() == 4
 
     def test_add_claim_relationship_sub_paths(self):
         ledger = ClaimLedger()
@@ -814,118 +807,15 @@ class TestClaimSynthesizer:
         assert enriched == 0
         assert failed == 2
 
-    def test_synthesize_negatives_success(self):
-        ledger = self._make_ledger()
-        negatives_json = json.dumps(
-            [
-                {
-                    "path": "behavior/never",
-                    "text": "Uno never abandons his post.",
-                    "source_claim_ids": [1],
-                },
-                {
-                    "path": "behavior/never",
-                    "text": "Uno never ignores a threat.",
-                    "source_claim_ids": [1],
-                },
-            ]
-        )
-        backend = MockBackend(negatives_json)
-        synthesizer = ClaimSynthesizer(backend, ledger, threshold=2)
-        added = synthesizer.synthesize_negatives()
-
-        assert added > 0
-
-        neg_claims = [
-            c
-            for c in ledger.get_claims_by_section("behavior").get("behavior", [])
-            if "never" in c.path
-        ]
-        assert len(neg_claims) > 0
-        for nc in neg_claims:
-            assert len(nc.supporting) > 0
-            scene_ids = {ev.scene_id for ev in nc.supporting}
-            assert scene_ids & {"pkna-0_1", "pkna-1_1"}
-            assert all("synthesis" != ev.scene_id for ev in nc.supporting)
-
-    def test_synthesize_negatives_fallback_empty_source_ids(self):
-        ledger = self._make_ledger()
-        negatives_json = json.dumps(
-            [
-                {
-                    "path": "behavior/never",
-                    "text": "Uno never gives up.",
-                    "source_claim_ids": [],
-                },
-            ]
-        )
-        backend = MockBackend(negatives_json)
-        synthesizer = ClaimSynthesizer(backend, ledger, threshold=2)
-        added = synthesizer.synthesize_negatives()
-
-        assert added > 0
-        neg_claims = [
-            c
-            for c in ledger.get_claims_by_section("behavior").get("behavior", [])
-            if c.text == "Uno never gives up."
-        ]
-        assert len(neg_claims) > 0
-        assert neg_claims[0].supporting[0].scene_id == "synthesis"
-
-    def test_synthesize_negatives_fallback_invalid_source_ids(self):
-        ledger = self._make_ledger()
-        negatives_json = json.dumps(
-            [
-                {
-                    "path": "behavior/never",
-                    "text": "Uno never panics.",
-                    "source_claim_ids": [999, 998],
-                },
-            ]
-        )
-        backend = MockBackend(negatives_json)
-        synthesizer = ClaimSynthesizer(backend, ledger, threshold=2)
-        added = synthesizer.synthesize_negatives()
-
-        assert added > 0
-        neg_claims = [
-            c
-            for c in ledger.get_claims_by_section("behavior").get("behavior", [])
-            if c.text == "Uno never panics."
-        ]
-        assert len(neg_claims) > 0
-        assert neg_claims[0].supporting[0].scene_id == "synthesis"
-
-    def test_synthesize_negatives_invalid_json(self):
-        ledger = self._make_ledger()
-        backend = MockBackend("not valid json")
-        synthesizer = ClaimSynthesizer(backend, ledger, threshold=2)
-        added = synthesizer.synthesize_negatives()
-
-        assert added == 0
-
     def test_synthesize_all(self):
         ledger = self._make_ledger()
         reasoning_text = "Enriched claim text because reasons."
-        negatives_json = json.dumps(
-            [
-                {
-                    "path": "behavior/never",
-                    "text": "Uno never gives up.",
-                    "source_claim_ids": [1],
-                },
-            ]
-        )
-        # First 2 calls are reasoning, then 4 calls are negatives (one per section)
-        responses: list[str] = [reasoning_text, reasoning_text]
-        responses.extend([negatives_json] * 4)
-        backend = MockBackend(responses)
+        backend = MockBackend([reasoning_text, reasoning_text])
         synthesizer = ClaimSynthesizer(backend, ledger, threshold=2)
-        enriched, failed, negatives = synthesizer.synthesize_all()
+        enriched, failed = synthesizer.synthesize_all()
 
         assert enriched == 2
         assert failed == 0
-        assert negatives > 0
 
 
 # ============================================================================

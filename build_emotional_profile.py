@@ -7,8 +7,8 @@ Compared to build_claim_ledger_profile.py (v11), this script:
 - Reads from extract-emotional/v2 (tone, speech_act, visual_cues per dialogue/panel)
 - Includes context dialogues from other characters in scenes
 - Expands the claim taxonomy with growth/arc, humor, self-model, theory-of-mind,
-  knowledge boundaries, negative claims, and situational adaptation paths
-- Adds a claim synthesis pass (causal reasoning + negative claims) after refinement
+  knowledge boundaries, and situational adaptation paths
+- Adds a claim synthesis pass (causal reasoning) after refinement
 - Generates experience vignettes as a soul document section
 """
 
@@ -127,8 +127,6 @@ VALID_PATHS = {
     "psychology/self_model/identity_stance",
     "psychology/self_model/agency",
     "psychology/self_model/mortality",
-    # Psychology - Negative
-    "psychology/never",
     # Communication - Voice
     "communication/voice/formality",
     "communication/voice/verbosity",
@@ -151,8 +149,6 @@ VALID_PATHS = {
     "communication/humor/type",
     "communication/humor/timing",
     "communication/humor/targets",
-    # Communication - Negative
-    "communication/never",
     # Motivations
     "motivations/core_drive",
     "motivations/goals/short_term",
@@ -165,11 +161,9 @@ VALID_PATHS = {
     "capabilities/knowledge_boundaries/temporal",
     "capabilities/knowledge_boundaries/domain",
     "capabilities/knowledge_boundaries/forbidden",
-    "capabilities/never",
     # Behavior
     "behavior/does",
     "behavior/avoids",
-    "behavior/never",
     "behavior/evolution",
     "behavior/adaptation/by_audience",
     "behavior/adaptation/by_situation",
@@ -257,12 +251,6 @@ class Claim(BaseModel):
     @property
     def support_count(self) -> int:
         return len(self.supporting) - len(self.contradicting)
-
-
-class NegativeClaim(BaseModel):
-    path: str
-    text: str
-    source_claim_ids: list[int]
 
 
 class CondensedClaim(BaseModel):
@@ -534,9 +522,6 @@ Self-Perception:
 - psychology/self_model/agency: Does he see himself as having free will?
 - psychology/self_model/mortality: How he relates to shutdown/death
 
-Negative (what Uno would NEVER think/feel):
-- psychology/never (or psychology/{sub_path}/never for specific sub-domains)
-
 ### communication/ - How Uno speaks
 
 Voice Style:
@@ -566,9 +551,6 @@ Humor (central to Uno's character):
 - communication/humor/timing: When humor is deployed (tension-breaking, deflection, affection-masking)
 - communication/humor/targets: What/who Uno jokes about
 
-Negative (what Uno would NEVER say):
-- communication/never (or communication/{sub_path}/never for specific sub-domains)
-
 ### motivations/ - What drives Uno
 - motivations/core_drive
 - motivations/goals/short_term
@@ -586,7 +568,6 @@ Negative (what Uno would NEVER say):
 ### behavior/ - Actions and habits
 - behavior/does: Positive behaviors, protocols, habits
 - behavior/avoids: Self-imposed constraints
-- behavior/never: Things Uno would NEVER do (or behavior/{sub_path}/never for specific sub-domains)
 - behavior/evolution: Behaviors that appear or disappear over the series
 - behavior/adaptation/by_audience: How behavior changes by interlocutor
 - behavior/adaptation/by_situation: How behavior changes in crisis vs. calm
@@ -667,9 +648,6 @@ How does Uno see himself? Does he consider himself alive? How does he relate to 
 [Claims from psychology/growth/* - emotional arc, relationship arc]
 How Uno evolves over the series, with issue references where available.
 
-### What Uno Would Never Think or Feel
-[Claims from psychology/never]
-
 Write flowing prose capturing psychological makeup with concrete examples.""",
     "communication": """## Communication Style
 
@@ -693,9 +671,6 @@ when he deploys them, and who/what he targets.
 
 ### Interaction Patterns
 [Claims from communication/interaction/* - dominance, turn-taking, emotional coloring]
-
-### What Uno Would Never Say
-[Claims from communication/never]
 
 List concrete examples with Italian quotes.""",
     "motivations": """## Motivations and Drives
@@ -736,9 +711,6 @@ Include specific examples from scenes.""",
 
 ### What Uno Avoids
 [Claims from behavior/avoids - self-imposed constraints]
-
-### What Uno Would NEVER Do
-[Claims from behavior/never - strong negative claims, protective boundaries]
 
 ### Behavioral Evolution
 [Claims from behavior/evolution - behaviors that appear or disappear over the series]
@@ -899,31 +871,6 @@ of the input claims it subsumes.
   Every input claim id must appear in exactly one output claim's source_ids.
 - It is acceptable to return the same number of claims as the input if they are all
   genuinely distinct. Reducing count is a goal, not a requirement.
-"""
-
-
-def get_claim_synthesis_negatives_prompt() -> str:
-    return """You identify negative claims (things a character would NEVER do) from existing evidence.
-
-## Task
-Given all existing claims about a character in a specific domain (each with an id),
-identify what the character would NEVER do, say, or think in that domain. These are
-patterns that are conspicuously absent from the evidence — things that would be out
-of character.
-
-For each negative claim, reference the source claim ids whose positive evidence
-supports the negative by inversion.
-
-## Rules
-- "source_claim_ids" must contain the ids from the input claims that the negative
-  is derived from. Every negative MUST reference at least one source claim.
-- Each negative claim must be the INVERSE of well-supported positive evidence.
-- Be specific: "Uno never insults Paperinik's intelligence" not "Uno is never mean".
-- Only include claims that are strongly supported by the absence pattern.
-- Use a */never or */{sub_path}/never path for the domain being analyzed.
-  For example: "behavior/never" for general behavioral negatives, or
-  "communication/humor/never" for humor-specific negatives.
-- Output 3-8 negative claims per domain. Fewer if the evidence is thin.
 """
 
 
@@ -1326,9 +1273,6 @@ class ClaimRefiner:
 # Sections whose claims are eligible for causal reasoning enrichment
 _REASONING_SECTIONS = {"behavior", "communication", "relationships"}
 
-# Sections that get negative claim synthesis
-_NEGATIVE_SECTIONS = {"behavior", "communication", "psychology", "capabilities"}
-
 
 class ClaimSynthesizer:
     """Enriches claims with causal reasoning and adds negative/boundary claims."""
@@ -1338,7 +1282,6 @@ class ClaimSynthesizer:
         self._ledger = ledger
         self._threshold = threshold
         self._reasoning_system = get_claim_synthesis_reasoning_prompt()
-        self._negatives_system = get_claim_synthesis_negatives_prompt()
 
     def _eligible_claims_for_reasoning(self) -> list[Claim]:
         result = []
@@ -1398,122 +1341,13 @@ class ClaimSynthesizer:
 
         return enriched_count, failed_count
 
-    def _synthesize_negatives_for_section(self, section: str) -> list[NegativeClaim]:
-        claims_by_section = self._ledger.get_claims_by_section(section=section)
-        claims = claims_by_section.get(section, [])
-        if not claims:
-            return []
-
-        claims_summary = "\n".join(
-            f"- [id={c.id}] [{c.path}] {c.text} [+{c.support_count}]"
-            for c in claims
-            if c.support_count >= self._threshold
-        )
-        if not claims_summary:
-            return []
-
-        prompt = (
-            f"Domain: {section}\n"
-            f"Existing claims:\n{claims_summary}\n\n"
-            f"Identify what this character would NEVER do/say/think in this domain."
-        )
-        messages = [{"role": "user", "content": prompt}]
-
-        result = self._backend.generate(
-            system=self._negatives_system,
-            messages=messages,
-            response_schema=NegativeClaim,
-        )
-        if result is None:
-            log.warning(f"Failed to synthesize negatives for {section}")
-            return []
-
-        text = result.strip()
-        if not text:
-            return []
-
-        try:
-            return [NegativeClaim.model_validate(item) for item in json.loads(text)]
-        except (json.JSONDecodeError, ValueError) as e:
-            log.warning(f"Failed to parse negatives for {section}: {e}")
-            return []
-
-    def _gather_source_evidence(
-        self, source_claim_ids: list[int]
-    ) -> list[SceneEvidence]:
-        """Collect scene evidence from source claims, reframing justifications."""
-        evidence: list[SceneEvidence] = []
-        seen_scenes: set[str] = set()
-
-        for claim_id in source_claim_ids:
-            source = self._ledger.get_claim(claim_id)
-            if source is None:
-                continue
-            source_label = f"Source claim #{claim_id} ('{source.text[:60]}...')"
-            for ev in source.supporting:
-                if ev.scene_id in seen_scenes:
-                    continue
-                seen_scenes.add(ev.scene_id)
-                evidence.append(
-                    SceneEvidence(
-                        scene_id=ev.scene_id,
-                        justification=(
-                            f"{source_label} demonstrates the positive pattern "
-                            f"that this negative claim inverts"
-                        ),
-                    )
-                )
-
-        return evidence
-
-    def synthesize_negatives(self) -> int:
-        total_added = 0
-
-        for section in _NEGATIVE_SECTIONS:
-            negatives = self._synthesize_negatives_for_section(section)
-            for neg in negatives:
-                if not neg.path or not neg.text:
-                    continue
-                if not is_valid_claim_path(neg.path):
-                    log.warning(f"Invalid negative claim path: {neg.path}")
-                    continue
-
-                evidence = self._gather_source_evidence(neg.source_claim_ids)
-
-                if evidence:
-                    claim = Claim(
-                        id=self._ledger._next_id,
-                        text=neg.text,
-                        path=neg.path,
-                        supporting=evidence,
-                    )
-                    self._ledger._claims[claim.id] = claim
-                    self._ledger._next_id += 1
-                else:
-                    try:
-                        self._ledger.add_claim(
-                            path=neg.path,
-                            text=neg.text,
-                            scene_id="synthesis",
-                            justification="Inferred from absence patterns across all scenes",
-                        )
-                    except ValueError as e:
-                        log.warning(f"Failed to add negative claim: {e}")
-                        continue
-
-                total_added += 1
-
-        return total_added
-
-    def synthesize_all(self) -> tuple[int, int, int]:
-        """Run both synthesis passes.
+    def synthesize_all(self) -> tuple[int, int]:
+        """Run causal reasoning enrichment on eligible claims.
 
         Returns:
-            Tuple of (enriched_count, enrichment_failures, negatives_added).
+            Tuple of (enriched_count, enrichment_failures).
         """
-        enriched, failed = self.synthesize_reasoning()
-        negatives = self.synthesize_negatives()
-        return enriched, failed, negatives
+        return self.synthesize_reasoning()
 
 
 # ============================================================================
@@ -2004,16 +1838,11 @@ def run_claim_synthesis(
             data = json.load(f)
         return ClaimLedger.from_json(data)
 
-    console.print(
-        "\n[bold cyan]Synthesizing claims (reasoning + negatives)...[/bold cyan]"
-    )
+    console.print("\n[bold cyan]Synthesizing claims (causal reasoning)...[/bold cyan]")
     synthesizer = ClaimSynthesizer(backend, ledger, threshold)
-    enriched, failed, negatives = synthesizer.synthesize_all()
+    enriched, failed = synthesizer.synthesize_all()
 
-    console.print(
-        f"Reasoning: {enriched} enriched, {failed} failed. "
-        f"Negatives: {negatives} added."
-    )
+    console.print(f"Reasoning: {enriched} enriched, {failed} failed.")
 
     with open(synthesized_ledger_path, "w", encoding="utf-8") as f:
         json.dump(ledger.to_json(), f, ensure_ascii=False, indent=2)
