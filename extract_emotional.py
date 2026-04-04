@@ -54,6 +54,12 @@ TONE_VALUES = (
     "affectionate",
     "humorous",
     "urgent",
+    "anxious",
+    "desperate",
+    "defiant",
+    "resigned",
+    "hopeful",
+    "contemptuous",
 )
 
 SPEECH_ACT_VALUES = (
@@ -65,6 +71,9 @@ SPEECH_ACT_VALUES = (
     "warning",
     "questioning",
     "narrating",
+    "reassuring",
+    "pleading",
+    "taunting",
 )
 
 Tone = Literal[
@@ -78,6 +87,12 @@ Tone = Literal[
     "affectionate",
     "humorous",
     "urgent",
+    "anxious",
+    "desperate",
+    "defiant",
+    "resigned",
+    "hopeful",
+    "contemptuous",
 ]
 
 SpeechAct = Literal[
@@ -89,6 +104,9 @@ SpeechAct = Literal[
     "warning",
     "questioning",
     "narrating",
+    "reassuring",
+    "pleading",
+    "taunting",
 ]
 
 # Global progress bar
@@ -112,6 +130,8 @@ def configure_lm() -> None:
         max_tokens=60000,
     )
     dspy.configure(lm=lm, track_usage=True)
+    # Check LM connectivity with a test call
+    lm("Test")
 
 
 # ============================================================================
