@@ -12,7 +12,6 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 import dspy
 from dotenv import load_dotenv
@@ -76,38 +75,6 @@ SPEECH_ACT_VALUES = (
     "taunting",
 )
 
-Tone = Literal[
-    "neutral",
-    "sarcastic",
-    "concerned",
-    "playful",
-    "authoritative",
-    "melancholic",
-    "angry",
-    "affectionate",
-    "humorous",
-    "urgent",
-    "anxious",
-    "desperate",
-    "defiant",
-    "resigned",
-    "hopeful",
-    "contemptuous",
-]
-
-SpeechAct = Literal[
-    "informing",
-    "joking",
-    "commanding",
-    "deflecting",
-    "comforting",
-    "warning",
-    "questioning",
-    "narrating",
-    "reassuring",
-    "pleading",
-    "taunting",
-]
 
 # Global progress bar
 PROGRESS = Progress(
@@ -144,16 +111,20 @@ class DialogueLine(BaseModel):
 
     character: str = Field(description="The name of the character speaking the line.")
     line: str = Field(description="The dialogue line spoken by the character.")
-    tone: Tone = Field(
+    tone: str = Field(
         default="neutral",
         description=(
             "The emotional tone of this dialogue line, inferred from the character's "
-            "expression, the speech bubble shape, and the surrounding context."
+            "expression, the speech bubble shape, and the surrounding context. "
+            f"Suggested values: {', '.join(TONE_VALUES)}."
         ),
     )
-    speech_act: SpeechAct = Field(
+    speech_act: str = Field(
         default="informing",
-        description="The pragmatic function of this dialogue line.",
+        description=(
+            "The pragmatic function of this dialogue line. "
+            f"Suggested values: {', '.join(SPEECH_ACT_VALUES)}."
+        ),
     )
 
 

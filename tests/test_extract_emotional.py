@@ -3,9 +3,6 @@
 import json
 from pathlib import Path
 
-import pytest
-from pydantic import ValidationError
-
 from extract_emotional import (
     SPEECH_ACT_VALUES,
     TONE_VALUES,
@@ -35,13 +32,13 @@ class TestDialogueLine:
             dl = DialogueLine(character="Uno", line="test", speech_act=sa)
             assert dl.speech_act == sa
 
-    def test_invalid_tone_rejected(self):
-        with pytest.raises(ValidationError):
-            DialogueLine(character="Uno", line="test", tone="excited")  # type: ignore[arg-type]
+    def test_noncanonical_tone_accepted(self):
+        dl = DialogueLine(character="Uno", line="test", tone="excited")
+        assert dl.tone == "excited"
 
-    def test_invalid_speech_act_rejected(self):
-        with pytest.raises(ValidationError):
-            DialogueLine(character="Uno", line="test", speech_act="singing")  # type: ignore[arg-type]
+    def test_noncanonical_speech_act_accepted(self):
+        dl = DialogueLine(character="Uno", line="test", speech_act="singing")
+        assert dl.speech_act == "singing"
 
     def test_full_construction(self):
         dl = DialogueLine(
