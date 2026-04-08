@@ -25,7 +25,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 
-from llm_backends import LLMBackend, create_backend
+from llm_backends import GenerateResult, LLMBackend, create_backend
 from pkna_scenes import (
     Scene,
     extract_scenes_from_issue,
@@ -270,12 +270,25 @@ class ClaimLedger:
         self._next_id: int = 1
         self._processed_scene_ids: set[str] = set()
         self._scene_cache: dict[str, Scene] = {}
+        self._meta: dict = {"model_name": None, "lm_usage": {}}
+
+    def accumulate_usage(self, result: GenerateResult) -> None:
+        if self._meta["model_name"] is None:
+            self._meta["model_name"] = result.model_name
+        for key, value in result.usage.items():
+            if isinstance(value, int | float):
+                self._meta["lm_usage"][key] = self._meta["lm_usage"].get(key, 0) + value
+
+    @property
+    def meta(self) -> dict:
+        return self._meta
 
     def to_json(self) -> dict:
         return {
             "next_id": self._next_id,
             "claims": {str(k): v.model_dump() for k, v in self._claims.items()},
             "processed_scene_ids": sorted(self._processed_scene_ids),
+            "meta": self._meta,
         }
 
     @classmethod
@@ -286,6 +299,7 @@ class ClaimLedger:
             int(k): Claim.model_validate(v) for k, v in data.get("claims", {}).items()
         }
         ledger._processed_scene_ids = set(data.get("processed_scene_ids", []))
+        ledger._meta = data.get("meta", {"model_name": None, "lm_usage": {}})
         return ledger
 
     def add_scene(self, scene: Scene) -> None:
@@ -1167,6 +1181,7 @@ class SceneProcessor:
                 f"**Relationship dynamics:** {reflection.relationship_dynamics}"
             )
             parts.append(f"**Subtext:** {reflection.subtext}")
+            parts.append(f"**Reasoning:** {reflection.reasoning}")
             parts.append(
                 "\nUse these observations as additional evidence when updating claims.\n"
             )
@@ -1189,6 +1204,7 @@ class SceneProcessor:
             if result is None:
                 return False, "API call failed after retries"
 
+            self._ledger.accumulate_usage(result)
             summary = result.text or "No summary provided"
             self._ledger.add_scene(scene)
 
@@ -1228,6 +1244,7 @@ class ClaimRefiner:
         if result is None:
             return False, "API call failed after retries"
 
+        self._ledger.accumulate_usage(result)
         refined_text = result.text.strip()
         if not refined_text:
             return False, "Empty response from LLM"
@@ -1307,6 +1324,7 @@ class ClaimSynthesizer:
         if result is None:
             return False, "API call failed after retries"
 
+        self._ledger.accumulate_usage(result)
         enriched = result.text.strip()
         if not enriched:
             return False, "Empty response from LLM"
@@ -1427,6 +1445,7 @@ class ClaimCondenser:
             log.warning("Failed to condense claim group")
             return []
 
+        self._ledger.accumulate_usage(result)
         text = result.text.strip()
         if not text:
             return []
@@ -1624,6 +1643,7 @@ class SoulDocumentGenerator:
         if result is None:
             return False, f"Generation failed for section '{section}'"
 
+        self._ledger.accumulate_usage(result)
         return True, result.text
 
     def generate(self) -> tuple[bool, str]:

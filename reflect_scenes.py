@@ -65,6 +65,7 @@ PROGRESS = Progress(
 
 
 class SceneReflection(BaseModel):
+    reasoning: str
     scene_id: str
     emotional_state: str
     emotional_shifts: list[str]
@@ -360,6 +361,10 @@ For inspiration, here is a broad palette of emotion concepts to draw from. You a
 not limited to these -- use nuanced, blended descriptions -- but they may help you \
 be more specific:
 {", ".join(EMOTION_CONCEPTS)}
+
+In the **reasoning** field, provide a brief justification of why you reached the \
+conclusions in the other fields -- the high-level interpretive rationale, not a \
+repetition of scene evidence.
 
 Ground every observation in specific evidence from the scene (dialogue lines, tones, \
 visual cues). Do not speculate beyond what the scene supports.

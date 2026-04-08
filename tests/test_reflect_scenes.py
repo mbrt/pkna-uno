@@ -85,6 +85,7 @@ def _make_scene(issue: str = "pkna-3", pages: list[int] | None = None) -> Scene:
 class TestSceneReflection:
     def test_model_fields(self):
         r = SceneReflection(
+            reasoning="Uno's tone shifts from playful to serious as the threat escalates",
             scene_id="pkna-0_28",
             emotional_state="calm but alert",
             emotional_shifts=["calm -> tense when alarm sounds"],
@@ -95,9 +96,11 @@ class TestSceneReflection:
         assert r.scene_id == "pkna-0_28"
         assert len(r.emotional_shifts) == 1
         assert "Protective" in r.behavioral_drivers
+        assert "tone shifts" in r.reasoning
 
     def test_serialization_roundtrip(self):
         r = SceneReflection(
+            reasoning="Isolation from Everett drives underlying anxiety",
             scene_id="pkna-1_10",
             emotional_state="anxious",
             emotional_shifts=[],
@@ -231,6 +234,7 @@ class TestGetSceneEventIndex:
 class TestSceneReflector:
     def _make_reflection_json(self, **overrides: str) -> str:
         base = {
+            "reasoning": "Playful greeting masks underlying vigilance about the mission",
             "scene_id": "pkna-3_45",
             "emotional_state": "playful but alert",
             "emotional_shifts": ["relaxed -> engaged"],
@@ -252,6 +256,7 @@ class TestSceneReflector:
         assert result.reflection.scene_id == "pkna-3_45"
         assert "playful" in result.reflection.emotional_state
         assert len(result.reflection.emotional_shifts) == 1
+        assert result.reflection.reasoning
         assert result.meta["model_name"] == MOCK_MODEL
 
     def test_prompt_includes_context(self):
@@ -320,6 +325,7 @@ class TestLoadReflections:
         issue_dir.mkdir()
 
         r1 = SceneReflection(
+            reasoning="Duty-driven calm in a stable scene",
             scene_id="pkna-0_28",
             emotional_state="calm",
             emotional_shifts=[],
@@ -331,6 +337,7 @@ class TestLoadReflections:
             json.dump(r1.model_dump(), f)
 
         r2 = SceneReflection(
+            reasoning="Threat triggers protective instinct",
             scene_id="pkna-0_33",
             emotional_state="tense",
             emotional_shifts=["calm -> tense"],
@@ -352,6 +359,7 @@ class TestLoadReflections:
         issue_dir.mkdir()
 
         data = {
+            "reasoning": "Duty-driven calm in a stable scene",
             "scene_id": "pkna-0_28",
             "emotional_state": "calm",
             "emotional_shifts": [],
@@ -378,6 +386,7 @@ class TestLoadReflections:
             f.write("not json")
 
         r = SceneReflection(
+            reasoning="Minimal scene with no strong drivers",
             scene_id="pkna-1_5",
             emotional_state="ok",
             emotional_shifts=[],

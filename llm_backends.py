@@ -294,6 +294,20 @@ def _to_anthropic_messages(messages: list[dict[str, str]]) -> list[MessageParam]
     ]
 
 
+def _add_additional_properties_false(schema: dict | list) -> None:
+    """Anthropic requires 'additionalProperties: false' on all object types."""
+    if isinstance(schema, dict):
+        if schema.get("type") == "object" and "properties" in schema:
+            schema["additionalProperties"] = False
+        for v in schema.values():
+            if isinstance(v, (dict, list)):
+                _add_additional_properties_false(v)
+    elif isinstance(schema, list):
+        for item in schema:
+            if isinstance(item, (dict, list)):
+                _add_additional_properties_false(item)
+
+
 class AnthropicBackend(LLMBackend):
     def __init__(self, model: str):
         self._model = model
@@ -364,6 +378,7 @@ class AnthropicBackend(LLMBackend):
         schema: type[BaseModel],
     ) -> GenerateResult | None:
         json_schema = TypeAdapter(list[schema]).json_schema()  # type: ignore[valid-type]
+        _add_additional_properties_false(json_schema)
         api_messages = _to_anthropic_messages(messages)
 
         def _call():

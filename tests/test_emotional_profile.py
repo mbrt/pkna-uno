@@ -521,6 +521,53 @@ class TestClaimLedger:
         assert restored.is_scene_processed("pkna-0_12")
         assert restored.get_scene("pkna-0_12") is None
 
+    def test_meta_defaults(self):
+        ledger = ClaimLedger()
+        assert ledger.meta["model_name"] is None
+        assert ledger.meta["lm_usage"] == {}
+
+    def test_accumulate_usage(self):
+        ledger = ClaimLedger()
+        r1 = GenerateResult(
+            text="hello",
+            model_name="test-model",
+            usage={"input_tokens": 100, "output_tokens": 50},
+        )
+        r2 = GenerateResult(
+            text="world",
+            model_name="test-model",
+            usage={"input_tokens": 200, "output_tokens": 75},
+        )
+        ledger.accumulate_usage(r1)
+        ledger.accumulate_usage(r2)
+
+        assert ledger.meta["model_name"] == "test-model"
+        assert ledger.meta["lm_usage"]["input_tokens"] == 300
+        assert ledger.meta["lm_usage"]["output_tokens"] == 125
+
+    def test_meta_serialization_roundtrip(self):
+        ledger = ClaimLedger()
+        ledger.accumulate_usage(
+            GenerateResult(
+                text="x",
+                model_name="my-model",
+                usage={"input_tokens": 42, "output_tokens": 10},
+            )
+        )
+        data = ledger.to_json()
+        assert data["meta"]["model_name"] == "my-model"
+        assert data["meta"]["lm_usage"]["input_tokens"] == 42
+
+        restored = ClaimLedger.from_json(data)
+        assert restored.meta["model_name"] == "my-model"
+        assert restored.meta["lm_usage"]["input_tokens"] == 42
+
+    def test_meta_from_json_without_meta_key(self):
+        data = {"next_id": 1, "claims": {}, "processed_scene_ids": []}
+        ledger = ClaimLedger.from_json(data)
+        assert ledger.meta["model_name"] is None
+        assert ledger.meta["lm_usage"] == {}
+
     def test_get_claims_by_section(self):
         ledger = ClaimLedger()
         ledger.add_claim(
