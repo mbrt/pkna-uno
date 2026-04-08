@@ -372,13 +372,19 @@ Write all analysis in English, but preserve any Italian quotes exactly as they a
 # ============================================================================
 
 
+class ReflectionResult:
+    def __init__(self, reflection: SceneReflection, meta: dict):
+        self.reflection = reflection
+        self.meta = meta
+
+
 class SceneReflector:
     def __init__(self, backend: LLMBackend):
         self._backend = backend
 
     def reflect_on_scene(
         self, scene: Scene, story_context: str
-    ) -> SceneReflection | None:
+    ) -> ReflectionResult | None:
         scene_text = format_scene_view(scene)
 
         prompt_parts = []
@@ -400,15 +406,22 @@ class SceneReflector:
         if result is None:
             return None
 
-        text = result.strip()
+        text = result.text.strip()
         if not text:
             return None
+
+        meta = {
+            "model_name": result.model_name,
+            "lm_usage": result.usage or None,
+        }
 
         try:
             items = json.loads(text)
             if isinstance(items, list) and items:
-                return SceneReflection.model_validate(items[0])
-            return SceneReflection.model_validate(items)
+                reflection = SceneReflection.model_validate(items[0])
+            else:
+                reflection = SceneReflection.model_validate(items)
+            return ReflectionResult(reflection, meta)
         except (json.JSONDecodeError, ValueError) as e:
             log.warning(f"Failed to parse reflection for {scene.scene_id}: {e}")
             return None
@@ -482,20 +495,22 @@ def run_reflections(
             ):
                 log.info(f"Scene {i}/{len(unprocessed)}: {scene.scene_id}")
 
-                reflection = reflector.reflect_on_scene(scene, story_context)
+                result = reflector.reflect_on_scene(scene, story_context)
 
-                if reflection:
+                if result:
                     issue_output_dir.mkdir(parents=True, exist_ok=True)
                     out_path = issue_output_dir / f"{scene.scene_id}.json"
+                    output = result.reflection.model_dump()
+                    output["meta"] = result.meta
                     with open(out_path, "w", encoding="utf-8") as f:
                         json.dump(
-                            reflection.model_dump(),
+                            output,
                             f,
                             ensure_ascii=False,
                             indent=2,
                         )
                     successful += 1
-                    log.debug(f"  -> {reflection.emotional_state[:80]}...")
+                    log.debug(f"  -> {result.reflection.emotional_state[:80]}...")
                 else:
                     log.warning(f"  -> Failed to reflect on {scene.scene_id}")
 
@@ -524,6 +539,7 @@ def load_reflections(
             try:
                 with open(json_file, encoding="utf-8") as f:
                     data = json.load(f)
+                data.pop("meta", None)
                 reflection = SceneReflection.model_validate(data)
                 result[reflection.scene_id] = reflection
             except (json.JSONDecodeError, ValueError) as e:

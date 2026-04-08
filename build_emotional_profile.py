@@ -1189,7 +1189,7 @@ class SceneProcessor:
             if result is None:
                 return False, "API call failed after retries"
 
-            summary = result or "No summary provided"
+            summary = result.text or "No summary provided"
             self._ledger.add_scene(scene)
 
             log.info(f"Scene {scene_number}: {summary[:256]}...")
@@ -1228,7 +1228,7 @@ class ClaimRefiner:
         if result is None:
             return False, "API call failed after retries"
 
-        refined_text = result.strip()
+        refined_text = result.text.strip()
         if not refined_text:
             return False, "Empty response from LLM"
 
@@ -1307,7 +1307,7 @@ class ClaimSynthesizer:
         if result is None:
             return False, "API call failed after retries"
 
-        enriched = result.strip()
+        enriched = result.text.strip()
         if not enriched:
             return False, "Empty response from LLM"
 
@@ -1427,7 +1427,7 @@ class ClaimCondenser:
             log.warning("Failed to condense claim group")
             return []
 
-        text = result.strip()
+        text = result.text.strip()
         if not text:
             return []
 
@@ -1624,7 +1624,7 @@ class SoulDocumentGenerator:
         if result is None:
             return False, f"Generation failed for section '{section}'"
 
-        return True, result
+        return True, result.text
 
     def generate(self) -> tuple[bool, str]:
         sections: list[str] = []

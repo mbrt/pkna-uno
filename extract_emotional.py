@@ -9,7 +9,6 @@ is the same: each page is processed with context from the previous page's output
 import concurrent.futures
 import json
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,7 +30,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # Settings
-MODEL_NAME = "vertex_ai/claude-sonnet-4-6"
+MODEL_NAME = "bedrock/eu.anthropic.claude-sonnet-4-6"
 VERSION = "v2"
 MAX_WORKERS = 4
 
@@ -90,15 +89,12 @@ def configure_lm() -> None:
     load_dotenv()
     lm = dspy.LM(
         model=MODEL_NAME,
-        vertex_credentials=os.getenv("VERTEX_AI_CREDS"),
-        vertex_project=os.getenv("GOOGLE_CLOUD_PROJECT"),
-        vertex_location=os.getenv("GOOGLE_CLOUD_LOCATION_CLAUDE"),
         temperature=1.0,
         max_tokens=60000,
     )
     dspy.configure(lm=lm, track_usage=True)
     # Check LM connectivity with a test call
-    lm("Test")
+    lm("Test", cache=False)
 
 
 # ============================================================================

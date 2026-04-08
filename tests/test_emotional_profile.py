@@ -18,9 +18,11 @@ from build_emotional_profile import (
     format_claims_detail,
     is_valid_claim_path,
 )
-from llm_backends import LLMBackend
+from llm_backends import GenerateResult, LLMBackend
 from pkna_scenes import AnnotatedDialogue, Panel, Scene, format_scene_view
 from pydantic import BaseModel
+
+MOCK_MODEL = "test-model"
 
 
 class MockBackend(LLMBackend):
@@ -39,13 +41,15 @@ class MockBackend(LLMBackend):
         messages: list[dict[str, str]],
         tools: list[Callable[..., str]] | None = None,
         response_schema: type[BaseModel] | None = None,
-    ) -> str | None:
+    ) -> GenerateResult | None:
         if self._call_count < len(self._responses):
-            result = self._responses[self._call_count]
+            text = self._responses[self._call_count]
         else:
-            result = self._responses[-1] if self._responses else None
+            text = self._responses[-1] if self._responses else None
         self._call_count += 1
-        return result
+        if text is None:
+            return None
+        return GenerateResult(text=text, model_name=MOCK_MODEL)
 
 
 # ============================================================================
@@ -1193,17 +1197,17 @@ class TestClaimCondenser:
                 messages: list[dict[str, str]],
                 tools: list[Callable[..., str]] | None = None,
                 response_schema: type[BaseModel] | None = None,
-            ) -> str | None:
+            ) -> GenerateResult | None:
                 self._call_count += 1
                 if self._call_count == 1:
-                    return pass1_json
+                    return GenerateResult(text=pass1_json, model_name=MOCK_MODEL)
                 new_ids = [
                     c.id
                     for c in self._ledger._claims.values()
                     if c.text
                     in ("Uno speaks formally and concisely.", "Uno uses a dry tone.")
                 ]
-                return json.dumps(
+                text = json.dumps(
                     [
                         {
                             "path": "communication/voice/formality",
@@ -1217,6 +1221,7 @@ class TestClaimCondenser:
                         },
                     ]
                 )
+                return GenerateResult(text=text, model_name=MOCK_MODEL)
 
         backend = CondenserBackend(ledger)
         condenser = ClaimCondenser(backend, ledger, threshold=3)

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from llm_backends import LLMBackend
+from llm_backends import GenerateResult, LLMBackend
 from pkna_scenes import AnnotatedDialogue, Panel, Scene
 from reflect_scenes import (
     SceneReflection,
@@ -16,6 +16,8 @@ from reflect_scenes import (
     get_scene_event_index,
     load_reflections,
 )
+
+MOCK_MODEL = "test-model"
 
 
 class MockBackend(LLMBackend):
@@ -34,15 +36,17 @@ class MockBackend(LLMBackend):
         messages: list[dict[str, str]],
         tools: list[Callable[..., str]] | None = None,
         response_schema: type[BaseModel] | None = None,
-    ) -> str | None:
+    ) -> GenerateResult | None:
         self.last_system = system
         self.last_messages = messages
         if self._call_count < len(self._responses):
-            result = self._responses[self._call_count]
+            text = self._responses[self._call_count]
         else:
-            result = self._responses[-1] if self._responses else None
+            text = self._responses[-1] if self._responses else None
         self._call_count += 1
-        return result
+        if text is None:
+            return None
+        return GenerateResult(text=text, model_name=MOCK_MODEL)
 
 
 def _make_scene(issue: str = "pkna-3", pages: list[int] | None = None) -> Scene:
@@ -245,9 +249,10 @@ class TestSceneReflector:
 
         result = reflector.reflect_on_scene(scene, "Some context")
         assert result is not None
-        assert result.scene_id == "pkna-3_45"
-        assert "playful" in result.emotional_state
-        assert len(result.emotional_shifts) == 1
+        assert result.reflection.scene_id == "pkna-3_45"
+        assert "playful" in result.reflection.emotional_state
+        assert len(result.reflection.emotional_shifts) == 1
+        assert result.meta["model_name"] == MOCK_MODEL
 
     def test_prompt_includes_context(self):
         response = self._make_reflection_json()
@@ -340,6 +345,29 @@ class TestLoadReflections:
         assert len(result) == 2
         assert "pkna-0_28" in result
         assert "pkna-0_33" in result
+        assert result["pkna-0_28"].emotional_state == "calm"
+
+    def test_load_reflections_with_meta(self, tmp_path: Path):
+        issue_dir = tmp_path / "pkna-0"
+        issue_dir.mkdir()
+
+        data = {
+            "scene_id": "pkna-0_28",
+            "emotional_state": "calm",
+            "emotional_shifts": [],
+            "behavioral_drivers": "duty",
+            "relationship_dynamics": "partner",
+            "subtext": "none",
+            "meta": {
+                "model_name": "test-model",
+                "lm_usage": {"prompt_tokens": 100, "completion_tokens": 50},
+            },
+        }
+        with open(issue_dir / "pkna-0_28.json", "w") as f:
+            json.dump(data, f)
+
+        result = load_reflections(tmp_path)
+        assert len(result) == 1
         assert result["pkna-0_28"].emotional_state == "calm"
 
     def test_skips_invalid_json(self, tmp_path: Path):

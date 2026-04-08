@@ -12,6 +12,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 import anthropic
@@ -73,6 +74,13 @@ def _retry_with_backoff(
 # ============================================================================
 
 
+@dataclass
+class GenerateResult:
+    text: str
+    model_name: str
+    usage: dict[str, Any] = field(default_factory=dict)
+
+
 class LLMBackend(ABC):
     @abstractmethod
     def generate(
@@ -81,7 +89,7 @@ class LLMBackend(ABC):
         messages: list[dict[str, str]],
         tools: list[Callable[..., str]] | None = None,
         response_schema: type[BaseModel] | None = None,
-    ) -> str | None:
+    ) -> GenerateResult | None:
         """Generate a response from the LLM.
 
         Args:
@@ -113,7 +121,7 @@ class GeminiBackend(LLMBackend):
         messages: list[dict[str, str]],
         tools: list[Callable[..., str]] | None = None,
         response_schema: type[BaseModel] | None = None,
-    ) -> str | None:
+    ) -> GenerateResult | None:
         config_kwargs: dict[str, Any] = {
             "system_instruction": system,
             "temperature": 0.7,
@@ -147,7 +155,21 @@ class GeminiBackend(LLMBackend):
         response = _retry_with_backoff(_call, _is_retryable)
         if response is None:
             return None
-        return response.text or ""
+
+        usage: dict[str, Any] = {}
+        if response.usage_metadata:
+            um = response.usage_metadata
+            usage = {
+                "prompt_tokens": um.prompt_token_count,
+                "completion_tokens": um.candidates_token_count,
+                "total_tokens": um.total_token_count,
+            }
+
+        return GenerateResult(
+            text=response.text or "",
+            model_name=self._model,
+            usage=usage,
+        )
 
 
 # ============================================================================
@@ -276,9 +298,9 @@ class AnthropicBackend(LLMBackend):
     def __init__(self, model: str):
         self._model = model
         self._client = AnthropicBedrock(
-            aws_access_key=os.getenv("AWS_ACCESS_KEY"),
+            aws_access_key=os.getenv("AWS_ACCESS_KEY_ID"),
             aws_secret_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-            aws_region=os.getenv("AWS_REGION"),
+            aws_region=os.getenv("AWS_REGION_NAME"),
         )
 
     def _is_retryable(self, e: Exception) -> bool:
@@ -294,18 +316,31 @@ class AnthropicBackend(LLMBackend):
         messages: list[dict[str, str]],
         tools: list[Callable[..., str]] | None = None,
         response_schema: type[BaseModel] | None = None,
-    ) -> str | None:
+    ) -> GenerateResult | None:
         if tools:
             return self._generate_with_tools(system, messages, tools)
         if response_schema:
             return self._generate_with_schema(system, messages, response_schema)
         return self._generate_plain(system, messages)
 
+    def _make_result(self, response: Any) -> GenerateResult:
+        usage: dict[str, Any] = {}
+        if hasattr(response, "usage") and response.usage:
+            usage = {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+            }
+        return GenerateResult(
+            text=self._extract_text(response),
+            model_name=self._model,
+            usage=usage,
+        )
+
     def _generate_plain(
         self,
         system: str,
         messages: list[dict[str, str]],
-    ) -> str | None:
+    ) -> GenerateResult | None:
         api_messages = _to_anthropic_messages(messages)
 
         def _call():
@@ -320,14 +355,14 @@ class AnthropicBackend(LLMBackend):
         response = _retry_with_backoff(_call, self._is_retryable)
         if response is None:
             return None
-        return self._extract_text(response)
+        return self._make_result(response)
 
     def _generate_with_schema(
         self,
         system: str,
         messages: list[dict[str, str]],
         schema: type[BaseModel],
-    ) -> str | None:
+    ) -> GenerateResult | None:
         json_schema = TypeAdapter(list[schema]).json_schema()  # type: ignore[valid-type]
         api_messages = _to_anthropic_messages(messages)
 
@@ -349,18 +384,22 @@ class AnthropicBackend(LLMBackend):
         response = _retry_with_backoff(_call, self._is_retryable)
         if response is None:
             return None
-        return self._extract_text(response)
+        return self._make_result(response)
 
     def _generate_with_tools(
         self,
         system: str,
         messages: list[dict[str, str]],
         tools: list[Any],
-    ) -> str | None:
+    ) -> GenerateResult | None:
         tool_defs = [_callable_to_anthropic_tool(fn) for fn in tools]
         tool_map: dict[str, Any] = {fn.__name__: fn for fn in tools}
 
         api_messages: list[MessageParam] = _to_anthropic_messages(messages)
+        cumulative_usage: dict[str, int] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+        }
 
         for _ in range(MAX_TOOL_ITERATIONS):
 
@@ -378,8 +417,16 @@ class AnthropicBackend(LLMBackend):
             if response is None:
                 return None
 
+            if hasattr(response, "usage") and response.usage:
+                cumulative_usage["input_tokens"] += response.usage.input_tokens
+                cumulative_usage["output_tokens"] += response.usage.output_tokens
+
             if response.stop_reason != "tool_use":
-                return self._extract_text(response)
+                return GenerateResult(
+                    text=self._extract_text(response),
+                    model_name=self._model,
+                    usage=cumulative_usage,
+                )
 
             api_messages.append(
                 MessageParam(role="assistant", content=response.content)
