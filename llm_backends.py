@@ -320,7 +320,8 @@ class AnthropicBackend(LLMBackend):
     def _is_retryable(self, e: Exception) -> bool:
         if isinstance(e, anthropic.RateLimitError | anthropic.APITimeoutError):
             return True
-        if isinstance(e, anthropic.APIStatusError) and e.status_code in (429, 529):
+        if isinstance(e, anthropic.APIStatusError) and e.status_code in (429, 503, 529):
+            log.debug("Retryable API status error (code %d): %s", e.status_code, e)
             return True
         return False
 

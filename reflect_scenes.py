@@ -464,7 +464,7 @@ def run_reflections(
                 issue_dir, scene.page_numbers[0], key_events
             )
             story_context = build_story_context(
-                prior_issue_summaries, issue_name, key_events, event_index
+                prior_issue_summaries[-3:], issue_name, key_events, event_index
             )
             all_scenes_with_context.append((scene, story_context, issue_output_dir))
 
