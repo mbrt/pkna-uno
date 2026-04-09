@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 # Paths
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent
 CHECKPOINTS_DIR = BASE_DIR / "output/character-profile/uno/v5/checkpoints"
 DIFFS_DIR = BASE_DIR / "output/character-profile/uno/v5/diffs"
 SEED_PATH = BASE_DIR / "output/character-profile/uno/v5/seed_document.md"

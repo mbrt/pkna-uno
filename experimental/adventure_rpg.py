@@ -51,7 +51,7 @@ DEFAULT_PROFILE = "output/character-profile/uno/v6/uno_profile.md"
 ADVENTURE_LOGS_DIR = "output/adventure-logs"
 
 # Paths
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent
 
 
 # =============================================================================

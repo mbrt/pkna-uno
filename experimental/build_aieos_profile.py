@@ -49,7 +49,7 @@ ENCODING_NAME = "cl100k_base"
 VERSION_TAG = "v9"
 
 # Paths
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent
 INPUT_DIR = BASE_DIR / "output" / "dspy-extract-full" / "v2"
 OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / VERSION_TAG
 CHECKPOINTS_DIR = OUTPUT_DIR / "checkpoints"

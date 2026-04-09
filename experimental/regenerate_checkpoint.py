@@ -39,7 +39,7 @@ DEFAULT_VERSION = "v7"
 
 def find_base_dir() -> Path:
     """Find the project base directory."""
-    return Path(__file__).parent
+    return Path(__file__).parent.parent
 
 
 def validate_checkpoint_number(checkpoint_num: int) -> None:

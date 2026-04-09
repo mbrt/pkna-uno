@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from extract_emotional import (
+from extract.extract_emotional import (
     SPEECH_ACT_VALUES,
     TONE_VALUES,
     CharacterAppearance,

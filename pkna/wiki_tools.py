@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Wiki root directory
-WIKI_ROOT = Path(__file__).parent / "output" / "wiki"
+WIKI_ROOT = Path(__file__).parent.parent / "output" / "wiki"
 
 
 @dataclass

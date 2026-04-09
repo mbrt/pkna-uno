@@ -33,7 +33,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # Paths
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent
 PROFILE_DIR = BASE_DIR / "output" / "character-profile" / "uno" / "v3"
 
 # Required sections for validation

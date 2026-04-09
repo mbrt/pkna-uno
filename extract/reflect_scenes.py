@@ -23,8 +23,8 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 
-from llm_backends import LLMBackend, create_backend
-from pkna_scenes import (
+from pkna.llm_backends import LLMBackend, create_backend
+from pkna.pkna_scenes import (
     Scene,
     extract_scenes_from_issue,
     format_scene_view,
@@ -44,7 +44,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
 
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent
 INPUT_DIR = BASE_DIR / "output" / "extract-emotional" / "v2"
 OUTPUT_DIR = BASE_DIR / "output" / "scene-reflections" / "v1"
 

@@ -50,7 +50,7 @@ DEFAULT_PROFILE = "output/character-profile/uno/v6/uno_profile.md"
 CONVERSATIONS_DIR = "output/test-conversations"
 
 # Paths
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent
 
 
 def log_tool_call(tool_name: str, arguments: dict[str, Any]) -> None:

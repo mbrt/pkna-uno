@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, TypeAdapter
 
-from llm_backends import _add_additional_properties_false
+from pkna.llm_backends import _add_additional_properties_false
 
 
 class TestAddAdditionalPropertiesFalse:

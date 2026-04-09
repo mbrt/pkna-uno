@@ -35,7 +35,7 @@ VERSION = "v2"
 MAX_WORKERS = 4
 
 # Paths
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent
 PAGES_ROOT = BASE_DIR / "input/pkna"
 WIKI_ROOT = BASE_DIR / "output/wiki/fandom/crawl/storie/storie-di-pkna"
 OUT_ROOT = BASE_DIR / f"output/extract-emotional/{VERSION}"

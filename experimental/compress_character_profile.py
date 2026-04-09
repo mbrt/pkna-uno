@@ -39,7 +39,7 @@ MODEL_NAME = "vertex_ai/gemini-3-flash-preview"
 ENCODING_NAME = "cl100k_base"  # GPT-4 tokenizer as approximation
 
 # Paths
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent
 SOURCE_PROFILE = (
     BASE_DIR / "output" / "character-profile" / "uno" / "v2" / "uno_profile.md"
 )

@@ -1,6 +1,6 @@
 """Unit tests for in-memory wiki tools."""
 
-from wiki_tools import (
+from pkna.wiki_tools import (
     WIKI_ROOT,
     WikiIndex,
     WikiSegment,
