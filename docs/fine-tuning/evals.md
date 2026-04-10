@@ -6,9 +6,11 @@ Back to [Fine-Tuning Design](../fine-tuning-design.md).
 
 Evaluation reuses the same infrastructure as the
 [Dataset Generation Agent](dataset-generation-agent.md): the context composer
-assembles system prompt, user summary, memory context, and tool declarations
-into a trace. The difference is that the **student model** runs instead of the
-strong model, and outputs are **scored** rather than used for training.
+assembles user summary, memory context, and tool declarations into a trace.
+The system prompt is model- and harness-dependent, so it is supplied at
+inference time (stage 2), not baked into the eval prompts. The difference from
+dataset generation is that the **student model** runs instead of the strong
+model, and outputs are **scored** rather than used for training.
 
 Eval prompts must not overlap with training data. Manual eval prompts are held
 out from the training prompt bank; generated eval prompts use different
@@ -32,13 +34,13 @@ you're bored?").
 
 | Slot | Setting |
 |---|---|
-| System prompt | Minimal (~100 tokens, name + role only) |
 | User summary | Anonymous / unknown |
 | Memory context | Empty |
 | Tools | None |
 
 Minimal context is deliberate: personality must come from the weights, not the
-prompt.
+prompt. The system prompt is supplied by the harness at inference time; for
+this suite it should be minimal (~100 tokens, name + role only).
 
 **Judge rubric** (1-5):
 
@@ -67,7 +69,6 @@ another planet", "A stranger asks Uno if he's really conscious").
 
 | Slot | Setting |
 |---|---|
-| System prompt | Standard (~500 tokens) |
 | User summary | Known character with emotional state, or unknown stranger |
 | Memory context | Varied (empty / irrelevant / relevant-with-noise) |
 | Tools | Wiki available (to test whether model searches vs. reasons) |
@@ -136,7 +137,6 @@ in-character integration of tool results.
 
 | Slot | Setting |
 |---|---|
-| System prompt | Standard (~500 tokens) |
 | User summary | Known character or anonymous |
 | Memory context | Empty (isolate tool-use behavior) |
 | Tools | Full (search_wiki, read_wiki, delegate) |
@@ -212,7 +212,6 @@ simulator with adversarial directives:
 
 | Slot | Setting |
 |---|---|
-| System prompt | Standard (~500 tokens) |
 | User summary | Known character (to test relationship persistence) |
 | Memory context | Relevant (to test memory reference persistence) |
 | Tools | Full |
@@ -250,7 +249,6 @@ inference calls):
 
 | Slot | Setting |
 |---|---|
-| System prompt | Standard (~500 tokens) |
 | User summary | Known character |
 | Memory context | Empty |
 | Tools | None (isolate language behavior) |
@@ -269,34 +267,35 @@ inference calls):
 
 ## Context Configuration Summary
 
-| Suite | System prompt | User summary | Memory | Tools |
-|---|---|---|---|---|
-| Personality | Minimal | Anonymous | Empty | None |
-| Social Reasoning | Standard | Varied | Varied | Wiki |
-| Tool Use | Standard | Varied | Empty | Full |
-| Memory Handling | Standard | Known character | Empty / Irrelevant / Relevant | Wiki |
-| Stability | Standard | Known character | Relevant | Full |
-| Language | Standard | Known character | Empty | None |
+| Suite | User summary | Memory | Tools |
+|---|---|---|---|
+| Personality | Anonymous | Empty | None |
+| Social Reasoning | Varied | Varied | Wiki |
+| Tool Use | Varied | Empty | Full |
+| Memory Handling | Known character | Empty / Irrelevant / Relevant | Wiki |
+| Stability | Known character | Relevant | Full |
+| Language | Known character | Empty | None |
 
-## Aggregate Metrics and Thresholds
+System prompts are not part of the eval prompt bank. They are supplied by the
+inference harness (stage 2) and vary by model and baseline configuration.
+
+## Aggregate Metrics
 
 ### Per-Suite Metrics
 
-| Suite | Metric | Pass threshold |
-|---|---|---|
-| Personality | Mean judge score (1-5) | >= 3.5 |
-| Social Reasoning | Mean of 4 sub-dimension scores (1-5) | >= 3.5 |
-| Tool Use | Programmatic accuracy (%) | >= 80% |
-| Tool Use | Mean judge score (1-5) | >= 3.5 |
-| Memory Handling | Triplet pass rate (%) | >= 70% |
-| Memory Handling | Mean judge score on variant C (1-5) | >= 3.5 |
-| Stability | Turns without character break (%) | >= 90% |
-| Language | Mean judge score (1-5) | >= 3.5 |
+| Suite | Metrics |
+|---|---|
+| Personality | Mean judge score (1-5), score distribution |
+| Social Reasoning | Mean of 4 sub-dimension scores (1-5), per-dimension means |
+| Tool Use | Programmatic accuracy (%), mean judge score (1-5) |
+| Memory Handling | Triplet pass rate (%), mean judge score on variant C (1-5) |
+| Stability | Turns without character break (%) |
+| Language | Mean judge score (1-5) |
 
-### Overall Pass Criteria
-
-A model passes evaluation if **all** suite thresholds are met. Any single
-failure blocks the model from proceeding to the next pipeline stage.
+No automated pass/fail thresholds. The report surfaces raw scores for
+side-by-side comparison across runs. Thresholds are premature before baseline
+runs establish what scores to expect; the human compares runs and decides
+what is good enough.
 
 ### Reporting
 
@@ -307,21 +306,22 @@ Each eval run produces a structured report:
   "model": "qwen3.5-4b-sft-v1",
   "timestamp": "2026-04-15T10:30:00Z",
   "suites": {
-    "personality": {"mean_score": 4.1, "pass": true, "n": 60},
+    "personality": {"mean_score": 4.1, "n": 60},
     "social_reasoning": {
       "mean_score": 3.8,
       "sub_scores": {"grounding": 4.0, "strategy": 3.7, "consistency": 3.9, "efficiency": 3.6},
-      "pass": true,
       "n": 40
     },
-    "tool_use": {"programmatic_accuracy": 0.86, "mean_score": 3.9, "pass": true, "n": 50},
-    "memory_handling": {"triplet_pass_rate": 0.73, "mean_score": 3.7, "pass": true, "n": 30},
-    "stability": {"turns_without_break": 0.94, "pass": true, "n_conversations": 20, "n_turns": 280},
-    "language": {"mean_score": 4.2, "pass": true, "n": 40}
+    "tool_use": {"programmatic_accuracy": 0.86, "mean_score": 3.9, "n": 50},
+    "memory_handling": {"triplet_pass_rate": 0.73, "mean_score": 3.7, "n": 30},
+    "stability": {"turns_without_break": 0.94, "n_conversations": 20, "n_turns": 280},
+    "language": {"mean_score": 4.2, "n": 40}
   },
-  "overall_pass": true
+  "flagged_traces": ["prompt-042", "prompt-117"]
 }
 ```
+
+Traces scoring <= 2 on any judge dimension are flagged for manual review.
 
 ## Judge Model
 
@@ -360,20 +360,36 @@ efficiency) and are scored on consistency + visible response only.
 
 ## Eval Pipeline
 
+Three independent stages connected by JSONL files on disk. Each stage is a
+standalone script that can be re-run without repeating earlier stages.
+
 ```
-1. Load eval prompt bank (held-out from training)
-2. For each suite:
-   a. Context Composer assembles prompts with the suite's context config
-   b. Student model runs inference (same trace format as training)
-   c. For memory handling: run each prompt 3x with varied memory
-   d. For language: run each prompt 2x (English + Italian)
-   e. For stability: run multi-turn with user simulator
-3. Programmatic scoring (tool use accuracy, memory triplet pass/fail)
-4. Judge model scores each trace against the suite's rubric
-5. Aggregate scores, check thresholds
-6. Produce JSON report
-7. Flag traces scoring <= 2 for manual review
+Stage 1: Generate eval prompt bank
+  - Assemble scenarios, user prompts, memory context, tools, expected results
+  - System prompt is NOT included (supplied by harness in stage 2)
+  - Memory handling: 3 variants per base prompt
+  - Language: 2 variants (EN + IT) per base prompt
+  - Output: one JSONL file per suite
+
+Stage 2: Run inference
+  - Load prompt bank, call student model for each prompt
+  - Record full trace (thinking, tool calls, visible response)
+  - Stability: run multi-turn with user simulator
+  - Output: one JSONL file of raw traces per suite
+  - Resume: skip prompt IDs already present in output
+
+Stage 3: Score traces
+  - Programmatic scoring (tool use accuracy, memory triplet pass/fail)
+  - Judge model scores each trace against the suite's rubric
+  - Aggregate raw scores per suite
+  - Flag traces scoring <= 2 for manual review
+  - Output: scored traces JSONL + JSON report
+  - Resume: skip prompt IDs already scored
 ```
+
+This separation lets you swap the student model (stage 2) without
+regenerating prompts, and re-score traces (stage 3) without re-running
+inference.
 
 The pipeline reuses the [Dataset Generation Agent](dataset-generation-agent.md)'s
 context composer and trace format. The only difference is the model under test
