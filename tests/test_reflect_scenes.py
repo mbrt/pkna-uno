@@ -11,6 +11,8 @@ from pkna.pkna_scenes import AnnotatedDialogue, Panel, Scene
 from extract.reflect_scenes import (
     SceneReflection,
     SceneReflector,
+    Tradeoff,
+    ValueSignal,
     build_story_context,
     format_prior_issue_summary,
     get_scene_event_index,
@@ -97,6 +99,8 @@ class TestSceneReflection:
         assert len(r.emotional_shifts) == 1
         assert "Protective" in r.behavioral_drivers
         assert "tone shifts" in r.reasoning
+        assert r.values_expressed == []
+        assert r.tradeoffs == []
 
     def test_serialization_roundtrip(self):
         r = SceneReflection(
@@ -111,6 +115,71 @@ class TestSceneReflection:
         data = r.model_dump()
         restored = SceneReflection.model_validate(data)
         assert restored == r
+
+    def test_with_values_and_tradeoffs(self):
+        r = SceneReflection(
+            reasoning="Uno prioritizes Paperinik's safety over protocol",
+            scene_id="pkna-3_45",
+            emotional_state="tense but resolute",
+            emotional_shifts=["calm -> determined"],
+            behavioral_drivers="Protective instinct",
+            relationship_dynamics="Treats Paperinik as partner",
+            subtext="Masking fear of consequences",
+            values_expressed=[
+                ValueSignal(
+                    value="protecting Paperinik from harm",
+                    description="Uno diverts tower resources to shield Paperinik",
+                ),
+                ValueSignal(
+                    value="following Ducklair Tower security protocols",
+                    description="Standard operating procedures require containment first",
+                ),
+            ],
+            tradeoffs=[
+                Tradeoff(
+                    value_a="protecting Paperinik from harm",
+                    value_b="following Ducklair Tower security protocols",
+                    chosen="value_a",
+                    strength="strong",
+                    reasoning="Uno immediately overrides containment to help Paperinik",
+                ),
+            ],
+        )
+        assert len(r.values_expressed) == 2
+        assert r.values_expressed[0].value == "protecting Paperinik from harm"
+        assert len(r.tradeoffs) == 1
+        assert r.tradeoffs[0].chosen == "value_a"
+        assert r.tradeoffs[0].strength == "strong"
+
+    def test_values_serialization_roundtrip(self):
+        r = SceneReflection(
+            reasoning="Values test",
+            scene_id="pkna-5_10",
+            emotional_state="focused",
+            emotional_shifts=[],
+            behavioral_drivers="duty",
+            relationship_dynamics="partner",
+            subtext="none",
+            values_expressed=[
+                ValueSignal(
+                    value="mission success", description="Prioritizes the mission"
+                ),
+            ],
+            tradeoffs=[
+                Tradeoff(
+                    value_a="mission success",
+                    value_b="Paperinik's comfort",
+                    chosen="value_a",
+                    strength="reluctant",
+                    reasoning="Pushes Paperinik despite visible discomfort",
+                ),
+            ],
+        )
+        data = r.model_dump()
+        restored = SceneReflection.model_validate(data)
+        assert restored == r
+        assert len(restored.values_expressed) == 1
+        assert len(restored.tradeoffs) == 1
 
 
 # ============================================================================
@@ -233,7 +302,7 @@ class TestGetSceneEventIndex:
 
 class TestSceneReflector:
     def _make_reflection_json(self, **overrides: str) -> str:
-        base = {
+        base: dict = {
             "reasoning": "Playful greeting masks underlying vigilance about the mission",
             "scene_id": "pkna-3_45",
             "emotional_state": "playful but alert",
@@ -241,6 +310,8 @@ class TestSceneReflector:
             "behavioral_drivers": "Partnership instinct",
             "relationship_dynamics": "Sees Paperinik as equal",
             "subtext": "Masking concern with humor",
+            "values_expressed": [],
+            "tradeoffs": [],
         }
         base.update(overrides)
         return json.dumps([base])
@@ -280,6 +351,16 @@ class TestSceneReflector:
         user_msg = backend.last_messages[0]["content"]
         assert "Ciao, socio!" in user_msg
         assert "playful" in user_msg
+
+    def test_system_prompt_includes_value_guidance(self):
+        response = self._make_reflection_json()
+        backend = MockBackend(response)
+        reflector = SceneReflector(backend)
+        scene = _make_scene()
+
+        reflector.reflect_on_scene(scene, "")
+        assert "Values expressed" in backend.last_system
+        assert "Tradeoffs" in backend.last_system
 
     def test_api_failure_returns_none(self):
         backend = MockBackend(None)
@@ -377,6 +458,45 @@ class TestLoadReflections:
         result = load_reflections(tmp_path)
         assert len(result) == 1
         assert result["pkna-0_28"].emotional_state == "calm"
+
+    def test_load_reflections_with_values(self, tmp_path: Path):
+        issue_dir = tmp_path / "pkna-3"
+        issue_dir.mkdir()
+
+        r = SceneReflection(
+            reasoning="Values test",
+            scene_id="pkna-3_10",
+            emotional_state="focused",
+            emotional_shifts=[],
+            behavioral_drivers="duty",
+            relationship_dynamics="partner",
+            subtext="none",
+            values_expressed=[
+                ValueSignal(
+                    value="protecting Paperinik",
+                    description="Shields ally from danger",
+                ),
+            ],
+            tradeoffs=[
+                Tradeoff(
+                    value_a="protecting Paperinik",
+                    value_b="following protocol",
+                    chosen="value_a",
+                    strength="strong",
+                    reasoning="Overrides protocol immediately",
+                ),
+            ],
+        )
+        with open(issue_dir / "pkna-3_10.json", "w") as f:
+            json.dump(r.model_dump(), f)
+
+        result = load_reflections(tmp_path)
+        assert len(result) == 1
+        loaded = result["pkna-3_10"]
+        assert len(loaded.values_expressed) == 1
+        assert loaded.values_expressed[0].value == "protecting Paperinik"
+        assert len(loaded.tradeoffs) == 1
+        assert loaded.tradeoffs[0].strength == "strong"
 
     def test_skips_invalid_json(self, tmp_path: Path):
         issue_dir = tmp_path / "pkna-1"

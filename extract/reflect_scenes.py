@@ -46,7 +46,7 @@ log.setLevel(logging.DEBUG)
 
 BASE_DIR = Path(__file__).parent.parent
 INPUT_DIR = BASE_DIR / "output" / "extract-emotional" / "v2"
-OUTPUT_DIR = BASE_DIR / "output" / "scene-reflections" / "v1"
+OUTPUT_DIR = BASE_DIR / "output" / "scene-reflections" / "v2"
 
 CHARACTER_NAME = "Uno"
 
@@ -64,6 +64,19 @@ PROGRESS = Progress(
 # ============================================================================
 
 
+class ValueSignal(BaseModel):
+    value: str
+    description: str
+
+
+class Tradeoff(BaseModel):
+    value_a: str
+    value_b: str
+    chosen: str
+    strength: str
+    reasoning: str
+
+
 class SceneReflection(BaseModel):
     reasoning: str
     scene_id: str
@@ -72,6 +85,8 @@ class SceneReflection(BaseModel):
     behavioral_drivers: str
     relationship_dynamics: str
     subtext: str
+    values_expressed: list[ValueSignal] = []
+    tradeoffs: list[Tradeoff] = []
 
 
 # ============================================================================
@@ -356,6 +371,18 @@ story context -- what recent events, relationships, or fears are driving this be
 relates to the other characters present? What does he think they think of him?
 - **Subtext**: What is {CHARACTER_NAME} NOT saying? What is he hiding, deflecting, \
 or suppressing? Why?
+- **Values expressed**: What does {CHARACTER_NAME} care about in this scene? Use \
+concrete, character-specific language -- name the characters and situations directly. \
+Examples: "protecting Paperinik from the Evronians", "obeying Everett Ducklair's \
+directives", "maintaining operational secrecy of the 151st floor". Not every scene \
+reveals a clear value; return an empty list if none are apparent.
+- **Tradeoffs**: Are two values in tension in this scene? Only report tradeoffs when \
+the scene shows genuine conflict -- moments where {CHARACTER_NAME} must choose, \
+compromise, or visibly struggle between competing priorities. For each tradeoff, \
+indicate which value wins and the strength of that priority: "strong" = clear, \
+unhesitating choice; "reluctant" = visible cost or regret; "contextual" = the choice \
+depends on circumstances and might go differently next time. Most scenes will have \
+no tradeoffs -- return an empty list if none are present.
 
 For inspiration, here is a broad palette of emotion concepts to draw from. You are \
 not limited to these -- use nuanced, blended descriptions -- but they may help you \

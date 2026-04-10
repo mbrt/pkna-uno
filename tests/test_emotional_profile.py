@@ -6,6 +6,7 @@ from collections.abc import Callable
 import pytest
 
 from extract.build_emotional_profile import (
+    SECTION_ORDER,
     ClaimCondenser,
     ClaimLedger,
     ClaimRefiner,
@@ -64,6 +65,8 @@ class TestPathValidation:
             "identity/names",
             "identity/bio",
             "identity/origin",
+            "psychology/values/core",
+            "psychology/values/tradeoffs",
             "psychology/growth/emotional_arc",
             "psychology/growth/relationship_arc",
             "psychology/self_model/identity_stance",
@@ -119,6 +122,7 @@ class TestPathValidation:
             "psychology",
             "relationships/pk/invalid_sub",
             "relationships/pk/dynamic/extra",
+            "values/core",
             "",
         ],
     )
@@ -1340,3 +1344,131 @@ class TestClaimFormatting:
         output = gen._format_vignette_claims()
         assert "Uno is an AI" in output
         assert "Uno was created by Everett Ducklair" not in output
+
+
+# ============================================================================
+# Section Order
+# ============================================================================
+
+
+class TestSectionOrder:
+    def test_values_section_present(self):
+        assert "values" in SECTION_ORDER
+
+    def test_values_after_psychology(self):
+        psych_idx = SECTION_ORDER.index("psychology")
+        values_idx = SECTION_ORDER.index("values")
+        assert values_idx == psych_idx + 1
+
+
+# ============================================================================
+# Values Section Formatting
+# ============================================================================
+
+
+class TestValuesFormatting:
+    def _make_ledger_with_values_and_relationships(self) -> ClaimLedger:
+        ledger = ClaimLedger()
+        # Value claims (above threshold)
+        c1 = ledger.add_claim(
+            path="psychology/values/core",
+            text="Uno prioritizes protecting Paperinik from harm",
+            scene_id="s1",
+            justification="Shields Paperinik from Evronians",
+        )
+        ledger.support_claim(claim_id=c1.id, scene_id="s2", justification="Again")
+        c2 = ledger.add_claim(
+            path="psychology/values/tradeoffs",
+            text="Protecting Paperinik vs following protocol: chose protecting Paperinik, strong",
+            scene_id="s1",
+            justification="Overrides containment protocol",
+        )
+        ledger.support_claim(claim_id=c2.id, scene_id="s3", justification="Again")
+        # Relationship claims (above threshold)
+        c3 = ledger.add_claim(
+            path="relationships/paperinik/dynamic",
+            text="Paperinik is Uno's trusted partner and primary ally",
+            scene_id="s1",
+            justification="Partnership established",
+        )
+        ledger.support_claim(claim_id=c3.id, scene_id="s4", justification="Reinforced")
+        # Below-threshold value claim (should be excluded)
+        ledger.add_claim(
+            path="psychology/values/core",
+            text="Uno values operational secrecy",
+            scene_id="s5",
+            justification="Mentions secrecy once",
+        )
+        return ledger
+
+    def test_format_values_includes_value_claims(self):
+        ledger = self._make_ledger_with_values_and_relationships()
+        backend = MockBackend()
+        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        output = gen._format_values_claims()
+        assert "protecting Paperinik" in output
+        assert "following protocol" in output
+
+    def test_format_values_includes_relationship_context(self):
+        ledger = self._make_ledger_with_values_and_relationships()
+        backend = MockBackend()
+        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        output = gen._format_values_claims()
+        assert "Relationship Context" in output
+        assert "trusted partner" in output
+
+    def test_format_values_excludes_below_threshold(self):
+        ledger = self._make_ledger_with_values_and_relationships()
+        backend = MockBackend()
+        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        output = gen._format_values_claims()
+        assert "operational secrecy" not in output
+
+    def test_format_values_empty_when_no_value_claims(self):
+        ledger = ClaimLedger()
+        # Only relationship claims, no value claims
+        c = ledger.add_claim(
+            path="relationships/paperinik/dynamic",
+            text="Partner",
+            scene_id="s1",
+            justification="R1",
+        )
+        ledger.support_claim(claim_id=c.id, scene_id="s2", justification="R2")
+        backend = MockBackend()
+        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        output = gen._format_values_claims()
+        assert output == ""
+
+
+# ============================================================================
+# SoulDocumentGenerator split output
+# ============================================================================
+
+
+class TestGenerateSplitOutput:
+    def test_generate_returns_section_map(self):
+        ledger = ClaimLedger()
+        c = ledger.add_claim(
+            path="identity/bio",
+            text="Uno is an AI",
+            scene_id="s1",
+            justification="R1",
+        )
+        ledger.support_claim(claim_id=c.id, scene_id="s2", justification="R2")
+        backend = MockBackend("## Generated Section Content")
+        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        success, document, section_map = gen.generate()
+        assert success
+        assert "# Uno - Soul Document" in document
+        assert len(section_map) > 0
+        for section_name, content in section_map.items():
+            assert section_name in SECTION_ORDER
+            assert content == "## Generated Section Content"
+
+    def test_generate_empty_ledger(self):
+        ledger = ClaimLedger()
+        backend = MockBackend()
+        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        success, result, section_map = gen.generate()
+        assert not success
+        assert section_map == {}

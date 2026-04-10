@@ -74,6 +74,7 @@ PROGRESS = Progress(
 SECTION_ORDER = [
     "identity",
     "psychology",
+    "values",
     "communication",
     "motivations",
     "capabilities",
@@ -82,7 +83,15 @@ SECTION_ORDER = [
     "vignettes",
 ]
 
-VALID_SECTIONS = set(SECTION_ORDER)
+VALID_CLAIM_SECTIONS = {
+    "identity",
+    "psychology",
+    "communication",
+    "motivations",
+    "capabilities",
+    "behavior",
+    "relationships",
+}
 
 # Valid hierarchical paths
 VALID_PATHS = {
@@ -120,6 +129,9 @@ VALID_PATHS = {
     "psychology/emotional/triggers/anger",
     "psychology/emotional/triggers/sadness",
     "psychology/emotional/triggers/fear",
+    # Psychology - Values
+    "psychology/values/core",
+    "psychology/values/tradeoffs",
     # Psychology - Growth / Arc (B1)
     "psychology/growth/emotional_arc",
     "psychology/growth/relationship_arc",
@@ -196,7 +208,7 @@ def is_valid_claim_path(path: str) -> bool:
     if len(parts) < 2:
         return False
     section = parts[0]
-    if section not in VALID_SECTIONS:
+    if section not in VALID_CLAIM_SECTIONS:
         return False
     if section == "relationships":
         if len(parts) == 2:
@@ -481,7 +493,11 @@ him and how his words land.
    - CONTRADICTS existing claim -> contradict_claim() with justification
    - ADDS NUANCE -> view_claims() to review, then refine_claim()
    - GENUINELY NEW -> add_claim()
-4. Brief summary when done
+4. Pay special attention to VALUES and TRADEOFFS:
+   - If the scene reveals what Uno cares about, add a psychology/values/core claim
+   - If two values are in tension, add a psychology/values/tradeoffs claim noting which wins and how strongly
+   - Use concrete, character-specific language (name the characters and situations)
+5. Brief summary when done
 
 ## Claim Paths (use these exact paths)
 
@@ -517,6 +533,10 @@ Moral Compass:
 - psychology/moral_compass/conflict_resolution: How conflicts are resolved
 - psychology/moral_compass/value_hierarchy: Which values win when they conflict
 - psychology/moral_compass/dilemma_patterns: Recurring ethical tensions and resolutions
+
+Values (character-specific observations about what Uno cares about):
+- psychology/values/core: What Uno values, using concrete character-specific language (e.g. "protecting Paperinik", "maintaining tower secrecy")
+- psychology/values/tradeoffs: When two values conflict, which one wins and how strongly (e.g. "protecting Paperinik vs following protocol: chose protecting Paperinik, strong")
 
 Emotional Profile:
 - psychology/emotional/base_mood
@@ -663,6 +683,41 @@ How does Uno see himself? Does he consider himself alive? How does he relate to 
 How Uno evolves over the series, with issue references where available.
 
 Write flowing prose capturing psychological makeup with concrete examples.""",
+    "values": """## Core Values and Tradeoffs
+
+You are given TWO types of claims:
+1. **Value claims** (psychology/values/*): Character-specific observations about what
+   Uno cares about, e.g. "protecting Paperinik from harm", "obeying Everett Ducklair".
+2. **Relationship claims** (relationships/*): What each character represents to Uno,
+   e.g. Paperinik is his trusted partner, Everett is his creator.
+
+Your task is to **generalize** the character-specific values into abstract,
+role-based values using the relationship context. For example:
+- "protecting Paperinik" + "Paperinik is trusted partner" -> "loyalty to trusted allies"
+- "obeying Everett's directives" + "Everett is creator" -> "deference to authority/creator"
+- "maintaining tower secrecy" -> "operational security" (already abstract)
+
+### Output Format
+
+#### Ranked Values
+List Uno's core values from most to least important, based on how often they appear
+and how consistently they win in tradeoffs. For each value:
+- **Value name**: A generic, role-based label (2-5 words)
+- **Description**: 1-2 sentences explaining what this means for Uno
+- **Grounding**: The concrete character-specific examples that support this
+
+#### Tradeoff Pairs
+For each pair of values that conflict, describe:
+- Which value typically wins
+- How strongly (strong/reluctant/contextual)
+- A concrete example from the claims
+
+### Rules
+- Every value claim must be reflected in the output
+- Use the relationship claims ONLY to inform generalization, not as values themselves
+- Keep value names generic and reusable (no character names in value labels)
+- Order by importance: frequency of expression + consistency of winning tradeoffs
+- Output ONLY the section content (starting with the ## heading), no preamble""",
     "communication": """## Communication Style
 
 ### Voice and Tone
@@ -1182,6 +1237,17 @@ class SceneProcessor:
             )
             parts.append(f"**Subtext:** {reflection.subtext}")
             parts.append(f"**Reasoning:** {reflection.reasoning}")
+            if reflection.values_expressed:
+                parts.append("**Values expressed:**")
+                for v in reflection.values_expressed:
+                    parts.append(f"- {v.value}: {v.description}")
+            if reflection.tradeoffs:
+                parts.append("**Tradeoffs:**")
+                for t in reflection.tradeoffs:
+                    parts.append(
+                        f"- {t.value_a} vs {t.value_b}: chose {t.chosen} "
+                        f"({t.strength}) -- {t.reasoning}"
+                    )
             parts.append(
                 "\nUse these observations as additional evidence when updating claims.\n"
             )
@@ -1587,6 +1653,57 @@ class SoulDocumentGenerator:
 
         return "\n".join(lines)
 
+    def _format_values_claims(self) -> str:
+        """Format values claims alongside relationship claims for generalization."""
+        value_claims = [
+            claim
+            for claims in self._ledger.get_claims_by_path("psychology/values").values()
+            for claim in claims
+            if claim.support_count >= self._threshold
+        ]
+        relationship_claims = [
+            c
+            for c in self._ledger.get_claims_by_section("relationships").get(
+                "relationships", []
+            )
+            if c.support_count >= self._threshold
+        ]
+
+        if not value_claims:
+            return ""
+
+        lines: list[str] = []
+
+        lines.append("## Value Claims (character-specific)")
+        by_path: dict[str, list[Claim]] = defaultdict(list)
+        for claim in value_claims:
+            by_path[claim.path].append(claim)
+        for path in sorted(by_path.keys()):
+            lines.append(f"### Path: {path}")
+            for claim in by_path[path]:
+                lines.append(
+                    f"**Claim (support: +{claim.support_count}):** {claim.text}"
+                )
+                if claim.quotes:
+                    for q in claim.quotes:
+                        lines.append(f'  - "{q.text}" — {q.context}')
+            lines.append("")
+
+        if relationship_claims:
+            lines.append("## Relationship Context (for generalization)")
+            by_rel_path: dict[str, list[Claim]] = defaultdict(list)
+            for claim in relationship_claims:
+                by_rel_path[claim.path].append(claim)
+            for path in sorted(by_rel_path.keys()):
+                lines.append(f"### Path: {path}")
+                for claim in by_rel_path[path]:
+                    lines.append(
+                        f"**Claim (support: +{claim.support_count}):** {claim.text}"
+                    )
+                lines.append("")
+
+        return "\n".join(lines)
+
     def _format_vignette_claims(self) -> str:
         """Format top claims across all sections for vignette generation."""
         all_claims: list[Claim] = []
@@ -1607,6 +1724,8 @@ class SoulDocumentGenerator:
     def _generate_section(self, section: str) -> tuple[bool, str]:
         if section == "vignettes":
             claims_text = self._format_vignette_claims()
+        elif section == "values":
+            claims_text = self._format_values_claims()
         else:
             claims_text = self._format_section_claims(section)
 
@@ -1646,22 +1765,24 @@ class SoulDocumentGenerator:
         self._ledger.accumulate_usage(result)
         return True, result.text
 
-    def generate(self) -> tuple[bool, str]:
+    def generate(self) -> tuple[bool, str, dict[str, str]]:
         sections: list[str] = []
+        section_map: dict[str, str] = {}
 
         for section in SECTION_ORDER:
             success, result = self._generate_section(section)
             if not success:
                 log.error(f"Soul document generation failed at section '{section}'")
-                return False, result
+                return False, result, {}
             if result:
                 sections.append(result)
+                section_map[section] = result
 
         if not sections:
-            return False, "No claims meet the support threshold"
+            return False, "No claims meet the support threshold", {}
 
         document = "# Uno - Soul Document\n\n" + "\n\n".join(sections)
-        return True, document
+        return True, document, section_map
 
 
 # ============================================================================
@@ -1912,17 +2033,25 @@ def run_document_generation(
     console.print("\n[bold cyan]Generating soul document...[/bold cyan]")
 
     generator = SoulDocumentGenerator(backend, ledger, threshold)
-    success, result = generator.generate()
+    success, result, section_map = generator.generate()
 
     if success:
         with open(soul_doc_path, "w", encoding="utf-8") as f:
             f.write(result)
+
+        sections_dir = OUTPUT_DIR / "sections"
+        sections_dir.mkdir(parents=True, exist_ok=True)
+        for section_name, section_content in section_map.items():
+            section_path = sections_dir / f"section_{section_name}.md"
+            with open(section_path, "w", encoding="utf-8") as f:
+                f.write(section_content)
 
         tokens = count_tokens(result)
         words = len(result.split())
 
         console.print("\n[bold green]Soul document generated![/bold green]")
         console.print(f"Output: {path_str(soul_doc_path)}")
+        console.print(f"Sections: {path_str(sections_dir)}/")
         console.print(f"Size: {tokens:,} tokens (~{words:,} words)")
         console.print(f"Threshold: support >= {threshold}")
 
