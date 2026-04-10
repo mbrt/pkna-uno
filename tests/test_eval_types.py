@@ -36,12 +36,12 @@ class TestEvalPromptRoundTrip:
             messages=[{"role": "user", "content": "Who is Xadhoom?"}],
             user_summary="Anonymous",
             memory_context="",
-            tools=["search_wiki", "read_wiki", "delegate"],
+            tools=["search_knowledge", "read_knowledge", "delegate"],
             metadata={"expected_tool_use": "wiki", "prompt_source": "template"},
         )
         data = json.loads(prompt.model_dump_json())
         restored = EvalPrompt.model_validate(data)
-        assert restored.tools == ["search_wiki", "read_wiki", "delegate"]
+        assert restored.tools == ["search_knowledge", "read_knowledge", "delegate"]
         assert restored.metadata["expected_tool_use"] == "wiki"
 
 
@@ -68,7 +68,7 @@ class TestEvalTraceRoundTrip:
             suite="tool_use",
             model="qwen3.5-4b",
             messages=[{"role": "user", "content": "Hi"}],
-            tool_calls=[{"name": "search_wiki", "args": {"keywords": "test"}}],
+            tool_calls=[{"name": "search_knowledge", "args": {"keywords": "test"}}],
         )
         data = json.loads(trace.model_dump_json())
         restored = EvalTrace.model_validate(data)
@@ -186,7 +186,7 @@ class TestGenerateEvalPrompts:
         assert len(prompts) >= 3
         for p in prompts:
             assert p.suite == "social_reasoning"
-            assert "search_wiki" in p.tools
+            assert "search_knowledge" in p.tools
             assert p.user_summary != ""
 
     def test_tool_use_prompts(self):

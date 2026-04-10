@@ -1,11 +1,4 @@
-"""
-In-memory knowledge base search and retrieval tools.
-
-Loads all wiki content into memory on startup, organized hierarchically
-by markdown headers. Provides 2 tools for LLM to access knowledge:
-1. search_knowledge - keyword search returning short snippets with segment IDs
-2. read_knowledge - retrieve full content of a specific segment by ID
-"""
+"""Wiki tools for searching and reading content from the PKNA wiki."""
 
 import re
 from dataclasses import dataclass
@@ -182,7 +175,7 @@ def get_wiki_index() -> WikiIndex:
 # Tool functions for LLM
 
 
-def search_knowledge(keywords: str, max_results: int = 5) -> str:
+def search_wiki(keywords: str, max_results: int = 5) -> str:
     """Search the knowledge base for keywords and return relevant segments with snippets.
 
     Fast in-memory keyword search across all knowledge base content.
@@ -220,7 +213,7 @@ def search_knowledge(keywords: str, max_results: int = 5) -> str:
     return "\n".join(formatted)
 
 
-def read_knowledge(segment_id: str) -> str:
+def read_wiki_segment(segment_id: str) -> str:
     """Read full content of a specific knowledge base segment.
 
     Retrieves complete text of a segment identified by its ID.

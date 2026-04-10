@@ -35,6 +35,7 @@ class EvalPrompt(BaseModel):
     messages: list[dict[str, str]]
     user_summary: str
     memory_context: str
+    memory_bank_id: str = ""
     tools: list[str]
     metadata: dict[str, Any]
 

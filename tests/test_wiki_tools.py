@@ -1,12 +1,12 @@
-"""Unit tests for in-memory wiki tools."""
+"""Unit tests for in-memory knowledge base tools."""
 
 from pkna.wiki_tools import (
     WIKI_ROOT,
     WikiIndex,
     WikiSegment,
     get_wiki_index,
-    read_wiki_segment,
-    search_wiki,
+    read_knowledge,
+    search_knowledge,
 )
 
 
@@ -42,18 +42,18 @@ class TestSearch:
 
     def test_search_finds_results(self):
         """Test that search returns results for known content."""
-        result = search_wiki("Everett Ducklair")
+        result = search_knowledge("Everett Ducklair")
         assert "Found" in result or "matches" in result.lower()
         assert "ducklair" in result.lower()
 
     def test_search_no_results(self):
         """Test that search handles no results gracefully."""
-        result = search_wiki("ZZZNonexistentXYZ123")
-        assert "No wiki entries found" in result
+        result = search_knowledge("ZZZNonexistentXYZ123")
+        assert "No entries found" in result
 
     def test_search_empty_keywords(self):
         """Test that empty keywords are handled."""
-        result = search_wiki("")
+        result = search_knowledge("")
         assert "Error" in result
 
     def test_search_max_results_limit(self):
@@ -64,14 +64,12 @@ class TestSearch:
 
     def test_search_returns_display_paths(self):
         """Test that results include hierarchical paths."""
-        result = search_wiki("Uno")
-        # Should contain file paths with > separators
+        result = search_knowledge("Uno")
         assert ".md >" in result or ">" in result
 
     def test_search_returns_segment_ids(self):
         """Test that search results include segment IDs."""
-        result = search_wiki("Uno")
-        # Should contain segment IDs in brackets
+        result = search_knowledge("Uno")
         assert "[" in result and "::" in result
 
 
@@ -82,21 +80,20 @@ class TestReadSegment:
         """Test reading a valid segment."""
         index = get_wiki_index()
 
-        # Get first segment ID from index
         if index.segments:
             segment_id = index.segments[0].segment_id
-            result = read_wiki_segment(segment_id)
+            result = read_knowledge(segment_id)
             assert "Error" not in result
             assert "Segment:" in result
 
     def test_read_segment_not_found(self):
         """Test reading nonexistent segment."""
-        result = read_wiki_segment("nonexistent::segment::id")
+        result = read_knowledge("nonexistent::segment::id")
         assert "Error" in result or "not found" in result.lower()
 
     def test_read_segment_empty_id(self):
         """Test that empty segment ID is handled."""
-        result = read_wiki_segment("")
+        result = read_knowledge("")
         assert "Error" in result
 
 
