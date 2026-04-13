@@ -148,22 +148,30 @@ Sub-agents are opaque to the user.
 
 ### Dataset Generation Agent (dataset-generation-agent.md)
 
-- [ ] **Context composer** -- no standalone implementation; the eval inference
-  harness has a `compose_context` function, but the full context composer
-  (system prompt + user summary + memory context + tool declarations +
-  conversation history) for SFT data generation is not built.
-- [ ] **Prompt bank** -- manual prompts (~100-150), generated prompts
-  (~400-500), and scene-derived prompts (~229) are not yet produced for
-  training. Only eval prompts exist.
-- [ ] **Execution loop** -- the trace capture pipeline (run strong model through
-  scenarios, record thinking + tool calls + responses as JSONL training
-  examples) is not implemented.
+- [x] **Data types** -- `pkna/datagen_types.py`: Pydantic models for the
+  datagen pipeline (`DatagenPrompt`, `DatagenTrace`, `QualityScore`,
+  `ScoredTrace`).
+- [x] **Context composer** -- `datagen/run_datagen.py`:
+  `compose_datagen_context()` builds the full system prompt using the full
+  template with user summary and memory context slots.
+- [x] **Prompt bank** -- `datagen/generate_prompts.py`: 70+ manual prompts
+  across 9 categories (emotional, factual, delegation, identity, adversarial,
+  register shift, memory, multi-turn, casual); scene-derived prompt extraction
+  from `output/extract-emotional/v2/` (365 scenes available); LLM-generated
+  prompts from 40 scenario templates (opt-in via `--include-generated`).
+- [x] **Execution loop** -- `datagen/run_datagen.py`: runs strong model through
+  prompts, records thinking + tool calls + responses as `DatagenTrace` JSONL.
+  Supports single-turn and multi-turn (via user simulator). Uses
+  `eval_mode=False` so memory tools actually write. Resume support via
+  completed ID tracking.
 - [x] **User simulator** -- `datagen/user_simulator.py`: generates user
   messages given a conversation history, user profile, and per-turn directive.
-  Currently used by the eval stability suite; ready for dataset generation.
-- [ ] **Quality filtering** -- LLM-as-judge filtering of raw traces (character
-  consistency, thinking quality, tool correctness, length, language) is not
-  implemented.
+  Used by the eval stability suite and the dataset generation execution loop.
+- [x] **Quality filtering** -- `datagen/filter_traces.py`: programmatic checks
+  (response length 10-500 tokens, language consistency via Italian/English
+  heuristic) plus LLM-as-judge scoring (character consistency 1-5, thinking
+  quality 1-5, tool correctness pass/fail/na). Outputs scored traces and
+  filtered (passing only) traces. Resume support for incremental scoring.
 - [ ] **Background chat** -- Tulu3 subset sampling with lightweight thinking
   traces is not implemented.
 
