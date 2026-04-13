@@ -88,9 +88,11 @@ Sub-agents are opaque to the user.
 - [x] **Stage 2: Run inference** -- `evals/run_eval_inference.py`: loads
   prompts, composes context (system prompt + tools + memory bank), calls the
   backend, writes `EvalTrace` JSONL. Supports resume (skip completed IDs).
-- [ ] **Stage 2: Thinking/tool-call capture** -- the inference harness records
-  the visible response but does not yet capture thinking traces or tool call
-  details in the `EvalTrace`.
+- [x] **Stage 2: Thinking/tool-call capture** -- `GenerateResult` carries
+  `thinking`, `tool_calls`, and `messages`; both Gemini (manual tool loop +
+  `ThinkingConfig`) and Anthropic (thinking blocks + tool-call recording)
+  backends capture full traces; `run_single_prompt` propagates them into
+  `EvalTrace`.
 - [ ] **Stage 2: Multi-turn stability** -- the stability suite requires a user
   simulator driving 10-20 turn conversations; this is not yet implemented.
 - [ ] **Stage 3: Score traces** -- no scoring script exists. Needs programmatic

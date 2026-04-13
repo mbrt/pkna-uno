@@ -21,10 +21,12 @@ from anthropic.types import MessageParam, ToolParam
 from dotenv import load_dotenv
 from google import genai
 from google.genai.types import (
+    AutomaticFunctionCallingConfig,
     Content,
     GenerateContentConfig,
     HttpOptions,
     Part,
+    ThinkingConfig,
 )
 from pydantic import BaseModel, TypeAdapter
 
@@ -79,6 +81,9 @@ class GenerateResult:
     text: str
     model_name: str
     usage: dict[str, Any] = field(default_factory=dict)
+    thinking: str | None = None
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    messages: list[dict[str, Any]] = field(default_factory=list)
 
 
 class LLMBackend(ABC):
@@ -115,6 +120,40 @@ class GeminiBackend(LLMBackend):
             http_options=HttpOptions(timeout=API_TIMEOUT_SECONDS * 1000)
         )
 
+    @staticmethod
+    def _is_retryable(e: Exception) -> bool:
+        s = str(e).lower()
+        is_timeout = "timeout" in s or "timed out" in s
+        is_rate = ("resource" in s and "exhausted" in s) or "429" in s
+        return is_timeout or is_rate
+
+    @staticmethod
+    def _extract_usage(response: Any) -> dict[str, Any]:
+        if not response.usage_metadata:
+            return {}
+        um = response.usage_metadata
+        return {
+            "prompt_tokens": um.prompt_token_count,
+            "completion_tokens": um.candidates_token_count,
+            "total_tokens": um.total_token_count,
+        }
+
+    @staticmethod
+    def _extract_parts(response: Any) -> tuple[str | None, str]:
+        """Extract thinking summary and visible text from a Gemini response."""
+        thinking_parts: list[str] = []
+        text_parts: list[str] = []
+        for part in response.candidates[0].content.parts:
+            if not part.text:
+                continue
+            if part.thought:
+                thinking_parts.append(part.text)
+            else:
+                text_parts.append(part.text)
+        thinking = "\n".join(thinking_parts) if thinking_parts else None
+        text = "\n".join(text_parts)
+        return thinking, text
+
     def generate(
         self,
         system: str,
@@ -126,49 +165,156 @@ class GeminiBackend(LLMBackend):
             "system_instruction": system,
             "temperature": 0.7,
             "top_p": 0.95,
+            "thinking_config": ThinkingConfig(include_thoughts=True),
         }
         if tools:
             config_kwargs["tools"] = tools
+            config_kwargs["automatic_function_calling"] = (
+                AutomaticFunctionCallingConfig(disable=True)
+            )
         if response_schema:
             config_kwargs["response_mime_type"] = "application/json"
             config_kwargs["response_schema"] = list[response_schema]
 
         config = GenerateContentConfig(**config_kwargs)
-        conversation = [
+        conversation: list[Content] = [
             Content(role=m["role"], parts=[Part.from_text(text=m["content"])])
             for m in messages
         ]
 
-        def _is_retryable(e: Exception) -> bool:
-            s = str(e).lower()
-            is_timeout = "timeout" in s or "timed out" in s
-            is_rate = ("resource" in s and "exhausted" in s) or "429" in s
-            return is_timeout or is_rate
+        if not tools:
+            return self._generate_no_tools(config, conversation)
+        return self._generate_with_tools(config, conversation, tools)
 
+    def _generate_no_tools(
+        self,
+        config: GenerateContentConfig,
+        conversation: list[Content],
+    ) -> GenerateResult | None:
         def _call():
             return self._client.models.generate_content(
                 model=self._model,
-                contents=conversation,
+                contents=conversation,  # type: ignore[arg-type]
                 config=config,
             )
 
-        response = _retry_with_backoff(_call, _is_retryable)
+        response = _retry_with_backoff(_call, self._is_retryable)
         if response is None:
             return None
 
-        usage: dict[str, Any] = {}
-        if response.usage_metadata:
-            um = response.usage_metadata
-            usage = {
-                "prompt_tokens": um.prompt_token_count,
-                "completion_tokens": um.candidates_token_count,
-                "total_tokens": um.total_token_count,
-            }
+        thinking, text = self._extract_parts(response)
+        msg: dict[str, Any] = {"role": "assistant", "content": text}
+        if thinking:
+            msg["thinking"] = thinking
 
         return GenerateResult(
-            text=response.text or "",
+            text=text,
             model_name=self._model,
-            usage=usage,
+            usage=self._extract_usage(response),
+            thinking=thinking,
+            messages=[msg],
+        )
+
+    def _generate_with_tools(
+        self,
+        config: GenerateContentConfig,
+        conversation: list[Content],
+        tools: list[Any],
+    ) -> GenerateResult | None:
+        tool_map: dict[str, Any] = {fn.__name__: fn for fn in tools}
+        all_thinking: list[str] = []
+        all_tool_calls: list[dict[str, Any]] = []
+        result_messages: list[dict[str, Any]] = []
+        cumulative_usage: dict[str, int] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+
+        for _ in range(MAX_TOOL_ITERATIONS):
+
+            def _call():
+                return self._client.models.generate_content(
+                    model=self._model,
+                    contents=conversation,  # type: ignore[arg-type]
+                    config=config,
+                )
+
+            response = _retry_with_backoff(_call, self._is_retryable)
+            if response is None:
+                return None
+
+            usage = self._extract_usage(response)
+            for k in cumulative_usage:
+                cumulative_usage[k] += usage.get(k, 0)
+
+            thinking, text = self._extract_parts(response)
+            if thinking:
+                all_thinking.append(thinking)
+
+            fn_calls = response.function_calls
+            if not fn_calls:
+                msg: dict[str, Any] = {"role": "assistant", "content": text}
+                if thinking:
+                    msg["thinking"] = thinking
+                result_messages.append(msg)
+                break
+
+            # Record assistant turn with tool calls
+            tc_records: list[dict[str, Any]] = []
+            for fc in fn_calls:
+                tc_records.append({"name": fc.name, "arguments": dict(fc.args)})
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": text,
+                "tool_calls": tc_records,
+            }
+            if thinking:
+                assistant_msg["thinking"] = thinking
+            result_messages.append(assistant_msg)
+
+            # Append the model's raw response to conversation for the next turn
+            conversation.append(response.candidates[0].content)
+
+            # Execute tools and build function response parts
+            fn_response_parts: list[Part] = []
+            for fc in fn_calls:
+                fn = tool_map.get(fc.name)
+                if fn is None:
+                    result_text = f"Error: unknown tool '{fc.name}'"
+                else:
+                    try:
+                        result_text = fn(**fc.args)
+                    except Exception as e:
+                        result_text = f"Error: {e}"
+
+                all_tool_calls.append(
+                    {"name": fc.name, "arguments": dict(fc.args), "result": result_text}
+                )
+                result_messages.append(
+                    {"role": "tool", "name": fc.name, "content": result_text}
+                )
+                fn_response_parts.append(
+                    Part.from_function_response(
+                        name=fc.name, response={"result": result_text}
+                    )
+                )
+
+            conversation.append(Content(role="tool", parts=fn_response_parts))
+        else:
+            log.warning("Gemini: max tool iterations reached")
+            return None
+
+        combined_thinking = "\n".join(all_thinking) if all_thinking else None
+        final_text = result_messages[-1].get("content", "") if result_messages else ""
+
+        return GenerateResult(
+            text=final_text,
+            model_name=self._model,
+            usage=cumulative_usage,
+            thinking=combined_thinking,
+            tool_calls=all_tool_calls,
+            messages=result_messages,
         )
 
 
@@ -338,17 +484,41 @@ class AnthropicBackend(LLMBackend):
             return self._generate_with_schema(system, messages, response_schema)
         return self._generate_plain(system, messages)
 
+    @staticmethod
+    def _extract_usage(response: Any) -> dict[str, Any]:
+        if not (hasattr(response, "usage") and response.usage):
+            return {}
+        return {
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+        }
+
+    @staticmethod
+    def _extract_content(response: Any) -> tuple[str | None, str]:
+        """Extract thinking text and visible text from an Anthropic response."""
+        thinking_parts: list[str] = []
+        text_parts: list[str] = []
+        for block in response.content:
+            if block.type == "thinking":
+                thinking_parts.append(block.thinking)
+            elif hasattr(block, "text"):
+                text_parts.append(block.text)
+        thinking = "\n".join(thinking_parts) if thinking_parts else None
+        text = "\n".join(text_parts)
+        return thinking, text
+
     def _make_result(self, response: Any) -> GenerateResult:
-        usage: dict[str, Any] = {}
-        if hasattr(response, "usage") and response.usage:
-            usage = {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-            }
+        usage = self._extract_usage(response)
+        thinking, text = self._extract_content(response)
+        msg: dict[str, Any] = {"role": "assistant", "content": text}
+        if thinking:
+            msg["thinking"] = thinking
         return GenerateResult(
-            text=self._extract_text(response),
+            text=text,
             model_name=self._model,
             usage=usage,
+            thinking=thinking,
+            messages=[msg],
         )
 
     def _generate_plain(
@@ -416,6 +586,9 @@ class AnthropicBackend(LLMBackend):
             "input_tokens": 0,
             "output_tokens": 0,
         }
+        all_thinking: list[str] = []
+        all_tool_calls: list[dict[str, Any]] = []
+        result_messages: list[dict[str, Any]] = []
 
         for _ in range(MAX_TOOL_ITERATIONS):
 
@@ -433,21 +606,42 @@ class AnthropicBackend(LLMBackend):
             if response is None:
                 return None
 
-            if hasattr(response, "usage") and response.usage:
-                cumulative_usage["input_tokens"] += response.usage.input_tokens
-                cumulative_usage["output_tokens"] += response.usage.output_tokens
+            usage = self._extract_usage(response)
+            for k in cumulative_usage:
+                cumulative_usage[k] += usage.get(k, 0)
+
+            thinking, text = self._extract_content(response)
+            if thinking:
+                all_thinking.append(thinking)
 
             if response.stop_reason != "tool_use":
-                return GenerateResult(
-                    text=self._extract_text(response),
-                    model_name=self._model,
-                    usage=cumulative_usage,
-                )
+                msg: dict[str, Any] = {"role": "assistant", "content": text}
+                if thinking:
+                    msg["thinking"] = thinking
+                result_messages.append(msg)
+                break
+
+            # Build assistant message with tool calls
+            tc_records: list[dict[str, Any]] = []
+            for block in response.content:
+                if block.type == "tool_use":
+                    tc_records.append(
+                        {"name": block.name, "arguments": dict(block.input)}
+                    )
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": text,
+                "tool_calls": tc_records,
+            }
+            if thinking:
+                assistant_msg["thinking"] = thinking
+            result_messages.append(assistant_msg)
 
             api_messages.append(
                 MessageParam(role="assistant", content=response.content)
             )
 
+            # Execute tools
             tool_results: list[dict[str, Any]] = []
             for block in response.content:
                 if block.type != "tool_use":
@@ -460,6 +654,17 @@ class AnthropicBackend(LLMBackend):
                         result_text = fn(**block.input)
                     except Exception as e:
                         result_text = f"Error: {e}"
+
+                all_tool_calls.append(
+                    {
+                        "name": block.name,
+                        "arguments": dict(block.input),
+                        "result": result_text,
+                    }
+                )
+                result_messages.append(
+                    {"role": "tool", "name": block.name, "content": result_text}
+                )
                 tool_results.append(
                     {
                         "type": "tool_result",
@@ -471,17 +676,21 @@ class AnthropicBackend(LLMBackend):
             api_messages.append(
                 MessageParam(role="user", content=tool_results)  # type: ignore[typeddict-item]
             )
+        else:
+            log.warning("Max tool iterations reached")
+            return None
 
-        log.warning("Max tool iterations reached")
-        return None
+        combined_thinking = "\n".join(all_thinking) if all_thinking else None
+        final_text = result_messages[-1].get("content", "") if result_messages else ""
 
-    @staticmethod
-    def _extract_text(response: Any) -> str:
-        parts: list[str] = []
-        for block in response.content:
-            if hasattr(block, "text"):
-                parts.append(block.text)
-        return "\n".join(parts)
+        return GenerateResult(
+            text=final_text,
+            model_name=self._model,
+            usage=cumulative_usage,
+            thinking=combined_thinking,
+            tool_calls=all_tool_calls,
+            messages=result_messages,
+        )
 
 
 # ============================================================================

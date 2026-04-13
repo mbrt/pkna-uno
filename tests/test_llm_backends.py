@@ -2,7 +2,36 @@
 
 from pydantic import BaseModel, TypeAdapter
 
-from pkna.llm_backends import _add_additional_properties_false
+from pkna.llm_backends import GenerateResult, _add_additional_properties_false
+
+
+class TestGenerateResult:
+    def test_defaults(self):
+        r = GenerateResult(text="hello", model_name="test-model")
+        assert r.text == "hello"
+        assert r.model_name == "test-model"
+        assert r.usage == {}
+        assert r.thinking is None
+        assert r.tool_calls == []
+        assert r.messages == []
+
+    def test_with_thinking_and_tool_calls(self):
+        tc = [{"name": "search_knowledge", "arguments": {"query": "x"}, "result": "y"}]
+        msgs = [
+            {"role": "assistant", "thinking": "hmm", "content": "ok", "tool_calls": []},
+            {"role": "tool", "name": "search_knowledge", "content": "y"},
+            {"role": "assistant", "content": "done"},
+        ]
+        r = GenerateResult(
+            text="done",
+            model_name="m",
+            thinking="hmm",
+            tool_calls=tc,
+            messages=msgs,
+        )
+        assert r.thinking == "hmm"
+        assert r.tool_calls == tc
+        assert len(r.messages) == 3
 
 
 class TestAddAdditionalPropertiesFalse:

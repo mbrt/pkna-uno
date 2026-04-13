@@ -1,14 +1,19 @@
 """Unit tests for the eval inference harness."""
 
+from collections.abc import Callable
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from pkna.eval_types import EvalPrompt, EvalTrace
+from pkna.llm_backends import GenerateResult, LLMBackend
 
 from evals.run_eval_inference import (
     compose_context,
     load_completed_ids,
     load_memory_bank,
     load_prompts,
+    run_single_prompt,
 )
 
 
@@ -142,3 +147,100 @@ class TestComposeContext:
         prompt = _make_prompt(suite="unknown_future_suite")
         result = compose_context(prompt)
         assert "sarcastic" in result
+
+
+class FakeBackend(LLMBackend):
+    """Backend that returns a pre-configured GenerateResult."""
+
+    def __init__(self, result: GenerateResult | None):
+        self._result = result
+
+    def generate(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        tools: list[Callable[..., str]] | None = None,
+        response_schema: type[BaseModel] | None = None,
+    ) -> GenerateResult | None:
+        return self._result
+
+
+class TestRunSinglePrompt:
+    def test_propagates_thinking_and_tool_calls(self, tmp_path: Path):
+        tc = [{"name": "search_knowledge", "arguments": {"query": "x"}, "result": "y"}]
+        msgs = [
+            {
+                "role": "assistant",
+                "content": "searching...",
+                "thinking": "need to look up",
+                "tool_calls": [
+                    {"name": "search_knowledge", "arguments": {"query": "x"}}
+                ],
+            },
+            {"role": "tool", "name": "search_knowledge", "content": "y"},
+            {"role": "assistant", "content": "Here is the answer."},
+        ]
+        backend = FakeBackend(
+            GenerateResult(
+                text="Here is the answer.",
+                model_name="test-model",
+                thinking="need to look up",
+                tool_calls=tc,
+                messages=msgs,
+            )
+        )
+        prompt = _make_prompt(id="tc-001", suite="tool_use")
+        trace = run_single_prompt(prompt, backend, "test-model", tmp_path)
+
+        assert trace is not None
+        assert trace.thinking == "need to look up"
+        assert trace.tool_calls == tc
+        assert trace.messages[0] == {"role": "user", "content": "Hello"}
+        assert trace.messages[1]["role"] == "assistant"
+        assert trace.messages[1]["thinking"] == "need to look up"
+        assert trace.messages[-1] == {
+            "role": "assistant",
+            "content": "Here is the answer.",
+        }
+
+    def test_plain_response_without_tools(self, tmp_path: Path):
+        backend = FakeBackend(
+            GenerateResult(
+                text="Ciao!",
+                model_name="test-model",
+                thinking="social greeting",
+                messages=[
+                    {
+                        "role": "assistant",
+                        "content": "Ciao!",
+                        "thinking": "social greeting",
+                    }
+                ],
+            )
+        )
+        prompt = _make_prompt(id="plain-001", suite="personality")
+        trace = run_single_prompt(prompt, backend, "test-model", tmp_path)
+
+        assert trace is not None
+        assert trace.thinking == "social greeting"
+        assert trace.tool_calls == []
+        assert len(trace.messages) == 2
+        assert trace.messages[1]["content"] == "Ciao!"
+
+    def test_fallback_when_messages_empty(self, tmp_path: Path):
+        backend = FakeBackend(
+            GenerateResult(text="fallback text", model_name="test-model")
+        )
+        prompt = _make_prompt(id="fb-001")
+        trace = run_single_prompt(prompt, backend, "test-model", tmp_path)
+
+        assert trace is not None
+        assert trace.messages[-1] == {"role": "assistant", "content": "fallback text"}
+        assert trace.thinking is None
+        assert trace.tool_calls == []
+
+    def test_returns_none_on_backend_failure(self, tmp_path: Path):
+        backend = FakeBackend(None)
+        prompt = _make_prompt(id="fail-001")
+        trace = run_single_prompt(prompt, backend, "test-model", tmp_path)
+        assert trace is None

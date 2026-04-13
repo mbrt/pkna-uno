@@ -119,19 +119,19 @@ def run_single_prompt(
         log.error(f"Inference failed for prompt {prompt.id}")
         return None
 
-    tool_calls: list[dict[str, Any]] = []
-    thinking: str | None = None
-
     messages: list[dict[str, Any]] = list(prompt.messages)
-    messages.append({"role": "assistant", "content": result.text})
+    if result.messages:
+        messages.extend(result.messages)
+    else:
+        messages.append({"role": "assistant", "content": result.text})
 
     return EvalTrace(
         prompt_id=prompt.id,
         suite=prompt.suite,
         model=model_name,
         messages=messages,
-        tool_calls=tool_calls,
-        thinking=thinking,
+        tool_calls=result.tool_calls,
+        thinking=result.thinking,
     )
 
 
