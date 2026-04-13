@@ -24,5 +24,5 @@ tar --append -f pkna-llm-backup.tar \
     input/ output/ input-files.txt
 
 # Compress backup
-rm -f pkna-llm-backup.tar.bz2
-bzip2 --best "pkna-llm-backup.tar"
+rm -f pkna-llm-backup.tar.*
+xz "pkna-llm-backup.tar"

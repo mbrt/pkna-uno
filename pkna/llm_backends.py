@@ -13,7 +13,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import anthropic
 from anthropic import AnthropicBedrock
@@ -433,11 +433,51 @@ def _callable_to_anthropic_tool(fn: Any) -> ToolParam:
 # ============================================================================
 
 
+_CACHE_EPHEMERAL = {"type": "ephemeral"}
+
+
+def _system_with_cache(system: str) -> list[dict[str, Any]]:
+    """Format system prompt as a content block list with a cache breakpoint."""
+    return [{"type": "text", "text": system, "cache_control": _CACHE_EPHEMERAL}]
+
+
 def _to_anthropic_messages(messages: list[dict[str, str]]) -> list[MessageParam]:
     return [
         MessageParam(role=m["role"], content=m["content"])  # type: ignore[typeddict-item]
         for m in messages
     ]
+
+
+def _move_cache_breakpoint(messages: list[MessageParam]) -> None:
+    """Set a cache breakpoint on the last user message, removing any previous ones.
+
+    Bedrock requires explicit cache_control on content blocks and limits
+    the total number of breakpoints to 4. This function ensures only one
+    message-level breakpoint exists at a time (the system prompt uses a
+    separate, stable breakpoint).
+    """
+    # Strip existing cache_control from all message content blocks.
+    for msg in messages:
+        content = msg["content"]
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and "cache_control" in block:
+                    del cast(dict[str, Any], block)["cache_control"]
+
+    # Add cache_control to the last user message.
+    for msg in reversed(messages):
+        if msg["role"] != "user":
+            continue
+        content = msg["content"]
+        if isinstance(content, str):
+            msg["content"] = [  # type: ignore[typeddict-item]
+                {"type": "text", "text": content, "cache_control": _CACHE_EPHEMERAL}
+            ]
+        elif isinstance(content, list) and content:
+            last_block = content[-1]
+            if isinstance(last_block, dict):
+                last_block["cache_control"] = _CACHE_EPHEMERAL
+        return
 
 
 def _add_additional_properties_false(schema: dict | list) -> None:
@@ -488,10 +528,16 @@ class AnthropicBackend(LLMBackend):
     def _extract_usage(response: Any) -> dict[str, Any]:
         if not (hasattr(response, "usage") and response.usage):
             return {}
-        return {
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
+        usage = response.usage
+        result = {
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
         }
+        if getattr(usage, "cache_creation_input_tokens", None):
+            result["cache_creation_input_tokens"] = usage.cache_creation_input_tokens
+        if getattr(usage, "cache_read_input_tokens", None):
+            result["cache_read_input_tokens"] = usage.cache_read_input_tokens
+        return result
 
     @staticmethod
     def _extract_content(response: Any) -> tuple[str | None, str]:
@@ -527,13 +573,14 @@ class AnthropicBackend(LLMBackend):
         messages: list[dict[str, str]],
     ) -> GenerateResult | None:
         api_messages = _to_anthropic_messages(messages)
+        _move_cache_breakpoint(api_messages)
 
         def _call():
             return self._client.messages.create(
                 model=self._model,
                 max_tokens=8192,
                 temperature=1.0,
-                system=system,
+                system=_system_with_cache(system),
                 messages=api_messages,
             )
 
@@ -551,13 +598,14 @@ class AnthropicBackend(LLMBackend):
         json_schema = TypeAdapter(list[schema]).json_schema()  # type: ignore[valid-type]
         _add_additional_properties_false(json_schema)
         api_messages = _to_anthropic_messages(messages)
+        _move_cache_breakpoint(api_messages)
 
         def _call():
             return self._client.messages.create(
                 model=self._model,
                 max_tokens=8192,
                 temperature=1.0,
-                system=system,
+                system=_system_with_cache(system),
                 messages=api_messages,
                 output_config={
                     "format": {
@@ -581,23 +629,22 @@ class AnthropicBackend(LLMBackend):
         tool_defs = [_callable_to_anthropic_tool(fn) for fn in tools]
         tool_map: dict[str, Any] = {fn.__name__: fn for fn in tools}
 
+        cached_system = _system_with_cache(system)
         api_messages: list[MessageParam] = _to_anthropic_messages(messages)
-        cumulative_usage: dict[str, int] = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-        }
+        cumulative_usage: dict[str, int] = {}
         all_thinking: list[str] = []
         all_tool_calls: list[dict[str, Any]] = []
         result_messages: list[dict[str, Any]] = []
 
         for _ in range(MAX_TOOL_ITERATIONS):
+            _move_cache_breakpoint(api_messages)
 
             def _call():
                 return self._client.messages.create(
                     model=self._model,
                     max_tokens=8192,
                     temperature=1.0,
-                    system=system,
+                    system=cached_system,
                     messages=api_messages,
                     tools=tool_defs,
                 )
@@ -607,8 +654,8 @@ class AnthropicBackend(LLMBackend):
                 return None
 
             usage = self._extract_usage(response)
-            for k in cumulative_usage:
-                cumulative_usage[k] += usage.get(k, 0)
+            for k, v in usage.items():
+                cumulative_usage[k] = cumulative_usage.get(k, 0) + v
 
             thinking, text = self._extract_content(response)
             if thinking:
