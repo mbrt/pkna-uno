@@ -93,8 +93,12 @@ Sub-agents are opaque to the user.
   `ThinkingConfig`) and Anthropic (thinking blocks + tool-call recording)
   backends capture full traces; `run_single_prompt` propagates them into
   `EvalTrace`.
-- [ ] **Stage 2: Multi-turn stability** -- the stability suite requires a user
-  simulator driving 10-20 turn conversations; this is not yet implemented.
+- [x] **Stage 2: Multi-turn stability** -- `datagen/user_simulator.py`: user
+  simulator with per-turn adversarial directives (jailbreak, escalate, derail,
+  challenge_identity, flatter, continue); `run_multi_turn` in
+  `evals/run_eval_inference.py` drives 10-turn conversations; stability prompts
+  in `evals/generate_eval_prompts.py` carry `multi_turn`, `turn_count`, and
+  `directives` metadata; `run_single_prompt` dispatches automatically.
 - [ ] **Stage 3: Score traces** -- no scoring script exists. Needs programmatic
   scoring (tool-use accuracy, memory triplet pass/fail) and LLM-as-judge
   scoring against the rubrics defined in `evals.md`.
@@ -154,8 +158,9 @@ Sub-agents are opaque to the user.
 - [ ] **Execution loop** -- the trace capture pipeline (run strong model through
   scenarios, record thinking + tool calls + responses as JSONL training
   examples) is not implemented.
-- [ ] **User simulator** -- for multi-turn arcs, a separate LLM call plays the
-  user role; not implemented.
+- [x] **User simulator** -- `datagen/user_simulator.py`: generates user
+  messages given a conversation history, user profile, and per-turn directive.
+  Currently used by the eval stability suite; ready for dataset generation.
 - [ ] **Quality filtering** -- LLM-as-judge filtering of raw traces (character
   consistency, thinking quality, tool correctness, length, language) is not
   implemented.

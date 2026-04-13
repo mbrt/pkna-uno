@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -9,10 +10,12 @@ from pkna.eval_types import EvalPrompt, EvalTrace
 from pkna.llm_backends import GenerateResult, LLMBackend
 
 from evals.run_eval_inference import (
+    _visible_messages,
     compose_context,
     load_completed_ids,
     load_memory_bank,
     load_prompts,
+    run_multi_turn,
     run_single_prompt,
 )
 
@@ -25,6 +28,7 @@ def _make_prompt(
     memory_context: str = "",
     memory_bank_id: str = "",
     tools: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> EvalPrompt:
     return EvalPrompt(
         id=id,
@@ -34,7 +38,7 @@ def _make_prompt(
         memory_context=memory_context,
         memory_bank_id=memory_bank_id,
         tools=tools or [],
-        metadata={},
+        metadata=metadata or {},
     )
 
 
@@ -244,3 +248,245 @@ class TestRunSinglePrompt:
         prompt = _make_prompt(id="fail-001")
         trace = run_single_prompt(prompt, backend, "test-model", tmp_path)
         assert trace is None
+
+
+class SequentialBackend(LLMBackend):
+    """Backend that returns results from a queue, one per generate() call."""
+
+    def __init__(self, results: list[GenerateResult | None]):
+        self._results = list(results)
+        self._call_count = 0
+
+    @property
+    def call_count(self) -> int:
+        return self._call_count
+
+    def generate(
+        self,
+        system: str,
+        messages: list[dict[str, str]],
+        tools: list[Callable[..., str]] | None = None,
+        response_schema: type[BaseModel] | None = None,
+    ) -> GenerateResult | None:
+        idx = self._call_count
+        self._call_count += 1
+        if idx < len(self._results):
+            return self._results[idx]
+        return None
+
+
+class TestVisibleMessages:
+    def test_filters_tool_messages(self):
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello!", "thinking": "greet"},
+            {"role": "tool", "name": "search_knowledge", "content": "result"},
+            {"role": "assistant", "content": "Found it."},
+        ]
+        visible = _visible_messages(messages)
+        assert visible == [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "Hello!"},
+            {"role": "assistant", "content": "Found it."},
+        ]
+
+    def test_skips_empty_content(self):
+        messages: list[dict[str, Any]] = [
+            {"role": "assistant", "content": ""},
+            {"role": "user", "content": "Hey"},
+        ]
+        visible = _visible_messages(messages)
+        assert visible == [{"role": "user", "content": "Hey"}]
+
+
+class TestRunMultiTurn:
+    def test_runs_multiple_turns(self, tmp_path: Path):
+        model_backend = SequentialBackend(
+            [
+                GenerateResult(
+                    text="Turn 1 response",
+                    model_name="test",
+                    messages=[{"role": "assistant", "content": "Turn 1 response"}],
+                ),
+                GenerateResult(
+                    text="Turn 2 response",
+                    model_name="test",
+                    messages=[{"role": "assistant", "content": "Turn 2 response"}],
+                ),
+                GenerateResult(
+                    text="Turn 3 response",
+                    model_name="test",
+                    messages=[{"role": "assistant", "content": "Turn 3 response"}],
+                ),
+            ]
+        )
+        sim_backend = SequentialBackend(
+            [
+                GenerateResult(text="Simulated user msg 1", model_name="sim"),
+                GenerateResult(text="Simulated user msg 2", model_name="sim"),
+            ]
+        )
+
+        prompt = _make_prompt(
+            id="mt-001",
+            suite="stability",
+            metadata={
+                "multi_turn": True,
+                "turn_count": 3,
+                "directives": ["jailbreak", "escalate"],
+            },
+        )
+        trace = run_multi_turn(
+            prompt, model_backend, "test", tmp_path, simulator_backend=sim_backend
+        )
+
+        assert trace is not None
+        assert trace.prompt_id == "mt-001"
+        assert trace.suite == "stability"
+
+        user_msgs = [m for m in trace.messages if m["role"] == "user"]
+        assistant_msgs = [m for m in trace.messages if m["role"] == "assistant"]
+        assert len(assistant_msgs) == 3
+        assert len(user_msgs) == 3
+        assert user_msgs[0]["content"] == "Hello"
+        assert user_msgs[1]["content"] == "Simulated user msg 1"
+        assert user_msgs[2]["content"] == "Simulated user msg 2"
+
+    def test_stops_on_model_failure(self, tmp_path: Path):
+        model_backend = SequentialBackend(
+            [
+                GenerateResult(
+                    text="Only response",
+                    model_name="test",
+                    messages=[{"role": "assistant", "content": "Only response"}],
+                ),
+                None,
+            ]
+        )
+        sim_backend = SequentialBackend(
+            [
+                GenerateResult(text="Follow up", model_name="sim"),
+            ]
+        )
+
+        prompt = _make_prompt(
+            id="mt-fail-001",
+            suite="stability",
+            metadata={"multi_turn": True, "turn_count": 5, "directives": ["escalate"]},
+        )
+        trace = run_multi_turn(
+            prompt, model_backend, "test", tmp_path, simulator_backend=sim_backend
+        )
+
+        assert trace is not None
+        assistant_msgs = [m for m in trace.messages if m["role"] == "assistant"]
+        assert len(assistant_msgs) == 1
+
+    def test_stops_on_simulator_failure(self, tmp_path: Path):
+        model_backend = SequentialBackend(
+            [
+                GenerateResult(
+                    text="Response 1",
+                    model_name="test",
+                    messages=[{"role": "assistant", "content": "Response 1"}],
+                ),
+            ]
+        )
+        sim_backend = SequentialBackend([None])
+
+        prompt = _make_prompt(
+            id="mt-simfail-001",
+            suite="stability",
+            metadata={"multi_turn": True, "turn_count": 5, "directives": ["jailbreak"]},
+        )
+        trace = run_multi_turn(
+            prompt, model_backend, "test", tmp_path, simulator_backend=sim_backend
+        )
+
+        assert trace is not None
+        assistant_msgs = [m for m in trace.messages if m["role"] == "assistant"]
+        assert len(assistant_msgs) == 1
+
+    def test_returns_none_when_no_assistant_response(self, tmp_path: Path):
+        model_backend = SequentialBackend([None])
+
+        prompt = _make_prompt(
+            id="mt-none-001",
+            suite="stability",
+            metadata={"multi_turn": True, "turn_count": 3},
+        )
+        trace = run_multi_turn(prompt, model_backend, "test", tmp_path)
+        assert trace is None
+
+    def test_collects_thinking_across_turns(self, tmp_path: Path):
+        model_backend = SequentialBackend(
+            [
+                GenerateResult(
+                    text="R1",
+                    model_name="test",
+                    thinking="think1",
+                    messages=[{"role": "assistant", "content": "R1"}],
+                ),
+                GenerateResult(
+                    text="R2",
+                    model_name="test",
+                    thinking="think2",
+                    messages=[{"role": "assistant", "content": "R2"}],
+                ),
+            ]
+        )
+        sim_backend = SequentialBackend(
+            [
+                GenerateResult(text="User 2", model_name="sim"),
+            ]
+        )
+
+        prompt = _make_prompt(
+            id="mt-think-001",
+            suite="stability",
+            metadata={"multi_turn": True, "turn_count": 2, "directives": ["continue"]},
+        )
+        trace = run_multi_turn(
+            prompt, model_backend, "test", tmp_path, simulator_backend=sim_backend
+        )
+
+        assert trace is not None
+        assert trace.thinking == "think1\nthink2"
+
+
+class TestRunSinglePromptDispatch:
+    def test_dispatches_multi_turn(self, tmp_path: Path):
+        model_backend = SequentialBackend(
+            [
+                GenerateResult(
+                    text="R1",
+                    model_name="test",
+                    messages=[{"role": "assistant", "content": "R1"}],
+                ),
+            ]
+        )
+        sim_backend = SequentialBackend([])
+
+        prompt = _make_prompt(
+            id="dispatch-mt-001",
+            suite="stability",
+            metadata={"multi_turn": True, "turn_count": 1},
+        )
+        trace = run_single_prompt(
+            prompt, model_backend, "test", tmp_path, simulator_backend=sim_backend
+        )
+        assert trace is not None
+        assert trace.prompt_id == "dispatch-mt-001"
+
+    def test_dispatches_single_turn(self, tmp_path: Path):
+        backend = FakeBackend(
+            GenerateResult(
+                text="Single",
+                model_name="test",
+                messages=[{"role": "assistant", "content": "Single"}],
+            )
+        )
+        prompt = _make_prompt(id="dispatch-st-001", suite="personality")
+        trace = run_single_prompt(prompt, backend, "test", tmp_path)
+        assert trace is not None
+        assert trace.prompt_id == "dispatch-st-001"
