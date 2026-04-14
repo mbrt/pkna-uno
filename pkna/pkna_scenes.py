@@ -36,10 +36,14 @@ class Scene:
     page_numbers: list[int]
     panels: list[Panel]
     other_characters: set[str]
+    scene_index: int = 0
 
     @property
     def scene_id(self) -> str:
-        return f"{self.issue}_{self.page_numbers[0]}"
+        base = f"{self.issue}_{self.page_numbers[0]}"
+        if self.scene_index > 0:
+            return f"{base}_{self.scene_index}"
+        return base
 
     @property
     def summary(self) -> str:
@@ -57,7 +61,7 @@ class Scene:
         )
 
     def to_dict(self) -> dict:
-        return {
+        d: dict = {
             "issue": self.issue,
             "page_numbers": self.page_numbers,
             "panels": [
@@ -65,12 +69,12 @@ class Scene:
                     "description": p.description,
                     "dialogues": [
                         {
-                            "character": d.character,
-                            "line": d.line,
-                            "tone": d.tone,
-                            "speech_act": d.speech_act,
+                            "character": dl.character,
+                            "line": dl.line,
+                            "tone": dl.tone,
+                            "speech_act": dl.speech_act,
                         }
-                        for d in p.dialogues
+                        for dl in p.dialogues
                     ],
                     "visual_cues": p.visual_cues,
                 }
@@ -78,6 +82,9 @@ class Scene:
             ],
             "other_characters": list(self.other_characters),
         }
+        if self.scene_index > 0:
+            d["scene_index"] = self.scene_index
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "Scene":
@@ -94,6 +101,7 @@ class Scene:
             page_numbers=data["page_numbers"],
             panels=panels,
             other_characters=set(data["other_characters"]),
+            scene_index=data.get("scene_index", 0),
         )
 
 
@@ -143,7 +151,18 @@ def extract_scenes_from_issue(issue_dir: Path) -> list[Scene]:
         if scene:
             scenes.append(scene)
 
+    _assign_scene_indices(scenes)
     return scenes
+
+
+def _assign_scene_indices(scenes: list[Scene]) -> None:
+    """Assign scene_index to disambiguate scenes starting on the same page."""
+    seen: dict[str, int] = {}
+    for scene in scenes:
+        base = f"{scene.issue}_{scene.page_numbers[0]}"
+        count = seen.get(base, 0)
+        scene.scene_index = count
+        seen[base] = count + 1
 
 
 def _create_scene_from_panels(

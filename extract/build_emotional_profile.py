@@ -25,6 +25,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 
+from extract.reflect_scenes import SceneReflection, load_reflections
 from pkna.llm_backends import GenerateResult, LLMBackend, create_backend
 from pkna.pkna_scenes import (
     Scene,
@@ -32,7 +33,6 @@ from pkna.pkna_scenes import (
     format_scene_view,
     natural_sort_key,
 )
-from extract.reflect_scenes import SceneReflection, load_reflections
 
 load_dotenv()
 
@@ -499,6 +499,13 @@ him and how his words land.
    - Use concrete, character-specific language (name the characters and situations)
 5. Brief summary when done
 
+## Efficiency
+Batch multiple tool calls in a single response whenever possible. After reviewing
+claims with list_claims(), issue all your updates (add_claim, support_claim,
+contradict_claim, refine_claim) together in one turn rather than one at a time.
+Only use separate turns when a call depends on the result of a previous one
+(e.g. if you need to view the full claim from view_claims() before you can refine it).
+
 ## Claim Paths (use these exact paths)
 
 ### identity/ - Core facts about what Uno IS
@@ -960,7 +967,7 @@ def format_claims_compact(ledger: ClaimLedger, section: str | None = None) -> st
             sign = "+" if claim.support_count >= 0 else ""
             lines.append(
                 f"{claim.id}: [{claim.path}] "
-                f"{claim.text[:200]}{'...' if len(claim.text) > 200 else ''} "
+                f"{claim.text[:100]}{'...' if len(claim.text) > 100 else ''} "
                 f"[{sign}{claim.support_count}]"
             )
         lines.append("")

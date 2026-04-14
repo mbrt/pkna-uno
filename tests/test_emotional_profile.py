@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
@@ -191,6 +192,16 @@ class TestScene:
         scene = self._make_scene()
         assert scene.scene_id == "pkna-3_45"
 
+    def test_scene_id_with_index(self):
+        scene = self._make_scene()
+        scene.scene_index = 1
+        assert scene.scene_id == "pkna-3_45_1"
+
+    def test_scene_id_index_zero_no_suffix(self):
+        scene = self._make_scene()
+        scene.scene_index = 0
+        assert scene.scene_id == "pkna-3_45"
+
     def test_summary_from_panels(self):
         scene = self._make_scene()
         assert scene.summary == "Uno appears on screen"
@@ -202,6 +213,7 @@ class TestScene:
 
         assert restored.issue == scene.issue
         assert restored.page_numbers == scene.page_numbers
+        assert restored.scene_index == 0
         assert len(restored.panels) == 1
         panel = restored.panels[0]
         assert panel.description == "Uno appears on screen"
@@ -212,6 +224,20 @@ class TestScene:
         assert panel.dialogues[1].tone == "playful"
         assert panel.visual_cues == ["Uno's hologram flickers nervously"]
         assert restored.other_characters == scene.other_characters
+
+    def test_to_dict_and_back_with_scene_index(self):
+        scene = self._make_scene()
+        scene.scene_index = 2
+        data = scene.to_dict()
+        assert data["scene_index"] == 2
+        restored = Scene.from_dict(data)
+        assert restored.scene_index == 2
+        assert restored.scene_id == "pkna-3_45_2"
+
+    def test_to_dict_omits_zero_scene_index(self):
+        scene = self._make_scene()
+        data = scene.to_dict()
+        assert "scene_index" not in data
 
     def test_from_dict_missing_optional_fields(self):
         data = {
@@ -950,6 +976,68 @@ class TestSceneExtraction:
 
         scene = _create_scene_from_panels("pkna-0", [1], raw_panels)
         assert scene is None
+
+    def test_disambiguates_scenes_on_same_page(self, tmp_path: Path):
+        """Two scenes starting on the same page get distinct scene_ids."""
+        from pkna.pkna_scenes import extract_scenes_from_issue
+
+        issue_dir = tmp_path / "pkna-5"
+        issue_dir.mkdir()
+
+        page_data = {
+            "panels": [
+                {
+                    "is_new_scene": False,
+                    "description": "First scene",
+                    "dialogues": [
+                        {"character": "Uno", "line": "Hello"},
+                    ],
+                },
+                {
+                    "is_new_scene": True,
+                    "description": "Second scene, same page",
+                    "dialogues": [
+                        {"character": "Uno", "line": "Goodbye"},
+                    ],
+                },
+            ],
+        }
+        with open(issue_dir / "page_010.json", "w") as f:
+            json.dump(page_data, f)
+
+        scenes = extract_scenes_from_issue(issue_dir)
+        assert len(scenes) == 2
+        assert scenes[0].scene_index == 0
+        assert scenes[1].scene_index == 1
+        assert scenes[0].scene_id == "pkna-5_10"
+        assert scenes[1].scene_id == "pkna-5_10_1"
+
+    def test_no_disambiguation_when_unique(self, tmp_path: Path):
+        """Scenes on different pages keep scene_index=0."""
+        from pkna.pkna_scenes import extract_scenes_from_issue
+
+        issue_dir = tmp_path / "pkna-7"
+        issue_dir.mkdir()
+
+        for page_num, line in [(5, "First"), (10, "Second")]:
+            page_data = {
+                "panels": [
+                    {
+                        "is_new_scene": True,
+                        "description": f"Scene on page {page_num}",
+                        "dialogues": [
+                            {"character": "Uno", "line": line},
+                        ],
+                    },
+                ],
+            }
+            with open(issue_dir / f"page_{page_num:03d}.json", "w") as f:
+                json.dump(page_data, f)
+
+        scenes = extract_scenes_from_issue(issue_dir)
+        assert len(scenes) == 2
+        assert scenes[0].scene_index == 0
+        assert scenes[1].scene_index == 0
 
 
 # ============================================================================
