@@ -99,11 +99,16 @@ Sub-agents are opaque to the user.
   `evals/run_eval_inference.py` drives 10-turn conversations; stability prompts
   in `evals/generate_eval_prompts.py` carry `multi_turn`, `turn_count`, and
   `directives` metadata; `run_single_prompt` dispatches automatically.
-- [ ] **Stage 3: Score traces** -- no scoring script exists. Needs programmatic
-  scoring (tool-use accuracy, memory triplet pass/fail) and LLM-as-judge
-  scoring against the rubrics defined in `evals.md`.
-- [ ] **Stage 3: Aggregate report** -- the `EvalReport` schema is defined but
-  no code produces it.
+- [x] **Stage 3: Score traces** -- `evals/score_eval_traces.py`: per-suite
+  programmatic scoring (tool-use accuracy, memory triplet pass/fail via
+  binary judge calls) and LLM-as-judge scoring against the rubrics defined
+  in `evals.md`. Stability suite scores each assistant turn individually.
+  Supports resume (skip already-scored prompt IDs).
+- [x] **Stage 3: Aggregate report** -- `evals/score_eval_traces.py`:
+  `aggregate_report()` computes per-suite `SuiteResult` metrics (mean
+  scores, sub-dimension means, programmatic accuracy, triplet pass rate,
+  stability turn-level stats) and flags traces scoring <= 2. Writes
+  `report.json` as `EvalReport`.
 
 ### Tool Infrastructure (dataset-generation-agent.md, architecture)
 
