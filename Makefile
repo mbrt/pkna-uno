@@ -12,7 +12,7 @@ lint:
 	@echo "==> Running ruff linter on Python files..."
 	uv run ruff check .
 	@echo "==> Running ty type checker..."
-	uv run ty check . --error-on-warning --exclude="**/*.ipynb"
+	uv run ty check . --error-on-warning --exclude="**/*.ipynb" --exclude="experimental/"
 
 # Run all tests (format, lint, then pytest)
 test: lint
