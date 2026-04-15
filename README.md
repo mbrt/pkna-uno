@@ -12,7 +12,9 @@ A walkthrough of the project is on [this blog](https://blog.mbrt.dev/posts/uno).
 |---|---|
 | `pkna/` | Shared library: LLM backends, scene extraction, wiki tools |
 | `extract/` | Active pipeline: panel extraction, scene reflection, emotional profile building |
-| `finetune/` | Fine-tuning pipeline (WIP): dataset generation, training, evaluation |
+| `datagen/` | Dataset generation: prompt bank, trace capture, quality filtering |
+| `training/` | SFT training: dataset assembly, Unsloth training script, smoke test |
+| `evals/` | Evaluation: prompt generation, inference, scoring |
 | `data/` | Static data for fine-tuning (prompts, rubrics, profiles) |
 | `docs/` | Design documents |
 | `tests/` | Unit tests |
@@ -29,6 +31,23 @@ A walkthrough of the project is on [this blog](https://blog.mbrt.dev/posts/uno).
 uv sync
 make test
 ```
+
+## SFT Training Smoke Test
+
+Validate the full SFT pipeline locally with synthetic data (no upstream
+traces or LLM API keys needed):
+
+```sh
+# Full pipeline -- generates traces, assembles dataset, trains 10 steps
+# Requires a GPU (~3 GB VRAM with Qwen3.5-0.8B)
+python training/smoke_test.py
+
+# Dataset assembly only (CPU, no GPU needed)
+python training/smoke_test.py --assemble-only
+```
+
+Output goes to `output/sft/smoke_test/` (traces, HF dataset, LoRA adapter,
+MLflow logs).
 
 ## Results
 
