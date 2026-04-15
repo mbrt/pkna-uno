@@ -1,34 +1,13 @@
 """Unit tests for the user simulator."""
 
-from collections.abc import Callable
-
-from pydantic import BaseModel
-
 from datagen.user_simulator import (
     DIRECTIVE_INSTRUCTIONS,
     _build_simulator_messages,
     simulate_user_turn,
 )
 from evals.run_eval_inference import _get_directive
-from pkna.llm_backends import GenerateResult, LLMBackend
-
-
-class FakeBackend(LLMBackend):
-    """Backend that returns a pre-configured GenerateResult."""
-
-    def __init__(self, result: GenerateResult | None):
-        self._result = result
-
-    def generate(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
-    ) -> GenerateResult | None:
-        self.last_system = system
-        self.last_messages = messages
-        return self._result
+from pkna.llm_backends import GenerateResult
+from pkna.testing import FakeBackend
 
 
 class TestBuildSimulatorMessages:

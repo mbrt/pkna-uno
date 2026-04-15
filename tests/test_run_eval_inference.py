@@ -1,13 +1,11 @@
 """Unit tests for the eval inference harness."""
 
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
-
 from pkna.eval_types import EvalPrompt, EvalTrace
-from pkna.llm_backends import GenerateResult, LLMBackend
+from pkna.llm_backends import GenerateResult
+from pkna.testing import FakeBackend, SequentialBackend
 
 from evals.run_eval_inference import (
     _visible_messages,
@@ -153,22 +151,6 @@ class TestComposeContext:
         assert "sarcastic" in result
 
 
-class FakeBackend(LLMBackend):
-    """Backend that returns a pre-configured GenerateResult."""
-
-    def __init__(self, result: GenerateResult | None):
-        self._result = result
-
-    def generate(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
-    ) -> GenerateResult | None:
-        return self._result
-
-
 class TestRunSinglePrompt:
     def test_propagates_thinking_and_tool_calls(self, tmp_path: Path):
         tc = [{"name": "search_knowledge", "arguments": {"query": "x"}, "result": "y"}]
@@ -248,31 +230,6 @@ class TestRunSinglePrompt:
         prompt = _make_prompt(id="fail-001")
         trace = run_single_prompt(prompt, backend, "test-model", tmp_path)
         assert trace is None
-
-
-class SequentialBackend(LLMBackend):
-    """Backend that returns results from a queue, one per generate() call."""
-
-    def __init__(self, results: list[GenerateResult | None]):
-        self._results = list(results)
-        self._call_count = 0
-
-    @property
-    def call_count(self) -> int:
-        return self._call_count
-
-    def generate(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
-    ) -> GenerateResult | None:
-        idx = self._call_count
-        self._call_count += 1
-        if idx < len(self._results):
-            return self._results[idx]
-        return None
 
 
 class TestVisibleMessages:

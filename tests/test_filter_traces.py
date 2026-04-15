@@ -1,10 +1,7 @@
 """Unit tests for the trace quality filter."""
 
 import json
-from collections.abc import Callable
 from pathlib import Path
-
-from pydantic import BaseModel
 
 from datagen.filter_traces import (
     _estimate_tokens,
@@ -15,7 +12,8 @@ from datagen.filter_traces import (
     score_trace,
 )
 from pkna.datagen_types import DatagenTrace, QualityScore, ScoredTrace
-from pkna.llm_backends import GenerateResult, LLMBackend
+from pkna.llm_backends import GenerateResult
+from pkna.testing import FakeBackend
 
 
 def _make_trace(
@@ -157,20 +155,6 @@ class TestFormatTraceForJudge:
         assert "search_knowledge" in formatted
         assert "Tool Call" in formatted
         assert "Tool Result" in formatted
-
-
-class FakeBackend(LLMBackend):
-    def __init__(self, result: GenerateResult | None):
-        self._result = result
-
-    def generate(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
-    ) -> GenerateResult | None:
-        return self._result
 
 
 class TestScoreTrace:

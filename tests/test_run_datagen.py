@@ -1,10 +1,7 @@
 """Unit tests for the datagen execution loop."""
 
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-
-from pydantic import BaseModel
 
 from datagen.run_datagen import (
     _get_directive,
@@ -18,50 +15,8 @@ from datagen.run_datagen import (
     run_single_turn,
 )
 from pkna.datagen_types import DatagenPrompt, DatagenTrace
-from pkna.llm_backends import GenerateResult, LLMBackend
-
-
-class FakeBackend(LLMBackend):
-    """Backend that returns a pre-configured GenerateResult."""
-
-    def __init__(self, result: GenerateResult | None):
-        self._result = result
-
-    def generate(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
-    ) -> GenerateResult | None:
-        self.last_system = system
-        self.last_messages = messages
-        return self._result
-
-
-class SequentialBackend(LLMBackend):
-    """Backend that returns results from a queue."""
-
-    def __init__(self, results: list[GenerateResult | None]):
-        self._results = list(results)
-        self._call_count = 0
-
-    @property
-    def call_count(self) -> int:
-        return self._call_count
-
-    def generate(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
-    ) -> GenerateResult | None:
-        idx = self._call_count
-        self._call_count += 1
-        if idx < len(self._results):
-            return self._results[idx]
-        return None
+from pkna.llm_backends import GenerateResult
+from pkna.testing import FakeBackend, SequentialBackend
 
 
 class TestComposeDatagenContext:

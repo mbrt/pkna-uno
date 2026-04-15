@@ -1,11 +1,8 @@
 """Unit tests for the eval trace scorer (stage 3)."""
 
 import json
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-
-from pydantic import BaseModel
 
 from evals.score_eval_traces import (
     RubricScore,
@@ -39,7 +36,8 @@ from pkna.eval_types import (
     JudgeScore,
     ScoredTrace,
 )
-from pkna.llm_backends import GenerateResult, LLMBackend
+from pkna.llm_backends import GenerateResult
+from pkna.testing import FakeBackend, SequentialBackend
 
 
 # ============================================================================
@@ -106,43 +104,6 @@ def _make_scored(
         programmatic_pass=programmatic_pass,
         trace=_make_trace(prompt_id=prompt_id, suite=suite),
     )
-
-
-class FakeBackend(LLMBackend):
-    """Backend that returns a pre-configured GenerateResult."""
-
-    def __init__(self, result: GenerateResult | None):
-        self._result = result
-
-    def generate(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
-    ) -> GenerateResult | None:
-        return self._result
-
-
-class SequentialBackend(LLMBackend):
-    """Backend that returns results from a queue."""
-
-    def __init__(self, results: list[GenerateResult | None]):
-        self._results = list(results)
-        self._idx = 0
-
-    def generate(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
-    ) -> GenerateResult | None:
-        if self._idx < len(self._results):
-            r = self._results[self._idx]
-            self._idx += 1
-            return r
-        return None
 
 
 def _judge_result(data: dict[str, Any]) -> GenerateResult:

@@ -32,22 +32,24 @@ uv sync
 make test
 ```
 
-## SFT Training Smoke Test
+## Pipeline Smoke Test
 
-Validate the full SFT pipeline locally with synthetic data (no upstream
-traces or LLM API keys needed):
+Validate the full pipeline locally with fake LLM backends (no API keys
+needed). Stages 1-4 and 6-7 run on CPU; only stage 5 (training) needs a GPU.
 
 ```sh
-# Full pipeline -- generates traces, assembles dataset, trains 10 steps
-# Requires a GPU (~3 GB VRAM with Qwen3.5-0.8B)
-python training/smoke_test.py
+# All stages except training (no GPU needed):
+uv run python training/smoke_test.py --no-training
 
-# Dataset assembly only (CPU, no GPU needed)
-python training/smoke_test.py --assemble-only
+# Full pipeline including training (~3 GB VRAM with Qwen3.5-0.8B):
+uv run python training/smoke_test.py --all
+
+# Run a single stage:
+uv run python training/smoke_test.py --stage prompts
 ```
 
-Output goes to `output/sft/smoke_test/` (traces, HF dataset, LoRA adapter,
-MLflow logs).
+Stages: prompts, datagen, filter, assemble, train, eval.
+Output goes to `output/sft/smoke_test/`.
 
 ## Results
 

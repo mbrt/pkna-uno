@@ -1,9 +1,6 @@
 """Unit tests for the training prompt bank generator."""
 
-from collections.abc import Callable
 from pathlib import Path
-
-from pydantic import BaseModel
 
 from datagen.generate_prompts import (
     GENERATION_SCENARIOS,
@@ -17,8 +14,9 @@ from datagen.generate_prompts import (
     _scene_to_prompts,
 )
 from pkna.datagen_types import DatagenPrompt
-from pkna.llm_backends import GenerateResult, LLMBackend
+from pkna.llm_backends import GenerateResult
 from pkna.pkna_scenes import AnnotatedDialogue, Panel, Scene
+from pkna.testing import SequentialBackend
 
 
 class TestGenerateManualPrompts:
@@ -148,32 +146,13 @@ class TestScenarioHelpers:
         assert "stranger" in _scenario_to_user_summary("Unknown Person").lower()
 
 
-class FakeBackend(LLMBackend):
-    def __init__(self, results: list[GenerateResult | None]):
-        self._results = list(results)
-        self._idx = 0
-
-    def generate(
-        self,
-        system: str,
-        messages: list[dict[str, str]],
-        tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
-    ) -> GenerateResult | None:
-        if self._idx < len(self._results):
-            r = self._results[self._idx]
-            self._idx += 1
-            return r
-        return None
-
-
 class TestGenerateLlmPrompts:
     def test_generates_from_scenarios(self):
         results = [
             GenerateResult(text=f"Message {i}", model_name="test")
             for i in range(len(GENERATION_SCENARIOS))
         ]
-        backend = FakeBackend(results)
+        backend = SequentialBackend(results)
         prompts = generate_llm_prompts(backend)
         assert len(prompts) == len(GENERATION_SCENARIOS)
         for p in prompts:
@@ -185,7 +164,7 @@ class TestGenerateLlmPrompts:
             GenerateResult(text="Valid message", model_name="test"),
         ]
         results.extend([None] * (len(GENERATION_SCENARIOS) - 2))
-        backend = FakeBackend(results)
+        backend = SequentialBackend(results)
         prompts = generate_llm_prompts(backend)
         assert len(prompts) == 1
 
@@ -198,7 +177,7 @@ class TestGenerateLlmPrompts:
             [GenerateResult(text="", model_name="test")]
             * (len(GENERATION_SCENARIOS) - 2)
         )
-        backend = FakeBackend(results)
+        backend = SequentialBackend(results)
         prompts = generate_llm_prompts(backend)
         assert len(prompts) == 1
 
