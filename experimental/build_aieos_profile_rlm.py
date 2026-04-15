@@ -873,7 +873,7 @@ def build_section_rlm(section_name: str) -> dspy.RLM:
         scenes: list[dict] = dspy.InputField(
             description="All scenes containing the character with dialogues and context"
         )
-        result: output_type = dspy.OutputField(  # type: ignore[valid-type]
+        result: output_type = dspy.OutputField(  # ty: ignore[invalid-type-form]
             description=f"AIEOS {section_name} section with evidence citations"
         )
 
@@ -924,38 +924,38 @@ class AIEOSProfileBuilder:
     def build_identity_section(self) -> tuple[AIEOSIdentity, list[SectionEvidence]]:
         """Build identity section."""
         section, evidence = self.build_section("identity")
-        return section, evidence  # type: ignore[return-value]
+        return section, evidence  # ty: ignore[invalid-return-type]
 
     def build_psychology_section(self) -> tuple[AIEOSPsychology, list[SectionEvidence]]:
         """Build psychology section."""
         section, evidence = self.build_section("psychology")
-        return section, evidence  # type: ignore[return-value]
+        return section, evidence  # ty: ignore[invalid-return-type]
 
     def build_linguistics_section(
         self,
     ) -> tuple[AIEOSLinguistics, list[SectionEvidence]]:
         """Build linguistics section."""
         section, evidence = self.build_section("linguistics")
-        return section, evidence  # type: ignore[return-value]
+        return section, evidence  # ty: ignore[invalid-return-type]
 
     def build_history_section(self) -> tuple[AIEOSHistory, list[SectionEvidence]]:
         """Build history section."""
         section, evidence = self.build_section("history")
-        return section, evidence  # type: ignore[return-value]
+        return section, evidence  # ty: ignore[invalid-return-type]
 
     def build_motivations_section(
         self,
     ) -> tuple[AIEOSMotivations, list[SectionEvidence]]:
         """Build motivations section."""
         section, evidence = self.build_section("motivations")
-        return section, evidence  # type: ignore[return-value]
+        return section, evidence  # ty: ignore[invalid-return-type]
 
     def build_capabilities_section(
         self,
     ) -> tuple[AIEOSCapabilities, list[SectionEvidence]]:
         """Build capabilities section."""
         section, evidence = self.build_section("capabilities")
-        return section, evidence  # type: ignore[return-value]
+        return section, evidence  # ty: ignore[invalid-return-type]
 
 
 # ============================================================================

@@ -3,16 +3,16 @@
 # Format all Python files
 format:
 	@echo "==> Formatting Python files with ruff..."
-	uv tool run ruff format . --exclude="**/*.ipynb" --exclude="experimental/**"
+	uv run ruff format .
 
-# Run linters (excluding notebooks and experimental)
+# Run linters
 lint:
 	@echo "==> Checking Python file formatting..."
-	uv tool run ruff format --check . --exclude="**/*.ipynb" --exclude="experimental/**"
+	uv run ruff format --check .
 	@echo "==> Running ruff linter on Python files..."
-	uv tool run ruff check . --exclude="**/*.ipynb" --exclude="experimental/**"
-	@echo "==> Running pyright type checker..."
-	uv tool run ty check . --error-on-warning --exclude="**/*.ipynb" --exclude="experimental/**"
+	uv run ruff check .
+	@echo "==> Running ty type checker..."
+	uv run ty check . --error-on-warning --exclude="**/*.ipynb"
 
 # Run all tests (format, lint, then pytest)
 test: lint

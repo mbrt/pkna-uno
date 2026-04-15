@@ -107,7 +107,7 @@ def run_sft(
     dataset: Dataset = loaded
 
     training_args = SFTConfig(
-        max_seq_length=max_seq_length,  # type: ignore[call-arg]
+        max_seq_length=max_seq_length,  # ty: ignore[unknown-argument]  # added by unsloth
         per_device_train_batch_size=batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         warmup_steps=warmup_steps,

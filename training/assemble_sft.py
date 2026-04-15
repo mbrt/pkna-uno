@@ -19,13 +19,14 @@ Usage:
 import argparse
 import logging
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 from datasets import Dataset
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from datagen.filter_traces import load_traces
 from pkna.sft_dataset import trace_to_messages
@@ -59,7 +60,10 @@ def assemble_dataset(
     log.info("Loaded %d filtered traces", len(traces))
 
     log.info("Loading tokenizer for %s", model_name)
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    tokenizer = cast(
+        PreTrainedTokenizerBase,
+        AutoTokenizer.from_pretrained(model_name, trust_remote_code=True),
+    )
 
     texts: list[str] = []
     token_lengths: list[int] = []
@@ -67,11 +71,14 @@ def assemble_dataset(
 
     for trace in traces:
         messages = trace_to_messages(trace)
-        text = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=False,
-            enable_thinking=True,
+        text = cast(
+            str,
+            tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=False,
+                enable_thinking=True,
+            ),
         )
         n_tokens = len(tokenizer.encode(text))
 

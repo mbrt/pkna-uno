@@ -7,12 +7,12 @@ requires-python = ">=3.12"
 dependencies = [
     "accelerate>=1.10.0",
     "anthropic[bedrock]>=0.86.0",
+    "click>=8.1.0",
+    "datasets>=3.6.0",
     "docling-core>=2.25.0",
     "dspy>=3.1.3",
     "flash-linear-attention>=0.4.2",
-    "google-cloud-aiplatform>=1.143.0",
     "google-genai>=1.8.0",
-    "jsonschema>=4.25.1",
     "jupyter>=1.1.1",
     "layoutparser[layoutmodels]>=0.3.4",
     "markdown-it-py>=4.0.0",
@@ -27,10 +27,10 @@ dependencies = [
     "scikit-learn>=1.7.0",
     "seaborn>=0.13.2",
     "streamlit>=1.45.1",
-    "synthetic-data-kit>=0.0.5",
     "tiktoken>=0.11.0",
     "torch>=2.6.0",
     "transformers>=5.5.0",
+    "trl>=0.18.1",
     "unsloth>=2026.4.4",
     "vllm>=0.8.3",
 ]
@@ -39,7 +39,7 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "ruff>=0.14.13",
-    "ty>=0.0.12",
+    "ty>=0.0.31",
 ]
 
 [tool.pytest.ini_options]
@@ -52,6 +52,13 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["pkna"]
+
+[tool.ruff.lint.per-file-ignores]
+"*.ipynb" = [
+    "E741",  # Ambiguous variable names (common in notebook comprehensions)
+    "F811",  # Redefined names across cells (inherent to notebook workflow)
+    "F841",  # Unused variables (common in exploratory cells)
+]
 
 [tool.uv]
 link-mode = "symlink"

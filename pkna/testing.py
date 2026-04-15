@@ -4,7 +4,7 @@ Provides FakeBackend (fixed single response) and SequentialBackend
 (queue of responses) for use in unit tests and pipeline smoke tests.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from pydantic import BaseModel
@@ -38,7 +38,7 @@ class FakeBackend(LLMBackend):
 class SequentialBackend(LLMBackend):
     """Backend that returns results from a queue, one per generate() call."""
 
-    def __init__(self, results: list[GenerateResult | None]):
+    def __init__(self, results: Sequence[GenerateResult | None]):
         self._results = list(results)
         self._call_count = 0
 

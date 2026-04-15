@@ -23,12 +23,14 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import tiktoken
 from dotenv import load_dotenv
 from google import genai
 from google.genai.types import (
     Content,
+    ContentListUnionDict,
     GenerateContentConfig,
     GenerateContentResponse,
     HttpOptions,
@@ -654,7 +656,7 @@ class SceneProcessor:
             try:
                 response = self._client.models.generate_content(
                     model=MODEL_NAME,
-                    contents=conversation,  # type: ignore[arg-type]
+                    contents=cast(ContentListUnionDict, conversation),
                     config=self._config,
                 )
                 return response

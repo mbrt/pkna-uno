@@ -16,13 +16,14 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai.types import (
     AutomaticFunctionCallingConfig,
     Content,
+    ContentListUnionDict,
     GenerateContentConfig,
     Part,
 )
@@ -1109,7 +1110,7 @@ def process_agent_response(
     """
     response = client.models.generate_content(
         model=model_name,
-        contents=conversation,  # type: ignore[arg-type]
+        contents=cast(ContentListUnionDict, conversation),
         config=config,
     )
 
@@ -1181,7 +1182,7 @@ def process_agent_response(
         # Get next response
         response = client.models.generate_content(
             model=model_name,
-            contents=conversation,  # type: ignore[arg-type]
+            contents=cast(ContentListUnionDict, conversation),
             config=config,
         )
 
@@ -1228,7 +1229,7 @@ def run_adventure(
     gm_system = create_gm_system_prompt()
 
     # Define tools
-    uno_tools = [
+    uno_tools: list[Any] = [
         scan_remote,
         hack_system,
         tower_control,
@@ -1242,7 +1243,7 @@ def run_adventure(
         read_wiki_segment,
     ]
 
-    gm_tools = [
+    gm_tools: list[Any] = [
         search_wiki,
         read_wiki_segment,
         update_world_state,

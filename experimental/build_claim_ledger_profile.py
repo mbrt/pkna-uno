@@ -23,12 +23,14 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import tiktoken
 from dotenv import load_dotenv
 from google import genai
 from google.genai.types import (
     Content,
+    ContentListUnionDict,
     GenerateContentConfig,
     GenerateContentResponse,
     HttpOptions,
@@ -190,7 +192,7 @@ def generate_with_retry(
         try:
             response = client.models.generate_content(
                 model=MODEL_NAME,
-                contents=conversation,  # type: ignore[arg-type]
+                contents=cast(ContentListUnionDict, conversation),
                 config=config,
             )
             return response

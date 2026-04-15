@@ -13,16 +13,23 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import anthropic
 from anthropic import AnthropicBedrock
-from anthropic.types import MessageParam, ToolParam
+from anthropic.types import (
+    CacheControlEphemeralParam,
+    MessageParam,
+    TextBlockParam,
+    ToolParam,
+    ToolResultBlockParam,
+)
 from dotenv import load_dotenv
 from google import genai
 from google.genai.types import (
     AutomaticFunctionCallingConfig,
     Content,
+    ContentListUnionDict,
     GenerateContentConfig,
     HttpOptions,
     Part,
@@ -194,7 +201,7 @@ class GeminiBackend(LLMBackend):
         def _call():
             return self._client.models.generate_content(
                 model=self._model,
-                contents=conversation,  # type: ignore[arg-type]
+                contents=cast(ContentListUnionDict, conversation),
                 config=config,
             )
 
@@ -236,7 +243,7 @@ class GeminiBackend(LLMBackend):
             def _call():
                 return self._client.models.generate_content(
                     model=self._model,
-                    contents=conversation,  # type: ignore[arg-type]
+                    contents=cast(ContentListUnionDict, conversation),
                     config=config,
                 )
 
@@ -433,17 +440,20 @@ def _callable_to_anthropic_tool(fn: Any) -> ToolParam:
 # ============================================================================
 
 
-_CACHE_EPHEMERAL = {"type": "ephemeral"}
+_CACHE_EPHEMERAL = CacheControlEphemeralParam(type="ephemeral")
 
 
-def _system_with_cache(system: str) -> list[dict[str, Any]]:
+def _system_with_cache(system: str) -> list[TextBlockParam]:
     """Format system prompt as a content block list with a cache breakpoint."""
-    return [{"type": "text", "text": system, "cache_control": _CACHE_EPHEMERAL}]
+    return [TextBlockParam(type="text", text=system, cache_control=_CACHE_EPHEMERAL)]
 
 
 def _to_anthropic_messages(messages: list[dict[str, str]]) -> list[MessageParam]:
     return [
-        MessageParam(role=m["role"], content=m["content"])  # type: ignore[typeddict-item]
+        MessageParam(
+            role=cast(Literal["user", "assistant"], m["role"]),
+            content=m["content"],
+        )
         for m in messages
     ]
 
@@ -462,7 +472,7 @@ def _move_cache_breakpoint(messages: list[MessageParam]) -> None:
         if isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and "cache_control" in block:
-                    del cast(dict[str, Any], block)["cache_control"]
+                    del cast(TextBlockParam, block)["cache_control"]
 
     # Add cache_control to the last user message.
     for msg in reversed(messages):
@@ -470,13 +480,12 @@ def _move_cache_breakpoint(messages: list[MessageParam]) -> None:
             continue
         content = msg["content"]
         if isinstance(content, str):
-            msg["content"] = [  # type: ignore[typeddict-item]
-                {"type": "text", "text": content, "cache_control": _CACHE_EPHEMERAL}
-            ]
+            block = TextBlockParam(
+                type="text", text=content, cache_control=_CACHE_EPHEMERAL
+            )
+            msg["content"] = [block]
         elif isinstance(content, list) and content:
-            last_block = content[-1]
-            if isinstance(last_block, dict):
-                last_block["cache_control"] = _CACHE_EPHEMERAL
+            cast(TextBlockParam, content[-1])["cache_control"] = _CACHE_EPHEMERAL
         return
 
 
@@ -595,7 +604,7 @@ class AnthropicBackend(LLMBackend):
         messages: list[dict[str, str]],
         schema: type[BaseModel],
     ) -> GenerateResult | None:
-        json_schema = TypeAdapter(list[schema]).json_schema()  # type: ignore[valid-type]
+        json_schema = TypeAdapter(list[schema]).json_schema()  # ty: ignore[invalid-type-form]
         _add_additional_properties_false(json_schema)
         api_messages = _to_anthropic_messages(messages)
         _move_cache_breakpoint(api_messages)
@@ -689,7 +698,7 @@ class AnthropicBackend(LLMBackend):
             )
 
             # Execute tools
-            tool_results: list[dict[str, Any]] = []
+            tool_results: list[ToolResultBlockParam] = []
             for block in response.content:
                 if block.type != "tool_use":
                     continue
@@ -713,16 +722,14 @@ class AnthropicBackend(LLMBackend):
                     {"role": "tool", "name": block.name, "content": result_text}
                 )
                 tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result_text,
-                    }
+                    ToolResultBlockParam(
+                        type="tool_result",
+                        tool_use_id=block.id,
+                        content=result_text,
+                    )
                 )
 
-            api_messages.append(
-                MessageParam(role="user", content=tool_results)  # type: ignore[typeddict-item]
-            )
+            api_messages.append(MessageParam(role="user", content=tool_results))
         else:
             log.warning("Max tool iterations reached")
             return None

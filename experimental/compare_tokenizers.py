@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 from rich.console import Console
 from rich.logging import RichHandler
@@ -78,10 +79,10 @@ class AnalysisResult:
 def load_tokenizers() -> tuple[PreTrainedTokenizerBase, PreTrainedTokenizerBase]:
     """Load both tokenizers from HuggingFace."""
     log.info(f"Loading Gemini tokenizer from {GEMINI_MODEL}")
-    gemini = AutoTokenizer.from_pretrained(GEMINI_MODEL)
+    gemini = cast(PreTrainedTokenizerBase, AutoTokenizer.from_pretrained(GEMINI_MODEL))
 
     log.info(f"Loading SmolLM3 tokenizer from {SMOLLM_MODEL}")
-    smollm = AutoTokenizer.from_pretrained(SMOLLM_MODEL)
+    smollm = cast(PreTrainedTokenizerBase, AutoTokenizer.from_pretrained(SMOLLM_MODEL))
 
     return gemini, smollm
 
@@ -109,9 +110,10 @@ def build_coverage_map(
             progress.update(task_id, completed=i + 1)
 
         try:
-            # Encode the token string in the target tokenizer
-            target_ids = target_tokenizer.encode(token, add_special_tokens=False)
-            target_tokens = [target_tokenizer.decode([tid]) for tid in target_ids]
+            target_ids: list[int] = target_tokenizer.encode(
+                token, add_special_tokens=False
+            )
+            target_tokens = [str(target_tokenizer.decode([tid])) for tid in target_ids]
 
             is_exact = len(target_ids) == 1 and target_tokens[0] == token
 

@@ -15,13 +15,14 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai.types import (
     AutomaticFunctionCallingConfig,
     Content,
+    ContentListUnionDict,
     GenerateContentConfig,
     Part,
 )
@@ -344,7 +345,7 @@ def make_logging_tool(func: Any, history: ConversationHistory) -> Any:
         return result
 
     # Preserve the original signature so the SDK introspects parameters correctly.
-    wrapper.__signature__ = inspect.signature(func)  # type: ignore[attr-defined]
+    wrapper.__signature__ = inspect.signature(func)  # ty: ignore[unresolved-attribute]
     return wrapper
 
 
@@ -419,7 +420,7 @@ def chat_loop_with_tools(
             try:
                 response = client.models.generate_content(
                     model=model_name,
-                    contents=conversation,  # type: ignore[arg-type]
+                    contents=cast(ContentListUnionDict, conversation),
                     config=config,
                 )
 
