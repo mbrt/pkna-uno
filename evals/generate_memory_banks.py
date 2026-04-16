@@ -14,24 +14,13 @@ Usage:
 
 import argparse
 import json
-import logging
 from pathlib import Path
-
-from rich.console import Console
-from rich.logging import RichHandler
 
 from pkna.inference.memory import MemoryBank
 from pkna.llm.backends import create_backend
+from pkna.logging import setup_logging
 
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-    force=True,
-)
-log = logging.getLogger(__name__)
+console, log = setup_logging()
 
 
 GENERATION_PROMPT = """\

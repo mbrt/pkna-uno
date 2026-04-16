@@ -42,23 +42,12 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
-from rich.logging import RichHandler
-
 from pkna.llm.backends import GenerateResult
 from pkna.llm.testing import FakeBackend, SequentialBackend
+from pkna.logging import setup_logging
 
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-    force=True,
-)
-logging.getLogger("httpx").setLevel(logging.WARNING)
+console, log = setup_logging()
 logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
-log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "Qwen/Qwen3.5-0.8B"
 DEFAULT_OUTPUT_DIR = "output/sft/smoke_test"

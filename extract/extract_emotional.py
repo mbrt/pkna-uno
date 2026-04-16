@@ -8,26 +8,17 @@ is the same: each page is processed with context from the previous page's output
 
 import concurrent.futures
 import json
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 import dspy
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from rich.console import Console
-from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 
-# Configure logging
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-)
-log = logging.getLogger(__name__)
+from pkna.logging import setup_logging
+
+console, log = setup_logging()
 
 # Settings
 MODEL_NAME = "bedrock/eu.anthropic.claude-sonnet-4-6"

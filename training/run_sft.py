@@ -28,24 +28,15 @@ from unsloth import FastLanguageModel
 from unsloth.chat_templates import train_on_responses_only
 
 import argparse
-import logging
 from pathlib import Path
 
 from datasets import Dataset, load_from_disk
 from mlflow import log_params, set_experiment, set_tracking_uri, start_run
-from rich.console import Console
-from rich.logging import RichHandler
 from trl import SFTConfig, SFTTrainer
 
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-    force=True,
-)
-log = logging.getLogger(__name__)
+from pkna.logging import setup_logging
+
+console, log = setup_logging()
 
 # LoRA config from training-strategy.md
 LORA_RANK = 64

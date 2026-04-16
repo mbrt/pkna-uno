@@ -17,29 +17,19 @@ Usage:
 """
 
 import argparse
-import logging
 from pathlib import Path
 from typing import cast
 
 import numpy as np
 from datasets import Dataset
-from rich.console import Console
-from rich.logging import RichHandler
 from rich.table import Table
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from datagen.filter_traces import load_traces
+from pkna.logging import setup_logging
 from pkna.training.sft_dataset import trace_to_messages
 
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-    force=True,
-)
-log = logging.getLogger(__name__)
+console, log = setup_logging()
 
 
 def assemble_dataset(

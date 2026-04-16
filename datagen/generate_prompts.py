@@ -16,27 +16,17 @@ Usage:
 """
 
 import argparse
-import logging
 import random
 from pathlib import Path
 
-from rich.console import Console
-from rich.logging import RichHandler
 from rich.progress import Progress
 
 from pkna.datagen.types import DatagenPrompt
 from pkna.extract.scenes import Scene, extract_scenes_from_issue, natural_sort_key
 from pkna.llm.backends import LLMBackend, create_backend
+from pkna.logging import setup_logging
 
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-    force=True,
-)
-log = logging.getLogger(__name__)
+console, log = setup_logging()
 
 
 # ============================================================================
@@ -1205,65 +1195,105 @@ def _scenario_to_memory(interlocutor: str, interaction_type: str) -> tuple[str, 
     return MEMORY_EMPTY, BANK_NONE
 
 
+def _load_generated_cache(cache_path: Path) -> dict[str, DatagenPrompt]:
+    """Load already-generated prompts from the cache JSONL, keyed by ID."""
+    cached: dict[str, DatagenPrompt] = {}
+    if not cache_path.exists():
+        return cached
+    with open(cache_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                prompt = DatagenPrompt.model_validate_json(line)
+                cached[prompt.id] = prompt
+            except Exception:
+                continue
+    return cached
+
+
 def generate_llm_prompts(
     backend: LLMBackend,
+    cache_path: Path | None = None,
 ) -> list[DatagenPrompt]:
-    """Generate prompts from scenario templates using an LLM."""
+    """Generate prompts from scenario templates using an LLM.
+
+    Supports resume: when *cache_path* is given, each generated prompt is
+    appended to it immediately.  On a subsequent run the cache is loaded
+    first and already-generated scenarios are skipped.
+    """
+    cached = _load_generated_cache(cache_path) if cache_path else {}
     prompts: list[DatagenPrompt] = []
 
-    with Progress(console=console) as progress:
-        task = progress.add_task("Generating prompts", total=len(GENERATION_SCENARIOS))
+    skipped = 0
+    cache_file = open(cache_path, "a", encoding="utf-8") if cache_path else None
 
-        for i, (
-            interlocutor,
-            emotional_state,
-            topic,
-            interaction_type,
-            language,
-        ) in enumerate(GENERATION_SCENARIOS):
-            scenario_text = SCENARIO_TEMPLATE.format(
-                interlocutor=interlocutor,
-                emotional_state=emotional_state,
-                topic=topic,
-                interaction_type=interaction_type,
-                language=language,
+    try:
+        with Progress(console=console) as progress:
+            task = progress.add_task(
+                "Generating prompts", total=len(GENERATION_SCENARIOS)
             )
 
-            result = backend.generate(
-                system=GENERATION_SYSTEM,
-                messages=[{"role": "user", "content": scenario_text}],
-            )
+            for i, (
+                interlocutor,
+                emotional_state,
+                topic,
+                interaction_type,
+                language,
+            ) in enumerate(GENERATION_SCENARIOS):
+                prompt_id = f"generated-{i + 1:03d}"
 
-            if result is None:
-                log.warning(f"Failed to generate prompt for scenario {i + 1}")
-                progress.advance(task)
-                continue
+                if prompt_id in cached:
+                    prompts.append(cached[prompt_id])
+                    skipped += 1
+                    progress.advance(task)
+                    continue
 
-            message = result.text.strip().strip('"').strip("'")
-            if not message:
-                log.warning(f"Empty result for scenario {i + 1}")
-                progress.advance(task)
-                continue
+                scenario_text = SCENARIO_TEMPLATE.format(
+                    interlocutor=interlocutor,
+                    emotional_state=emotional_state,
+                    topic=topic,
+                    interaction_type=interaction_type,
+                    language=language,
+                )
 
-            tools = _scenario_to_tools(interaction_type)
-            user_summary = _scenario_to_user_summary(interlocutor)
-            memory_context, bank_id = _scenario_to_memory(
-                interlocutor, interaction_type
-            )
+                result = backend.generate(
+                    system=GENERATION_SYSTEM,
+                    messages=[{"role": "user", "content": scenario_text}],
+                )
 
-            expected_tool = "none"
-            if "wiki" in interaction_type or "lookup" in interaction_type:
-                expected_tool = "wiki"
-            elif "delegation" in interaction_type or "specialist" in interaction_type:
-                expected_tool = "delegate"
-            elif "memory recall" in interaction_type:
-                expected_tool = "recall"
-            elif "memory store" in interaction_type:
-                expected_tool = "remember"
+                if result is None:
+                    log.warning(f"Failed to generate prompt for scenario {i + 1}")
+                    progress.advance(task)
+                    continue
 
-            prompts.append(
-                DatagenPrompt(
-                    id=f"generated-{i + 1:03d}",
+                message = result.text.strip().strip('"').strip("'")
+                if not message:
+                    log.warning(f"Empty result for scenario {i + 1}")
+                    progress.advance(task)
+                    continue
+
+                tools = _scenario_to_tools(interaction_type)
+                user_summary = _scenario_to_user_summary(interlocutor)
+                memory_context, bank_id = _scenario_to_memory(
+                    interlocutor, interaction_type
+                )
+
+                expected_tool = "none"
+                if "wiki" in interaction_type or "lookup" in interaction_type:
+                    expected_tool = "wiki"
+                elif (
+                    "delegation" in interaction_type or "specialist" in interaction_type
+                ):
+                    expected_tool = "delegate"
+                elif "memory recall" in interaction_type:
+                    expected_tool = "recall"
+                elif "memory store" in interaction_type:
+                    expected_tool = "remember"
+
+                prompt = DatagenPrompt(
+                    id=prompt_id,
                     messages=[{"role": "user", "content": message}],
                     user_summary=user_summary,
                     memory_context=memory_context,
@@ -1281,8 +1311,19 @@ def generate_llm_prompts(
                         "turn_count": 1,
                     },
                 )
-            )
-            progress.advance(task)
+                prompts.append(prompt)
+
+                if cache_file is not None:
+                    cache_file.write(prompt.model_dump_json() + "\n")
+                    cache_file.flush()
+
+                progress.advance(task)
+    finally:
+        if cache_file is not None:
+            cache_file.close()
+
+    if skipped > 0:
+        log.info(f"Resuming: reused {skipped} cached generated prompts")
 
     return prompts
 
@@ -1371,7 +1412,8 @@ def main() -> None:
     # LLM-generated prompts
     if args.include_generated:
         backend = create_backend(args.backend, args.model)
-        generated = generate_llm_prompts(backend)
+        cache_path = args.output.parent / "generated_prompts_cache.jsonl"
+        generated = generate_llm_prompts(backend, cache_path=cache_path)
         log.info(f"LLM-generated prompts: {len(generated)}")
         all_prompts.extend(generated)
 

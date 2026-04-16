@@ -18,13 +18,10 @@ Usage:
 
 import argparse
 import json
-import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
-from rich.logging import RichHandler
 from rich.progress import Progress
 
 from datagen.user_simulator import simulate_user_turn
@@ -33,16 +30,9 @@ from pkna.inference.memory import MemoryBank
 from pkna.inference.system_prompts import SUITE_TEMPLATE_MAP, render_system_prompt
 from pkna.inference.tools import make_eval_tools
 from pkna.llm.backends import LLMBackend, create_backend
+from pkna.logging import setup_logging
 
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-    force=True,
-)
-log = logging.getLogger(__name__)
+console, log = setup_logging()
 
 
 def load_prompts(prompts_dir: Path, suites: list[str] | None) -> list[EvalPrompt]:

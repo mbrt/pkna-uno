@@ -11,24 +11,13 @@ Usage:
 """
 
 import argparse
-import logging
 from collections.abc import Callable
 from pathlib import Path
 
-from rich.console import Console
-from rich.logging import RichHandler
-
 from pkna.eval.types import EvalPrompt
+from pkna.logging import setup_logging
 
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-    force=True,
-)
-log = logging.getLogger(__name__)
+console, log = setup_logging()
 
 
 # ============================================================================

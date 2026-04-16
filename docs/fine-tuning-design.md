@@ -182,11 +182,23 @@ Sub-agents are opaque to the user.
 
 ### SFT Training (training-strategy.md)
 
-- [ ] **SFT training script** -- no training code exists (Unsloth + LoRA
-  configuration, loss masking, thinking-enabled chat template).
-- [ ] **SFT dataset assembly** -- converting filtered traces into the training
-  format with proper loss masks (user/tool masked, assistant trained) is not
-  implemented.
+- [x] **SFT dataset assembly** -- `pkna/training/sft_dataset.py`:
+  `trace_to_messages` converts `DatagenTrace` to Qwen3.5 chat format
+  (thinking -> `reasoning_content`, tool calls -> `function` wrapper).
+  `training/assemble_sft.py`: loads filtered traces, renders via the
+  tokenizer's chat template with `enable_thinking=True`, drops examples
+  exceeding `max_seq_length`, saves as HuggingFace `Dataset`.
+  Tests in `tests/test_sft_dataset.py`.
+- [x] **SFT training script** -- `training/run_sft.py`: Unsloth +
+  BF16 LoRA (rank=64, alpha=32, all-linear, dropout=0),
+  `train_on_responses_only` loss masking, linear LR schedule with AdamW
+  8-bit, gradient checkpointing (`"unsloth"`), MLflow tracking, GGUF
+  export via `--export-gguf`. Hyperparameters match `training-strategy.md`.
+- [x] **End-to-end smoke test** -- `training/smoke_test.py`: runs all 7
+  pipeline stages (prompts, datagen, filter, assemble, train, eval
+  inference, eval scoring) with fake backends and canned responses.
+  Validates real I/O, serialization, and orchestration. Supports
+  `--stage`, `--no-training`, `--all` flags.
 
 ### On-Policy Distillation (training-strategy.md)
 

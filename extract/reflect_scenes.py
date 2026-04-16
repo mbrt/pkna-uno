@@ -19,8 +19,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from rich.console import Console
-from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 
 from pkna.extract.scenes import (
@@ -30,19 +28,11 @@ from pkna.extract.scenes import (
     natural_sort_key,
 )
 from pkna.llm.backends import LLMBackend, create_backend
+from pkna.logging import setup_logging
 
 load_dotenv()
 
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.CRITICAL,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-    force=True,
-)
-log = logging.getLogger(__name__)
-log.setLevel(logging.DEBUG)
+console, log = setup_logging(logging.DEBUG, root_level=logging.CRITICAL)
 
 BASE_DIR = Path(__file__).parent.parent
 INPUT_DIR = BASE_DIR / "output" / "extract-emotional" / "v2"

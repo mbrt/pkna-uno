@@ -21,8 +21,6 @@ from pathlib import Path
 import tiktoken
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from rich.console import Console
-from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 
 from extract.reflect_scenes import SceneReflection, load_reflections
@@ -33,20 +31,11 @@ from pkna.extract.scenes import (
     natural_sort_key,
 )
 from pkna.llm.backends import GenerateResult, LLMBackend, create_backend
+from pkna.logging import setup_logging
 
 load_dotenv()
 
-# Configure logging
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.CRITICAL,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-    force=True,
-)
-log = logging.getLogger(__name__)
-log.setLevel(logging.DEBUG)
+console, log = setup_logging(logging.DEBUG, root_level=logging.CRITICAL)
 
 
 # Settings

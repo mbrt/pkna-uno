@@ -23,12 +23,9 @@ Usage:
 
 import argparse
 import json
-import logging
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
-from rich.logging import RichHandler
 from rich.progress import Progress
 
 from pkna.datagen.types import (
@@ -38,16 +35,9 @@ from pkna.datagen.types import (
     ToolCorrectnessResult,
 )
 from pkna.llm.backends import LLMBackend, create_backend
+from pkna.logging import setup_logging
 
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-    force=True,
-)
-log = logging.getLogger(__name__)
+console, log = setup_logging()
 
 MIN_RESPONSE_TOKENS = 10
 MAX_RESPONSE_TOKENS = 500

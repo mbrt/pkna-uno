@@ -18,14 +18,11 @@ Usage:
 
 import argparse
 import json
-import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
-from rich.console import Console
-from rich.logging import RichHandler
 from rich.progress import Progress
 
 from pkna.eval.types import (
@@ -37,16 +34,9 @@ from pkna.eval.types import (
     SuiteResult,
 )
 from pkna.llm.backends import LLMBackend, create_backend
+from pkna.logging import setup_logging
 
-console = Console(stderr=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(console=console, show_time=True, show_path=False)],
-    force=True,
-)
-log = logging.getLogger(__name__)
+console, log = setup_logging()
 
 
 # ============================================================================
