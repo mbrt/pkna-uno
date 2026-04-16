@@ -4,28 +4,57 @@ Back to [Fine-Tuning Design](../fine-tuning-design.md).
 
 ## Student Model Families
 
-Two model families are strong candidates: **Qwen3.5** and **Gemma 4**. Both are
-Apache 2.0 licensed, support long context, and offer a range of sizes from
+Two model families are strong candidates: **Qwen3.5/3.6** and **Gemma 4**. Both
+are Apache 2.0 licensed, support long context, and offer a range of sizes from
 edge-deployable to server-class. This section compares them side-by-side.
 
-### Qwen3.5
+### Qwen3.5 / Qwen3.6
 
-Hybrid Gated DeltaNet + Attention architecture, 262K native context. Includes
-both dense and Mixture-of-Experts (MoE) options.
+Hybrid Gated DeltaNet + Attention architecture, 262K native context (extendable
+to 1M via YaRN). Includes both dense and Mixture-of-Experts (MoE) options.
 
-| Property | 0.8B | 2B | 4B | 9B | 35B-A3B (MoE) |
-|---|---|---|---|---|---|
-| Type | Dense | Dense | Dense | Dense | MoE (256 experts, 8+1 active) |
-| Total params | 0.9B | 2B | 5B | 10B | 35B |
-| Active params | 0.9B | 2B | 5B | 10B | ~3B |
-| Layers | 24 | 24 | 32 | 32 | 64 |
-| Context | 262K | 262K | 262K | 262K | 262K |
-| IFEval | 52.1 | 78.6 | 89.8 | 91.5 | 91.9 |
-| MMLU-Pro | 29.7 | 66.5 | 79.1 | 82.5 | 85.3 |
-| BFCL-V4 | ~35* | 43.6 | ~55* | 66.1 | ~62* |
-| VRAM inference (BF16) | ~2 GB | ~4 GB | ~8 GB | ~18 GB | ~70 GB |
-| VRAM inference (Q4) | <2 GB | ~2 GB | ~4 GB | ~8 GB | ~8 GB |
-| VRAM LoRA train (BF16, Unsloth) | ~3 GB | ~5 GB | ~10 GB | ~22 GB | ~74 GB |
+**Qwen3.6** (released April 16, 2026) shares the same architecture as Qwen3.5
+and is a drop-in successor for the 35B-A3B MoE variant. It adds native
+multimodal support (text + image + video), improved tool calling (MCPMark
+37.0 vs 27.0), and stronger agentic performance. Dense sizes (0.8B-9B) are
+Qwen3.5 only as of mid-April 2026; Qwen3.6 ships the 35B-A3B MoE only.
+
+#### Qwen3.5 Dense Models
+
+| Property | 0.8B | 2B | 4B | 9B |
+|---|---|---|---|---|
+| Type | Dense | Dense | Dense | Dense |
+| Total params | 0.9B | 2B | 5B | 10B |
+| Active params | 0.9B | 2B | 5B | 10B |
+| Layers | 24 | 24 | 32 | 32 |
+| Context | 262K | 262K | 262K | 262K |
+| IFEval | 52.1 | 78.6 | 89.8 | 91.5 |
+| MMLU-Pro | 29.7 | 66.5 | 79.1 | 82.5 |
+| BFCL-V4 | ~35* | 43.6 | ~55* | 66.1 |
+| VRAM inference (BF16) | ~2 GB | ~4 GB | ~8 GB | ~18 GB |
+| VRAM inference (Q4) | <2 GB | ~2 GB | ~4 GB | ~8 GB |
+| VRAM LoRA train (BF16, Unsloth) | ~3 GB | ~5 GB | ~10 GB | ~22 GB |
+
+#### Qwen 35B-A3B MoE (Qwen3.5 vs Qwen3.6)
+
+| Property | Qwen3.5-35B-A3B | Qwen3.6-35B-A3B |
+|---|---|---|
+| Type | MoE (256 experts, 8+1 active) | MoE (256 experts, 8+1 active) |
+| Total / active params | 35B / ~3B | 35B / ~3B |
+| Layers | 64 | 64 |
+| Context | 262K | 262K (1M via YaRN) |
+| Multimodal | Text only | Text, image, video |
+| IFEval | 91.9 | — (not yet published) |
+| MMLU-Pro | 85.3 | ~85%+ (est., same arch) |
+| GPQA Diamond | 84.2 | 86.0 |
+| BFCL-V4 | ~62* | — (not yet published) |
+| MCPMark (tool calling) | 27.0 | 37.0 |
+| SWE-bench Verified | 70.0 | 73.4 |
+| Terminal-Bench 2.0 | 40.5 | 51.5 |
+| MMMU (multimodal) | — | 81.7 |
+| VRAM inference (BF16) | ~70 GB | ~70 GB |
+| VRAM inference (Q4) | ~8 GB | ~8 GB |
+| VRAM LoRA train (BF16, Unsloth) | ~74 GB | ~74 GB (same architecture) |
 
 ### Gemma 4
 
@@ -47,6 +76,7 @@ for the small sizes, and a MoE variant.
 | BFCL | N/A‡ | N/A‡ | N/A‡ | N/A‡ |
 | VRAM inference (BF16) | ~2 GB | ~5 GB | ~14 GB | ~24 GB |
 | VRAM inference (Q4) | ~1 GB | ~2.4 GB | ~7 GB | ~11 GB |
+| Inference speed (Q4)¶ | — | — | **~11 tok/s** | — |
 | VRAM LoRA train (BF16) | ~8 GB | ~18 GB | >40 GB | ~48 GB§ |
 | VRAM QLoRA train | — | ~10 GB | **Broken**§§ | ~22 GB |
 
@@ -59,12 +89,20 @@ BenchLM, so these are not directly comparable.
 cannot quantize them, so "4-bit" loading still requires ~44 GB -- effectively
 broken for QLoRA on consumer hardware. Qwen3.5-35B-A3B stores experts as
 separate 2D layers and quantizes normally.
+¶Community-reported on RTX 5060 Ti 16GB. Qwen3.5-35B-A3B achieves 60+ tok/s on
+the same hardware -- a ~6x speed gap. Multiple users confirm Gemma 4 26B-A4B
+is anomalously slow despite similar active parameter counts.
 
-**QLoRA note**: Unsloth recommends against QLoRA for *all* Qwen3.5 models (dense
-and MoE) due to higher-than-normal quantization differences. BF16 LoRA is the
-recommended approach. Qwen3.5 LoRA VRAM numbers above reflect Unsloth's
-optimized training (~50% less VRAM than standard FA2 setups). See
+**QLoRA note**: Unsloth recommends against QLoRA for *all* Qwen3.5/3.6 models
+(dense and MoE) due to higher-than-normal quantization differences. BF16 LoRA
+is the recommended approach. LoRA VRAM numbers above reflect Unsloth's
+optimized training (~50% less VRAM than standard FA2 setups). Since Qwen3.6
+shares the same architecture as Qwen3.5, all Unsloth training infrastructure
+(MoE kernels, LoRA configs) carries over unchanged. See
 [Training Strategy](training-strategy.md) for details.
+
+**Ollama note**: As of mid-April 2026, Qwen3.6 GGUFs do not work in Ollama due
+to separate mmproj vision files. Use llama.cpp-compatible backends instead.
 
 ### Head-to-Head Comparison
 
@@ -95,30 +133,43 @@ which Qwen does not).
 
 #### MoE models (~3-4B active)
 
-| Dimension | Qwen3.5-35B-A3B | Gemma 4 26B-A4B |
-|---|---|---|
-| Total / active params | 35B / ~3B | 25.2B / 3.8B |
-| Experts | 256 (8+1 active) | 128 (8+1 active) |
-| Layers | 64 | 30 |
-| MMLU-Pro | 85.3 | 82.6 |
-| GPQA Diamond | — | 82.3 |
-| IFEval | 91.9 | N/A |
-| BFCL-V4 | ~62%* | N/A |
-| τ2-bench (agentic) | — | 68.2 |
-| Context window | 262K | 256K |
-| VRAM inference (Q4) | ~8 GB | ~7 GB |
-| VRAM BF16 LoRA | ~74 GB | >40 GB |
-| QLoRA feasibility | **Not recommended** (quantization artifacts) | **Broken** (fused 3D expert tensors) |
+| Dimension | Qwen3.5-35B-A3B | Qwen3.6-35B-A3B | Gemma 4 26B-A4B |
+|---|---|---|---|
+| Total / active params | 35B / ~3B | 35B / ~3B | 25.2B / 3.8B |
+| Experts | 256 (8+1 active) | 256 (8+1 active) | 128 (8+1 active) |
+| Layers | 64 | 64 | 30 |
+| MMLU-Pro | 85.3 | ~85%+ (est.) | 82.6 |
+| GPQA Diamond | 84.2 | 86.0 | 82.3 |
+| IFEval | 91.9 | — | N/A |
+| MCPMark (tool calling) | 27.0 | 37.0 | 36.3 |
+| SWE-bench Verified | 70.0 | 73.4 | 17.4 |
+| τ2-bench (agentic) | — | — | 68.2 |
+| Multimodal | Text only | Text, image, video | Text, image |
+| Context window | 262K | 262K (1M via YaRN) | 256K |
+| Inference speed (Q4)† | **60+ tok/s** | ~60+ tok/s (same arch) | **~11 tok/s** |
+| VRAM inference (Q4) | ~8 GB | ~8 GB | ~7 GB |
+| VRAM BF16 LoRA | ~74 GB | ~74 GB | >40 GB |
+| QLoRA feasibility | **Not recommended** | **Not recommended** | **Broken** |
 
-**Assessment**: Both are compelling. Qwen3.5-35B-A3B has deeper architecture
-(64 vs 30 layers), higher MMLU-Pro, and published IFEval/BFCL scores. Gemma 4
-26B-A4B has strong agentic benchmarks (τ2-bench 68.2) and lower total parameter
-count. However, neither MoE model supports QLoRA well: Gemma's fused 3D expert
-tensors make it completely broken, and Unsloth recommends against QLoRA for
-Qwen3.5 MoE due to quantization artifacts. Both require BF16 LoRA (>40 GB for
-Gemma, ~74 GB for Qwen). Unsloth's MoE-specific kernels (~12x faster training,
->35% less VRAM) partially offset Qwen's higher VRAM requirement and make it
-the more practical choice for iterative experimentation.
+†Inference speed measured on RTX 5060 Ti 16GB, community-reported.
+
+**Assessment**: The MoE comparison has shifted decisively toward Qwen since the
+original analysis. Qwen3.6-35B-A3B is now the clear front-runner:
+
+- **Inference speed**: ~6x faster than Gemma 4 26B-A4B on the same hardware
+  (60+ vs 11 tok/s). This alone is disqualifying for Gemma in production.
+- **Tool calling**: MCPMark 37.0 (Qwen 3.6) vs 36.3 (Gemma 4). Tool calling
+  was previously unmeasured for either; now Qwen has a slight edge and Gemma
+  still lacks IFEval/BFCL.
+- **Agentic coding**: SWE-bench 73.4 vs 17.4 -- a 4x gap.
+- **Architecture depth**: 64 vs 30 layers gives Qwen more representational
+  capacity for learning personality + reasoning.
+- **Training**: Neither supports QLoRA for MoE, but Gemma's fused 3D expert
+  tensors make it completely broken while Qwen's separate 2D layers at least
+  allow it in principle. Unsloth's MoE kernels (~12x speedup, >35% VRAM
+  savings) make Qwen MoE training significantly more practical.
+- **Qwen3.6 as free upgrade**: Same architecture as 3.5, so all training
+  infrastructure carries over. Better benchmarks across the board.
 
 #### Dense large models
 
@@ -141,37 +192,49 @@ introduces unknowns.
 
 ### Overall Assessment
 
-**Qwen3.5 is the stronger choice for this project**, for several reasons:
+**Qwen is the stronger choice for this project**, and the gap has widened since
+the initial analysis. The arrival of Qwen3.6-35B-A3B and community data on
+Gemma 4 inference speed reinforce the original recommendation:
 
-1. **Published IFEval and BFCL scores**. Instruction following and tool calling
-   are the two most critical capabilities for an orchestrator model. Qwen has
-   published numbers; Gemma 4 does not (as of April 2026). We can't optimize
-   for what we can't measure.
+1. **Inference speed**. Gemma 4 26B-A4B runs at ~11 tok/s vs Qwen's 60+ tok/s
+   on the same consumer GPU -- a ~6x gap confirmed by multiple community
+   reports. This makes Gemma 4 MoE impractical for interactive deployment.
 
-2. **MoE LoRA trainability**. Neither family supports QLoRA well for MoE, but
-   Qwen's architecture at least allows it in principle (Unsloth warns against
-   it due to quality loss). Gemma 4's fused expert tensors make QLoRA
-   completely broken. Unsloth's MoE kernels (~12x speedup) make Qwen MoE
-   training significantly more practical.
+2. **Tool calling now measured**. Qwen3.6-35B-A3B scores MCPMark 37.0,
+   slightly ahead of Gemma 4's 36.3. Combined with Qwen3.5's published
+   IFEval (91.9) and BFCL (~62%), Qwen has the stronger tool-use story.
+   Gemma 4 still has no published IFEval or BFCL scores (mid-April 2026).
 
-3. **Text benchmark lead at small sizes**. Qwen3.5-4B beats Gemma 4 E4B by
-   ~10 points on MMLU-Pro. Gemma 4's advantages (multimodal, audio) are
-   irrelevant for our text-only personality use case.
+3. **Qwen3.6 as free upgrade**. Same architecture as Qwen3.5, so all Unsloth
+   training infrastructure (MoE kernels, LoRA configs, chat templates) carries
+   over unchanged. Better benchmarks across the board: GPQA Diamond 86.0
+   (up from 84.2), SWE-bench 73.4 (up from 70.0), Terminal-Bench 51.5
+   (up from 40.5).
 
-4. **Distillation framework alignment**. The on-policy distillation paper
+4. **MoE LoRA trainability**. Gemma 4's fused 3D expert tensors remain broken
+   for QLoRA with no fix in sight. Qwen's separate 2D layers work with
+   Unsloth's MoE kernels (~12x speedup, >35% VRAM savings).
+
+5. **Text benchmark lead at small sizes**. Qwen3.5-4B beats Gemma 4 E4B by
+   ~10 points on MMLU-Pro. For the dense student starting point, Qwen remains
+   clearly ahead.
+
+6. **Distillation framework alignment**. The on-policy distillation paper
    validated on Qwen models. Using the same family reduces unknowns.
 
-5. **Context window**. 262K vs 128K for the small models. Not critical for
+7. **Context window**. 262K vs 128K for the small models. Not critical for
    our short-conversation use case, but a nice margin.
 
-**Where Gemma 4 could win**: If Italian language quality matters more than
-benchmarks suggest (Gemma 4 scores higher on MMMLU multilingual), or if the
-missing IFEval/BFCL scores turn out to be competitive when published. Worth
-revisiting if Google releases more detailed benchmarks.
+**Where Gemma 4 could win**: Arena AI chat preference scores favor Gemma 4
+(~40 Elo points higher), suggesting better subjective response quality in
+general chat. Gemma 4 also leads on MMMLU multilingual (86.3 vs 85.2), which
+could matter for Italian. However, these advantages are outweighed by the
+inference speed gap and the lack of published IFEval/BFCL scores.
 
-**Recommendation**: Proceed with Qwen3.5. Revisit Gemma 4 if Qwen's Italian
-personality quality disappoints or if Gemma 4 publishes strong IFEval/BFCL
-numbers.
+**Recommendation**: Proceed with Qwen3.5 for dense students (4B, 9B) and
+Qwen3.6-35B-A3B for the MoE student (Scenario D). Gemma 4 is no longer a
+realistic fallback for the MoE tier given the inference speed and training
+issues.
 
 ## Qwen3.5 Student Assessment by Role Suitability
 
@@ -209,7 +272,10 @@ which matters more now that the model must learn both personality and social
 reasoning. Inference speed is comparable to the 4B dense (only ~3B params
 activate per token), and at Q4 quantization it fits in ~8 GB VRAM. However,
 training is significantly more expensive (see
-[Infrastructure & Costs](infra-costs.md)).
+[Infrastructure & Costs](infra-costs.md)). **Qwen3.6-35B-A3B** is the
+preferred base for this tier: same architecture (so training infra carries
+over), with improved tool calling (MCPMark 37.0 vs 27.0), agentic coding
+(SWE-bench 73.4 vs 70.0), and native multimodal support.
 
 ### Tradeoff Summary
 
@@ -264,8 +330,8 @@ The on-policy distillation paper shows that using the *pre-SFT version of the
 same model* as teacher effectively recovers lost post-training behaviors. This
 means we could:
 
-1. SFT the student (e.g. Qwen3.5-4B) on personality data.
-2. On-policy distill using the *original* Qwen3.5-4B (pre-SFT) as teacher.
+1. SFT the student (e.g. Qwen3.5-4B or Qwen3.6-35B-A3B) on personality data.
+2. On-policy distill using the *original* pre-SFT checkpoint as teacher.
 
 This eliminates the need for a larger teacher model entirely, cutting
 infrastructure costs significantly. The tradeoff is that the teacher can only

@@ -14,11 +14,13 @@ This design draws from:
 - [Uno: What I Learned Shaping LLMs into a 90s Comic Book AI](https://blog.mbrt.dev/posts/uno/)
 - [Qwen3.5 model collection](https://huggingface.co/collections/Qwen/qwen35)
 - [Qwen3.5: Towards Native Multimodal Agents](https://www.alibabacloud.com/blog/602894) -- official benchmarks
+- [Qwen3.6 model collection](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) -- drop-in successor to Qwen3.5 MoE (April 2026)
 - [Gemma 4](https://deepmind.google/models/gemma/gemma-4/) -- Google DeepMind (April 2026)
 - [Gemma 4 model card](https://ai.google.dev/gemma/docs/core/model_card_4) -- architecture and benchmarks
 - [Unsloth Qwen3.5 fine-tuning guide](https://unsloth.ai/docs/models/qwen3.5/fine-tune) -- LoRA config, VRAM, QLoRA warnings
+- [Unsloth Qwen3.6 inference & training](https://unsloth.ai/docs/models/qwen3.6) -- GGUF, llama.cpp, Unsloth Studio
 - [Unsloth Gemma 4 fine-tuning guide](https://unsloth.ai/docs/models/gemma-4/train) -- MoE LoRA issues, bug fixes
-- [Unsloth Qwen3.5 GGUF benchmarks](https://unsloth.ai/docs/models/qwen3.5/gguf-benchmarks) -- quantization quality analysis
+- [Unsloth Qwen3.5 GGUF benchmarks](https://unsloth.ai/docs/models/qwen3.5/gguf-benchmarks) -- quantization quality analysis (applies to Qwen3.6, same arch)
 
 ## Goals
 
@@ -71,8 +73,11 @@ Sub-agents are opaque to the user.
 6. If personality depth is insufficient, try **9B student** (Scenario C).
    The 9B is the natural next step before MoE -- same training infrastructure,
    just slower.
-7. If 9B still falls short on personality nuance, try **35B-A3B** (Scenario D).
-   This requires a 4xL40S node for training but delivers the best benchmarks.
+7. If 9B still falls short on personality nuance, try **Qwen3.6-35B-A3B**
+   (Scenario D). This requires a 4xL40S node for training but delivers the
+   best benchmarks. Qwen3.6 is the preferred MoE base over Qwen3.5: same
+   architecture (training infra carries over), better tool calling (MCPMark
+   37.0 vs 27.0), and stronger agentic coding (SWE-bench 73.4 vs 70.0).
 8. If 4B self-distill works well, try **2B** for on-device deployment.
 
 ## Implementation Status
@@ -209,8 +214,9 @@ Sub-agents are opaque to the user.
 
 ### Deployment (training-strategy.md)
 
-- [ ] **GGUF export** -- quantization and export for llama.cpp / Ollama is not
-  implemented.
+- [ ] **GGUF export** -- quantization and export for llama.cpp is not
+  implemented. Note: Qwen3.6 GGUFs currently require llama.cpp-compatible
+  backends (no Ollama support yet due to separate mmproj vision files).
 
 ## Sub-Documents
 
