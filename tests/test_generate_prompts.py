@@ -4,6 +4,7 @@ from pathlib import Path
 
 from datagen.generate_prompts import (
     GENERATION_SCENARIOS,
+    GenerationScenario,
     generate_llm_prompts,
     generate_manual_prompts,
     generate_scene_prompts,
@@ -74,7 +75,7 @@ class TestSceneToPrompts:
                     dialogues=[
                         AnnotatedDialogue(
                             character="Paperino",
-                            line="Abbiamo un problema.",
+                            line="Abbiamo un problema serio con la missione di domani sera, dobbiamo parlarne subito.",
                             tone="worried",
                         ),
                     ],
@@ -83,25 +84,58 @@ class TestSceneToPrompts:
             other_characters={"Paperino"},
         )
 
-    def test_extracts_non_uno_lines(self):
+    def test_returns_one_prompt_per_scene(self):
         scene = self._make_scene()
         prompts = _scene_to_prompts(scene)
-        assert len(prompts) == 2
-        assert prompts[0].messages[0]["content"] == "Ciao Uno, come stai?"
-        assert prompts[1].messages[0]["content"] == "Abbiamo un problema."
+        assert len(prompts) == 1
+
+    def test_prefers_conversational_lines(self):
+        """Lines with 10+ words are preferred over short interjections."""
+        scene = self._make_scene()
+        prompts = _scene_to_prompts(scene)
+        assert len(prompts[0].messages[0]["content"].split()) >= 10
+
+    def test_falls_back_to_longest_when_all_short(self):
+        scene = Scene(
+            issue="pkna-2",
+            page_numbers=[1],
+            panels=[
+                Panel(
+                    description="Quick exchange",
+                    dialogues=[
+                        AnnotatedDialogue(
+                            character="Paperino", line="Ouch!", tone="pained"
+                        ),
+                        AnnotatedDialogue(
+                            character="Paperino",
+                            line="Dove sono capitato?",
+                            tone="confused",
+                        ),
+                    ],
+                ),
+            ],
+            other_characters={"Paperino"},
+        )
+        prompts = _scene_to_prompts(scene)
+        assert len(prompts) == 1
 
     def test_assigns_correct_user_summary(self):
         scene = self._make_scene()
         prompts = _scene_to_prompts(scene)
-        for p in prompts:
-            assert "Paperino" in p.user_summary
+        assert "Paperino" in prompts[0].user_summary
 
     def test_scene_metadata(self):
         scene = self._make_scene()
         prompts = _scene_to_prompts(scene)
-        for p in prompts:
-            assert p.metadata["prompt_source"] == "scene"
-            assert p.metadata["issue"] == "pkna-1"
+        assert prompts[0].metadata["prompt_source"] == "scene"
+        assert prompts[0].metadata["issue"] == "pkna-1"
+
+    def test_deterministic_selection(self):
+        """Same scene always produces the same prompt."""
+        scene = self._make_scene()
+        prompts_a = _scene_to_prompts(scene)
+        prompts_b = _scene_to_prompts(scene)
+        assert prompts_a[0].messages == prompts_b[0].messages
 
     def test_empty_scene(self):
         scene = Scene(
@@ -146,39 +180,127 @@ class TestScenarioHelpers:
         assert "stranger" in _scenario_to_user_summary("Unknown Person").lower()
 
 
+class TestGenerationScenarios:
+    def test_target_counts(self):
+        single = [s for s in GENERATION_SCENARIOS if not s.multi_turn]
+        multi = [s for s in GENERATION_SCENARIOS if s.multi_turn]
+        assert len(single) == 500
+        assert len(multi) == 150
+
+    def test_multi_turn_have_directives(self):
+        multi = [s for s in GENERATION_SCENARIOS if s.multi_turn]
+        for s in multi:
+            assert s.turn_count >= 3
+            assert len(s.directives) == s.turn_count - 1
+
+    def test_deterministic(self):
+        from datagen.generate_prompts import _build_generation_scenarios
+
+        a = _build_generation_scenarios(seed=42)
+        b = _build_generation_scenarios(seed=42)
+        assert a == b
+
+    def test_no_invalid_combos(self):
+        from datagen.generate_prompts import _INVALID_COMBOS
+
+        for s in GENERATION_SCENARIOS:
+            assert (s.interlocutor, s.interaction_type) not in _INVALID_COMBOS
+
+    def test_key_characters_overrepresented(self):
+        from collections import Counter
+
+        counts = Counter(s.interlocutor for s in GENERATION_SCENARIOS)
+        baseline = min(counts[c] for c in ("Xadhoom", "Lyla", "Stranger"))
+        assert counts["Paperino"] > baseline
+        assert counts["Everett Ducklair"] > baseline
+
+
 class TestGenerateLlmPrompts:
     def test_generates_from_scenarios(self):
+        scenarios = GENERATION_SCENARIOS[:5]
         results = [
             GenerateResult(text=f"Message {i}", model_name="test")
-            for i in range(len(GENERATION_SCENARIOS))
+            for i in range(len(scenarios))
         ]
         backend = SequentialBackend(results)
-        prompts = generate_llm_prompts(backend)
-        assert len(prompts) == len(GENERATION_SCENARIOS)
+        import datagen.generate_prompts as mod
+
+        original = mod.GENERATION_SCENARIOS
+        mod.GENERATION_SCENARIOS = scenarios
+        try:
+            prompts = generate_llm_prompts(backend)
+        finally:
+            mod.GENERATION_SCENARIOS = original
+        assert len(prompts) == len(scenarios)
         for p in prompts:
             assert p.metadata["prompt_source"] == "generated"
 
+    def test_multi_turn_metadata_propagated(self):
+        scenarios = [
+            GenerationScenario(
+                "Paperino",
+                "worried",
+                "a mission",
+                "emotional support",
+                "italian",
+                True,
+                4,
+                ["continue", "escalate", "continue"],
+            ),
+        ]
+        results = [GenerateResult(text="Ciao Uno!", model_name="test")]
+        backend = SequentialBackend(results)
+        import datagen.generate_prompts as mod
+
+        original = mod.GENERATION_SCENARIOS
+        mod.GENERATION_SCENARIOS = scenarios
+        try:
+            prompts = generate_llm_prompts(backend)
+        finally:
+            mod.GENERATION_SCENARIOS = original
+        assert len(prompts) == 1
+        assert prompts[0].metadata["multi_turn"] is True
+        assert prompts[0].metadata["turn_count"] == 4
+        assert prompts[0].metadata["directives"] == [
+            "continue",
+            "escalate",
+            "continue",
+        ]
+
     def test_skips_failed_generations(self):
+        scenarios = GENERATION_SCENARIOS[:3]
         results: list[GenerateResult | None] = [
             None,
             GenerateResult(text="Valid message", model_name="test"),
+            None,
         ]
-        results.extend([None] * (len(GENERATION_SCENARIOS) - 2))
         backend = SequentialBackend(results)
-        prompts = generate_llm_prompts(backend)
+        import datagen.generate_prompts as mod
+
+        original = mod.GENERATION_SCENARIOS
+        mod.GENERATION_SCENARIOS = scenarios
+        try:
+            prompts = generate_llm_prompts(backend)
+        finally:
+            mod.GENERATION_SCENARIOS = original
         assert len(prompts) == 1
 
     def test_skips_empty_results(self):
+        scenarios = GENERATION_SCENARIOS[:3]
         results = [
             GenerateResult(text="  ", model_name="test"),
             GenerateResult(text="Valid message", model_name="test"),
+            GenerateResult(text="", model_name="test"),
         ]
-        results.extend(
-            [GenerateResult(text="", model_name="test")]
-            * (len(GENERATION_SCENARIOS) - 2)
-        )
         backend = SequentialBackend(results)
-        prompts = generate_llm_prompts(backend)
+        import datagen.generate_prompts as mod
+
+        original = mod.GENERATION_SCENARIOS
+        mod.GENERATION_SCENARIOS = scenarios
+        try:
+            prompts = generate_llm_prompts(backend)
+        finally:
+            mod.GENERATION_SCENARIOS = original
         assert len(prompts) == 1
 
 

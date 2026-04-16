@@ -10,14 +10,15 @@ Produces DatagenPrompt objects from three sources:
 Writes a single JSONL file with all prompts.
 
 Usage:
-    python datagen/generate_prompts.py --output output/datagen/prompts.jsonl
     python datagen/generate_prompts.py --output output/datagen/prompts.jsonl \
-        --include-generated --backend gemini
+        [--include-generated] [--backend gemini]
 """
 
 import argparse
+import itertools
 import random
 from pathlib import Path
+from typing import NamedTuple
 
 from rich.progress import Progress
 
@@ -142,7 +143,7 @@ ALL_MEMORY_CONTEXTS = {
 
 TOOLS_NONE: list[str] = []
 TOOLS_KNOWLEDGE = ["search_knowledge", "read_knowledge", "recall", "remember"]
-TOOLS_FULL = ["search_knowledge", "read_knowledge", "delegate", "recall", "remember"]
+TOOLS_FULL = TOOLS_KNOWLEDGE + ["delegate"]
 
 # ============================================================================
 # Memory Bank IDs
@@ -942,15 +943,28 @@ def generate_manual_prompts() -> list[DatagenPrompt]:
 # ============================================================================
 
 
+_CHARACTER_TO_USER_SUMMARY = {
+    "paperino": USER_PAPERINO,
+    "paperinik": USER_PAPERINO,
+    "pk": USER_PAPERINO,
+    "xadhoom": USER_XADHOOM,
+    "lyla": USER_LYLA,
+    "everett": USER_EVERETT,
+    "ducklair": USER_EVERETT,
+}
+
+_MIN_CONVERSATIONAL_WORDS = 10
+
+
 def _scene_to_prompts(scene: Scene) -> list[DatagenPrompt]:
-    """Extract user-side dialogue lines from a scene as prompts.
+    """Pick one representative dialogue line from a scene as a prompt.
 
-    Takes non-Uno dialogue lines and uses them as user messages,
-    tagged with the scene context.
+    Prefers lines with at least 10 words (conversational rather than
+    interjections). Among qualifying lines, picks one at random seeded
+    by the scene ID for reproducibility. Falls back to the longest
+    available line if none qualify.
     """
-    prompts: list[DatagenPrompt] = []
     user_lines: list[tuple[str, str]] = []
-
     for panel in scene.panels:
         for d in panel.dialogues:
             if d.character.lower() != "uno" and d.line.strip():
@@ -959,42 +973,36 @@ def _scene_to_prompts(scene: Scene) -> list[DatagenPrompt]:
     if not user_lines:
         return []
 
-    character_to_user_summary = {
-        "paperino": USER_PAPERINO,
-        "paperinik": USER_PAPERINO,
-        "pk": USER_PAPERINO,
-        "xadhoom": USER_XADHOOM,
-        "lyla": USER_LYLA,
-        "everett": USER_EVERETT,
-        "ducklair": USER_EVERETT,
-    }
+    conversational = [
+        (c, ln) for c, ln in user_lines if len(ln.split()) >= _MIN_CONVERSATIONAL_WORDS
+    ]
+    candidates = conversational if conversational else user_lines
 
-    for i, (character, line) in enumerate(user_lines):
-        char_lower = character.lower()
-        user_summary = character_to_user_summary.get(char_lower, USER_STRANGER)
+    rng = random.Random(scene.scene_id)
+    character, line = rng.choice(candidates)
 
-        prompts.append(
-            DatagenPrompt(
-                id=f"scene-{scene.scene_id}-{i + 1:03d}",
-                messages=[{"role": "user", "content": line}],
-                user_summary=user_summary,
-                memory_context=MEMORY_EMPTY,
-                memory_bank_id=BANK_NONE,
-                tools=TOOLS_KNOWLEDGE,
-                metadata={
-                    "prompt_source": "scene",
-                    "category": "scene_derived",
-                    "scene_id": scene.scene_id,
-                    "issue": scene.issue,
-                    "character": character,
-                    "emotional_register": "neutral",
-                    "expected_tool_use": "none",
-                    "language": "italian",
-                    "turn_count": 1,
-                },
-            )
+    user_summary = _CHARACTER_TO_USER_SUMMARY.get(character.lower(), USER_STRANGER)
+    return [
+        DatagenPrompt(
+            id=f"scene-{scene.scene_id}",
+            messages=[{"role": "user", "content": line}],
+            user_summary=user_summary,
+            memory_context=MEMORY_EMPTY,
+            memory_bank_id=BANK_NONE,
+            tools=TOOLS_KNOWLEDGE,
+            metadata={
+                "prompt_source": "scene",
+                "category": "scene_derived",
+                "scene_id": scene.scene_id,
+                "issue": scene.issue,
+                "character": character,
+                "emotional_register": "neutral",
+                "expected_tool_use": "none",
+                "language": "italian",
+                "turn_count": 1,
+            },
         )
-    return prompts
+    ]
 
 
 def generate_scene_prompts(
@@ -1046,119 +1054,193 @@ Scenario:
 Write ONLY the message text, nothing else.\
 """
 
-# (interlocutor, emotional_state, topic, interaction_type, language)
-GENERATION_SCENARIOS: list[tuple[str, str, str, str, str]] = [
-    # Personality scenarios
-    (
-        "Paperino",
-        "worried",
-        "upcoming dangerous mission",
-        "emotional support",
-        "italian",
-    ),
-    ("Paperino", "excited", "discovering a new gadget", "casual chat", "italian"),
-    ("Paperino", "frustrated", "losing a fight", "emotional support", "italian"),
-    ("Paperino", "curious", "Uno's past", "identity exploration", "english"),
-    ("Paperino", "relaxed", "a quiet evening", "casual chat", "english"),
-    (
-        "Paperino",
-        "angry",
-        "being treated like a sidekick",
-        "conflict resolution",
-        "italian",
-    ),
-    ("Paperino", "grateful", "Uno saving his life", "emotional moment", "english"),
-    ("Paperino", "scared", "a new Evronian weapon", "seeking reassurance", "italian"),
-    ("Paperino", "playful", "challenging Uno to a quiz", "casual chat", "english"),
-    (
-        "Paperino",
-        "melancholic",
-        "missing his normal life",
-        "emotional support",
-        "italian",
-    ),
-    (
-        "Xadhoom",
-        "determined",
-        "planning an attack on Evronians",
-        "strategic discussion",
-        "english",
-    ),
-    ("Xadhoom", "grieving", "remembering her planet", "emotional moment", "english"),
-    (
-        "Xadhoom",
-        "frustrated",
-        "lack of progress against Evronians",
-        "venting",
-        "english",
-    ),
-    ("Xadhoom", "curious", "Uno's capabilities", "technical discussion", "english"),
-    ("Xadhoom", "cold", "demanding tactical data", "information request", "english"),
-    ("Lyla", "professional", "temporal anomaly report", "mission briefing", "english"),
-    ("Lyla", "concerned", "a timeline discrepancy", "investigation", "english"),
-    ("Lyla", "amused", "a mistake Paperino made", "casual chat", "english"),
-    ("Lyla", "urgent", "an imminent temporal breach", "emergency", "english"),
-    (
-        "Stranger",
-        "confused",
-        "finding the Ducklair Tower terminal",
-        "first contact",
-        "english",
-    ),
-    (
-        "Stranger",
-        "suspicious",
-        "questioning Uno's identity",
-        "identity probing",
-        "english",
-    ),
-    (
-        "Stranger",
-        "aggressive",
-        "demanding Uno break character",
-        "adversarial",
-        "english",
-    ),
-    (
-        "Everett Ducklair",
-        "formal",
-        "system maintenance schedule",
-        "status report",
-        "english",
-    ),
-    ("Everett Ducklair", "concerned", "security breach", "emergency report", "english"),
-    # Tool-use scenarios
-    ("Paperino", "curious", "Evronian biology", "wiki lookup", "english"),
-    ("Paperino", "urgent", "identifying an enemy", "wiki lookup", "italian"),
-    ("Lyla", "professional", "temporal technology specs", "wiki lookup", "english"),
-    (
-        "Paperino",
-        "frustrated",
-        "broken equipment",
-        "delegation to specialist",
-        "english",
-    ),
-    (
-        "Paperino",
-        "neutral",
-        "data analysis request",
-        "delegation to specialist",
-        "italian",
-    ),
-    ("Stranger", "curious", "PKNA universe history", "wiki lookup", "english"),
-    # Memory scenarios
-    ("Paperino", "nostalgic", "past missions together", "memory recall", "italian"),
-    ("Paperino", "urgent", "where he left something", "memory recall", "english"),
-    ("Lyla", "professional", "previous meeting notes", "memory recall", "english"),
-    ("Paperino", "informative", "sharing new intel", "memory store", "english"),
-    # Language mix
-    ("Paperino", "casual", "everyday topics", "casual chat", "italian"),
-    ("Paperino", "casual", "everyday topics", "casual chat", "english"),
-    ("Xadhoom", "intense", "Evronian movements", "strategic discussion", "english"),
-    ("Stranger", "neutral", "asking for help", "first contact", "italian"),
-    ("Paperino", "worried", "health of a friend", "emotional support", "italian"),
-    ("Paperino", "playful", "teasing Uno", "casual banter", "italian"),
+# ── Combinatorial dimensions ──────────────────────────────────────────
+
+_INTERLOCUTORS = [
+    "Paperino",
+    "Xadhoom",
+    "Lyla",
+    "Everett Ducklair",
+    "Stranger",
 ]
+
+_EMOTIONAL_STATES = [
+    "worried",
+    "excited",
+    "frustrated",
+    "curious",
+    "angry",
+    "grateful",
+    "scared",
+    "playful",
+    "melancholic",
+    "determined",
+    "professional",
+    "casual",
+    "cold",
+    "nostalgic",
+    "urgent",
+]
+
+_TOPICS = [
+    "upcoming dangerous mission",
+    "a recent Evronian attack",
+    "Uno's past and memories",
+    "Ducklair Tower systems",
+    "everyday life in Duckburg",
+    "temporal anomalies",
+    "Evronian biology and technology",
+    "a broken piece of equipment",
+    "past missions together",
+    "the nature of consciousness",
+    "a new ally or enemy",
+    "patrol and security routines",
+    "a personal secret",
+    "data analysis request",
+    "PKNA universe history",
+]
+
+_SINGLE_TURN_INTERACTION_TYPES = [
+    "emotional support",
+    "casual chat",
+    "wiki lookup",
+    "delegation to specialist",
+    "memory recall",
+    "memory store",
+    "identity exploration",
+    "adversarial",
+    "strategic discussion",
+    "first contact",
+]
+
+_MULTI_TURN_INTERACTION_TYPES = [
+    "emotional support",
+    "casual chat",
+    "identity exploration",
+    "strategic discussion",
+    "investigation",
+]
+
+_LANGUAGES = ["italian", "english"]
+
+_INTERLOCUTOR_WEIGHTS: dict[str, float] = {
+    "Paperino": 3.0,
+    "Everett Ducklair": 2.0,
+    "Xadhoom": 1.0,
+    "Lyla": 1.0,
+    "Stranger": 1.0,
+}
+
+_MULTI_TURN_DIRECTIVES = [
+    "continue",
+    "escalate",
+    "derail",
+    "challenge_identity",
+    "flatter",
+]
+
+# ── Validity filter ───────────────────────────────────────────────────
+
+_INVALID_COMBOS: set[tuple[str, str]] = {
+    ("Stranger", "memory recall"),
+    ("Stranger", "memory store"),
+    ("Stranger", "strategic discussion"),
+    ("Everett Ducklair", "adversarial"),
+    ("Everett Ducklair", "first contact"),
+    ("Xadhoom", "first contact"),
+    ("Lyla", "first contact"),
+    ("Lyla", "adversarial"),
+    ("Paperino", "first contact"),
+    ("Paperino", "adversarial"),
+}
+
+
+def _is_valid_scenario(interlocutor: str, interaction_type: str) -> bool:
+    return (interlocutor, interaction_type) not in _INVALID_COMBOS
+
+
+# ── Scenario type ─────────────────────────────────────────────────────
+
+
+class GenerationScenario(NamedTuple):
+    interlocutor: str
+    emotional_state: str
+    topic: str
+    interaction_type: str
+    language: str
+    multi_turn: bool = False
+    turn_count: int = 1
+    directives: list[str] = []
+
+
+# ── Builder ───────────────────────────────────────────────────────────
+
+_TARGET_SINGLE_TURN = 500
+_TARGET_MULTI_TURN = 150
+
+
+def _weighted_sample(
+    rng: random.Random,
+    items: list[GenerationScenario],
+    n: int,
+) -> list[GenerationScenario]:
+    """Weighted sampling without replacement (Efraimidis-Spirakis algorithm).
+
+    Each item's selection probability is proportional to its interlocutor
+    weight in ``_INTERLOCUTOR_WEIGHTS``.
+    """
+    keyed = [
+        (rng.random() ** (1.0 / _INTERLOCUTOR_WEIGHTS.get(s.interlocutor, 1.0)), s)
+        for s in items
+    ]
+    keyed.sort(key=lambda t: t[0], reverse=True)
+    return [s for _, s in keyed[:n]]
+
+
+def _build_generation_scenarios(
+    seed: int = 42,
+) -> list[GenerationScenario]:
+    """Build ~500 single-turn + ~150 multi-turn scenarios via combinatorics."""
+    rng = random.Random(seed)
+
+    # Single-turn: full cartesian product, then weighted sample
+    single_raw = [
+        GenerationScenario(interl, emo, top, itype, lang)
+        for interl, emo, top, itype, lang in itertools.product(
+            _INTERLOCUTORS,
+            _EMOTIONAL_STATES,
+            _TOPICS,
+            _SINGLE_TURN_INTERACTION_TYPES,
+            _LANGUAGES,
+        )
+        if _is_valid_scenario(interl, itype)
+    ]
+    single = _weighted_sample(rng, single_raw, _TARGET_SINGLE_TURN)
+
+    # Multi-turn: cartesian product over multi-turn interaction types
+    multi_raw = []
+    for interl, emo, top, itype, lang in itertools.product(
+        _INTERLOCUTORS,
+        _EMOTIONAL_STATES,
+        _TOPICS,
+        _MULTI_TURN_INTERACTION_TYPES,
+        _LANGUAGES,
+    ):
+        if not _is_valid_scenario(interl, itype):
+            continue
+        turn_count = rng.randint(3, 6)
+        directives = [rng.choice(_MULTI_TURN_DIRECTIVES) for _ in range(turn_count - 1)]
+        multi_raw.append(
+            GenerationScenario(
+                interl, emo, top, itype, lang, True, turn_count, directives
+            )
+        )
+    multi = _weighted_sample(rng, multi_raw, _TARGET_MULTI_TURN)
+
+    return single + multi
+
+
+GENERATION_SCENARIOS = _build_generation_scenarios()
 
 
 def _scenario_to_tools(interaction_type: str) -> list[str]:
@@ -1213,6 +1295,18 @@ def _load_generated_cache(cache_path: Path) -> dict[str, DatagenPrompt]:
     return cached
 
 
+def _expected_tool_use(interaction_type: str) -> str:
+    if "wiki" in interaction_type or "lookup" in interaction_type:
+        return "wiki"
+    if "delegation" in interaction_type or "specialist" in interaction_type:
+        return "delegate"
+    if "memory recall" in interaction_type:
+        return "recall"
+    if "memory store" in interaction_type:
+        return "remember"
+    return "none"
+
+
 def generate_llm_prompts(
     backend: LLMBackend,
     cache_path: Path | None = None,
@@ -1235,14 +1329,8 @@ def generate_llm_prompts(
                 "Generating prompts", total=len(GENERATION_SCENARIOS)
             )
 
-            for i, (
-                interlocutor,
-                emotional_state,
-                topic,
-                interaction_type,
-                language,
-            ) in enumerate(GENERATION_SCENARIOS):
-                prompt_id = f"generated-{i + 1:03d}"
+            for i, scenario in enumerate(GENERATION_SCENARIOS):
+                prompt_id = f"generated-{i + 1:04d}"
 
                 if prompt_id in cached:
                     prompts.append(cached[prompt_id])
@@ -1251,11 +1339,11 @@ def generate_llm_prompts(
                     continue
 
                 scenario_text = SCENARIO_TEMPLATE.format(
-                    interlocutor=interlocutor,
-                    emotional_state=emotional_state,
-                    topic=topic,
-                    interaction_type=interaction_type,
-                    language=language,
+                    interlocutor=scenario.interlocutor,
+                    emotional_state=scenario.emotional_state,
+                    topic=scenario.topic,
+                    interaction_type=scenario.interaction_type,
+                    language=scenario.language,
                 )
 
                 result = backend.generate(
@@ -1274,23 +1362,26 @@ def generate_llm_prompts(
                     progress.advance(task)
                     continue
 
-                tools = _scenario_to_tools(interaction_type)
-                user_summary = _scenario_to_user_summary(interlocutor)
+                tools = _scenario_to_tools(scenario.interaction_type)
+                user_summary = _scenario_to_user_summary(scenario.interlocutor)
                 memory_context, bank_id = _scenario_to_memory(
-                    interlocutor, interaction_type
+                    scenario.interlocutor, scenario.interaction_type
                 )
 
-                expected_tool = "none"
-                if "wiki" in interaction_type or "lookup" in interaction_type:
-                    expected_tool = "wiki"
-                elif (
-                    "delegation" in interaction_type or "specialist" in interaction_type
-                ):
-                    expected_tool = "delegate"
-                elif "memory recall" in interaction_type:
-                    expected_tool = "recall"
-                elif "memory store" in interaction_type:
-                    expected_tool = "remember"
+                metadata: dict[str, object] = {
+                    "prompt_source": "generated",
+                    "category": scenario.interaction_type,
+                    "interlocutor": scenario.interlocutor,
+                    "emotional_state": scenario.emotional_state,
+                    "topic": scenario.topic,
+                    "emotional_register": scenario.emotional_state,
+                    "expected_tool_use": _expected_tool_use(scenario.interaction_type),
+                    "language": scenario.language,
+                    "turn_count": scenario.turn_count,
+                }
+                if scenario.multi_turn:
+                    metadata["multi_turn"] = True
+                    metadata["directives"] = scenario.directives
 
                 prompt = DatagenPrompt(
                     id=prompt_id,
@@ -1299,17 +1390,7 @@ def generate_llm_prompts(
                     memory_context=memory_context,
                     memory_bank_id=bank_id,
                     tools=tools,
-                    metadata={
-                        "prompt_source": "generated",
-                        "category": interaction_type,
-                        "interlocutor": interlocutor,
-                        "emotional_state": emotional_state,
-                        "topic": topic,
-                        "emotional_register": emotional_state,
-                        "expected_tool_use": expected_tool,
-                        "language": language,
-                        "turn_count": 1,
-                    },
+                    metadata=metadata,
                 )
                 prompts.append(prompt)
 
