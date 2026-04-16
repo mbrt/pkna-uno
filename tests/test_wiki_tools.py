@@ -1,6 +1,6 @@
 """Unit tests for in-memory knowledge base tools."""
 
-from pkna.wiki_tools import (
+from pkna.inference.tools import (
     WIKI_ROOT,
     WikiIndex,
     WikiSegment,

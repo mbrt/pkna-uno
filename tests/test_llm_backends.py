@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, TypeAdapter
 
-from pkna.llm_backends import GenerateResult, _add_additional_properties_false
+from pkna.llm.backends import GenerateResult, _add_additional_properties_false
 
 
 class TestGenerateResult:

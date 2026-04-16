@@ -6,8 +6,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from pkna.llm_backends import GenerateResult, LLMBackend
-from pkna.pkna_scenes import AnnotatedDialogue, Panel, Scene
+from pkna.extract.scenes import AnnotatedDialogue, Panel, Scene
+from pkna.llm.backends import GenerateResult, LLMBackend
 from extract.reflect_scenes import (
     SceneReflection,
     SceneReflector,

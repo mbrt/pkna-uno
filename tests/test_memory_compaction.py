@@ -2,9 +2,9 @@
 
 from unittest.mock import MagicMock
 
-from pkna.llm_backends import GenerateResult
-from pkna.memory_bank import MemoryBank, MemoryEntry
-from pkna.memory_compaction import compact_memories
+from pkna.inference.memory import MemoryBank, MemoryEntry
+from pkna.inference.memory_compaction import compact_memories
+from pkna.llm.backends import GenerateResult
 
 
 def _make_backend(response_text: str) -> MagicMock:

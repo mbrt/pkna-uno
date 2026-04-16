@@ -15,7 +15,7 @@ No GPU or model dependencies -- this is pure data transformation.
 
 from typing import Any
 
-from pkna.datagen_types import DatagenTrace
+from pkna.datagen.types import DatagenTrace
 
 
 def _convert_tool_calls(

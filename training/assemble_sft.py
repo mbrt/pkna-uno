@@ -29,7 +29,7 @@ from rich.table import Table
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from datagen.filter_traces import load_traces
-from pkna.sft_dataset import trace_to_messages
+from pkna.training.sft_dataset import trace_to_messages
 
 console = Console(stderr=True)
 logging.basicConfig(

@@ -24,7 +24,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from pkna.pkna_scenes import extract_scenes_from_issue, natural_sort_key
+from pkna.extract.scenes import extract_scenes_from_issue, natural_sort_key
 
 console = Console(stderr=True)
 

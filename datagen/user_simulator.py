@@ -8,7 +8,7 @@ with the conversation history, a user profile, and a per-turn directive
 
 import logging
 
-from pkna.llm_backends import LLMBackend
+from pkna.llm.backends import LLMBackend
 
 log = logging.getLogger(__name__)
 

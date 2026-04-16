@@ -13,10 +13,10 @@ from datagen.generate_prompts import (
     _scenario_to_user_summary,
     _scene_to_prompts,
 )
-from pkna.datagen_types import DatagenPrompt
-from pkna.llm_backends import GenerateResult
-from pkna.pkna_scenes import AnnotatedDialogue, Panel, Scene
-from pkna.testing import SequentialBackend
+from pkna.datagen.types import DatagenPrompt
+from pkna.extract.scenes import AnnotatedDialogue, Panel, Scene
+from pkna.llm.backends import GenerateResult
+from pkna.llm.testing import SequentialBackend
 
 
 class TestGenerateManualPrompts:

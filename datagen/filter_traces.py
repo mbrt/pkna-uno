@@ -31,13 +31,13 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress
 
-from pkna.datagen_types import (
+from pkna.datagen.types import (
     DatagenTrace,
     QualityScore,
     ScoredTrace,
     ToolCorrectnessResult,
 )
-from pkna.llm_backends import LLMBackend, create_backend
+from pkna.llm.backends import LLMBackend, create_backend
 
 console = Console(stderr=True)
 logging.basicConfig(

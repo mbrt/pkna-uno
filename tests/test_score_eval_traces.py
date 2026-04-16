@@ -30,14 +30,14 @@ from evals.score_eval_traces import (
     score_tool_use,
     score_trace,
 )
-from pkna.eval_types import (
+from pkna.eval.types import (
     EvalPrompt,
     EvalTrace,
     JudgeScore,
     ScoredTrace,
 )
-from pkna.llm_backends import GenerateResult
-from pkna.testing import FakeBackend, SequentialBackend
+from pkna.llm.backends import GenerateResult
+from pkna.llm.testing import FakeBackend, SequentialBackend
 
 
 # ============================================================================

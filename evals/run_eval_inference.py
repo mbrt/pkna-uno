@@ -28,11 +28,11 @@ from rich.logging import RichHandler
 from rich.progress import Progress
 
 from datagen.user_simulator import simulate_user_turn
-from pkna.eval_tools import make_eval_tools
-from pkna.eval_types import EvalPrompt, EvalTrace
-from pkna.llm_backends import LLMBackend, create_backend
-from pkna.memory_bank import MemoryBank
-from pkna.system_prompts import SUITE_TEMPLATE_MAP, render_system_prompt
+from pkna.eval.types import EvalPrompt, EvalTrace
+from pkna.inference.memory import MemoryBank
+from pkna.inference.system_prompts import SUITE_TEMPLATE_MAP, render_system_prompt
+from pkna.inference.tools import make_eval_tools
+from pkna.llm.backends import LLMBackend, create_backend
 
 console = Console(stderr=True)
 logging.basicConfig(

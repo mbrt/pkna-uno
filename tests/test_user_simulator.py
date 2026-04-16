@@ -6,8 +6,8 @@ from datagen.user_simulator import (
     simulate_user_turn,
 )
 from evals.run_eval_inference import _get_directive
-from pkna.llm_backends import GenerateResult
-from pkna.testing import FakeBackend
+from pkna.llm.backends import GenerateResult
+from pkna.llm.testing import FakeBackend
 
 
 class TestBuildSimulatorMessages:

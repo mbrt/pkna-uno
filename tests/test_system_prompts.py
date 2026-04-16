@@ -1,7 +1,7 @@
 """Unit tests for system prompt templates."""
 
-from pkna.eval_types import SUITES
-from pkna.system_prompts import (
+from pkna.eval.types import SUITES
+from pkna.inference.system_prompts import (
     SUITE_TEMPLATE_MAP,
     render_system_prompt,
 )

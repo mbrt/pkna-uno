@@ -3,9 +3,9 @@
 from pathlib import Path
 from typing import Any
 
-from pkna.eval_types import EvalPrompt, EvalTrace
-from pkna.llm_backends import GenerateResult
-from pkna.testing import FakeBackend, SequentialBackend
+from pkna.eval.types import EvalPrompt, EvalTrace
+from pkna.llm.backends import GenerateResult
+from pkna.llm.testing import FakeBackend, SequentialBackend
 
 from evals.run_eval_inference import (
     _visible_messages,

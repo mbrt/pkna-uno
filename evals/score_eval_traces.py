@@ -28,7 +28,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.progress import Progress
 
-from pkna.eval_types import (
+from pkna.eval.types import (
     EvalPrompt,
     EvalReport,
     EvalTrace,
@@ -36,7 +36,7 @@ from pkna.eval_types import (
     ScoredTrace,
     SuiteResult,
 )
-from pkna.llm_backends import LLMBackend, create_backend
+from pkna.llm.backends import LLMBackend, create_backend
 
 console = Console(stderr=True)
 logging.basicConfig(

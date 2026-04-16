@@ -1,6 +1,6 @@
 """Unit tests for datagen data types."""
 
-from pkna.datagen_types import (
+from pkna.datagen.types import (
     DatagenPrompt,
     DatagenTrace,
     QualityScore,

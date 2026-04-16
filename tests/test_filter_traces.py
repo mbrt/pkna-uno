@@ -11,9 +11,9 @@ from datagen.filter_traces import (
     filter_traces,
     score_trace,
 )
-from pkna.datagen_types import DatagenTrace, QualityScore, ScoredTrace
-from pkna.llm_backends import GenerateResult
-from pkna.testing import FakeBackend
+from pkna.datagen.types import DatagenTrace, QualityScore, ScoredTrace
+from pkna.llm.backends import GenerateResult
+from pkna.llm.testing import FakeBackend
 
 
 def _make_trace(

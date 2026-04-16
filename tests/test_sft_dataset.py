@@ -1,7 +1,11 @@
 """Unit tests for SFT dataset conversion logic."""
 
-from pkna.datagen_types import DatagenTrace
-from pkna.sft_dataset import _convert_message, _convert_tool_calls, trace_to_messages
+from pkna.datagen.types import DatagenTrace
+from pkna.training.sft_dataset import (
+    _convert_message,
+    _convert_tool_calls,
+    trace_to_messages,
+)
 
 
 def _make_trace(

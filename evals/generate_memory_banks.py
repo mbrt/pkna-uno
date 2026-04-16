@@ -20,8 +20,8 @@ from pathlib import Path
 from rich.console import Console
 from rich.logging import RichHandler
 
-from pkna.llm_backends import create_backend
-from pkna.memory_bank import MemoryBank
+from pkna.inference.memory import MemoryBank
+from pkna.llm.backends import create_backend
 
 console = Console(stderr=True)
 logging.basicConfig(

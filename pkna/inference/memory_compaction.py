@@ -4,8 +4,8 @@ Compacts raw memory bank entries into a concise summary suitable for
 injection into the system prompt's memory context slot.
 """
 
-from pkna.llm_backends import LLMBackend
-from pkna.memory_bank import MemoryBank
+from pkna.llm.backends import LLMBackend
+from pkna.inference.memory import MemoryBank
 
 COMPACTION_PROMPT = """\
 You are a memory consolidation module for an AI assistant named Uno.

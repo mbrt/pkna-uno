@@ -2,8 +2,8 @@
 
 import pytest
 
-from pkna.eval_tools import TOOL_NAMES, delegate, make_eval_tools
-from pkna.memory_bank import MemoryBank, MemoryEntry
+from pkna.inference.memory import MemoryBank, MemoryEntry
+from pkna.inference.tools import TOOL_NAMES, delegate, make_eval_tools
 
 
 class TestDelegate:

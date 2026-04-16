@@ -10,7 +10,7 @@ A walkthrough of the project is on [this blog](https://blog.mbrt.dev/posts/uno).
 
 | Directory | Contents |
 |---|---|
-| `pkna/` | Shared library: LLM backends, scene extraction, wiki tools |
+| `pkna/` | Shared library organized by phase: `llm/` (backends, test doubles), `extract/` (scenes, wiki), `inference/` (prompts, memory, tools), `datagen/` (types), `eval/` (types), `training/` (SFT dataset) |
 | `extract/` | Active pipeline: panel extraction, scene reflection, emotional profile building |
 | `datagen/` | Dataset generation: prompt bank, trace capture, quality filtering |
 | `training/` | SFT training: dataset assembly, Unsloth training script, smoke test |

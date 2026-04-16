@@ -18,7 +18,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.logging import RichHandler
 
-from pkna.eval_types import EvalPrompt
+from pkna.eval.types import EvalPrompt
 
 console = Console(stderr=True)
 logging.basicConfig(

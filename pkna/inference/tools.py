@@ -1,30 +1,41 @@
-"""
-In-memory knowledge base search and retrieval tools.
+"""Tool factory for the eval and dataset generation harness.
 
-Loads all wiki content into memory on startup, organized hierarchically
-by markdown headers. Provides 2 tools for LLM to access knowledge:
-1. search_knowledge - keyword search returning short snippets with segment IDs
-2. read_knowledge - retrieve full content of a specific segment by ID
+Assembles the set of callable tools that the LLM backend can invoke,
+based on the tool names requested by each eval prompt.
+
+Includes the in-memory wiki knowledge base (search + read) and the
+delegate stub, alongside memory recall/remember wiring.
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-# Wiki root directory
-WIKI_ROOT = Path(__file__).parent.parent / "results" / "wiki"
+from pkna.inference.memory import MemoryBank, make_recall, make_remember
+
+TOOL_NAMES = frozenset(
+    ["search_knowledge", "read_knowledge", "delegate", "recall", "remember"]
+)
+
+WIKI_ROOT = Path(__file__).parent.parent.parent / "results" / "wiki"
+
+
+# ---------------------------------------------------------------------------
+# Wiki knowledge base
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class WikiSegment:
     """A segment of wiki content organized by headers."""
 
-    segment_id: str  # Unique identifier (e.g., "characters.md::Personaggi::UNO")
-    content: str  # Full text of segment
-    file_path: str  # Relative path (e.g., "characters.md")
-    section_path: list[str]  # Hierarchical headers (e.g., ["Personaggi", "UNO"])
+    segment_id: str  # e.g. "characters.md::Personaggi::UNO"
+    content: str
+    file_path: str  # Relative path (e.g. "characters.md")
+    section_path: list[str]  # Hierarchical headers
     level: int  # Header level (1=file, 2=##, 3=###)
-    token_count: int  # Approximate token count (~words * 1.3)
+    token_count: int  # Approximate (~words * 1.3)
 
     def get_display_path(self) -> str:
         """Returns formatted path like 'characters.md > Personaggi > UNO'."""
@@ -53,7 +64,6 @@ class WikiIndex:
         if not wiki_root.exists():
             return
 
-        # Load all .md files
         for md_file in sorted(wiki_root.rglob("*.md")):
             self._parse_file(md_file, wiki_root)
 
@@ -63,19 +73,16 @@ class WikiIndex:
             with open(file_path, encoding="utf-8") as f:
                 lines = f.readlines()
         except (UnicodeDecodeError, PermissionError):
-            # Skip files we can't read
             return
 
         rel_path = str(file_path.relative_to(wiki_root))
-        section_stack: list[tuple[int, str]] = []  # (level, header_text)
+        section_stack: list[tuple[int, str]] = []
         current_content: list[str] = []
 
         for line in lines:
-            # Check if line is a header (## or ###)
             header_match = re.match(r"^(#{2,3})\s+(.+)$", line)
 
             if header_match:
-                # Save previous segment if exists
                 if current_content:
                     self._create_segment(
                         content="".join(current_content),
@@ -84,21 +91,16 @@ class WikiIndex:
                     )
                     current_content = []
 
-                # Update section stack
                 level = len(header_match.group(1))
                 header_text = header_match.group(2).strip()
 
-                # Pop stack to current level
                 while section_stack and section_stack[-1][0] >= level:
                     section_stack.pop()
 
-                # Push new section
                 section_stack.append((level, header_text))
             else:
-                # Accumulate content
                 current_content.append(line)
 
-        # Save final segment
         if current_content:
             self._create_segment(
                 content="".join(current_content),
@@ -110,20 +112,12 @@ class WikiIndex:
         self, content: str, file_path: str, section_stack: list[tuple[int, str]]
     ) -> None:
         """Create a WikiSegment from accumulated content."""
-        # Extract section path (just the header texts)
         section_path = [header_text for _, header_text in section_stack]
-
-        # Calculate approximate token count
         word_count = len(content.split())
         token_count = int(word_count * 1.3)
-
-        # Create segment ID
         segment_id = WikiSegment.make_id(file_path, section_path)
-
-        # Determine level (deepest header in stack, or 1 if no headers)
         level = section_stack[-1][0] if section_stack else 1
 
-        # Create and store segment
         segment = WikiSegment(
             segment_id=segment_id,
             content=content.strip(),
@@ -144,11 +138,9 @@ class WikiIndex:
 
         scored_segments = []
         for segment in self.segments:
-            # Calculate relevance score
             content_lower = segment.content.lower()
             section_path_lower = " ".join(segment.section_path).lower()
 
-            # Score: keyword frequency + title matches (weighted 5x higher)
             score = 0
             for kw in keyword_list:
                 score += content_lower.count(kw)
@@ -157,7 +149,6 @@ class WikiIndex:
             if score > 0:
                 scored_segments.append((score, segment))
 
-        # Sort by score descending, return top N
         scored_segments.sort(key=lambda x: x[0], reverse=True)
         return [seg for _, seg in scored_segments[:max_results]]
 
@@ -166,7 +157,6 @@ class WikiIndex:
         return self.segments_by_id.get(segment_id)
 
 
-# Global wiki index (loaded lazily on first use)
 _wiki_index: WikiIndex | None = None
 
 
@@ -177,9 +167,6 @@ def get_wiki_index() -> WikiIndex:
         _wiki_index = WikiIndex()
         _wiki_index.load_from_directory(WIKI_ROOT)
     return _wiki_index
-
-
-# Tool functions for LLM
 
 
 def search_knowledge(keywords: str, max_results: int = 5) -> str:
@@ -249,3 +236,71 @@ def read_knowledge(segment_id: str) -> str:
     ]
 
     return "\n".join(formatted)
+
+
+# ---------------------------------------------------------------------------
+# Delegate stub
+# ---------------------------------------------------------------------------
+
+
+def delegate(task: str, context: str = "") -> str:
+    """Delegate a technical task to a specialist sub-agent.
+
+    Use this for tasks outside your core competency: coding, math,
+    research, data analysis, etc. The sub-agent will handle the work
+    and return the result.
+
+    Args:
+        task: Description of the task to delegate
+        context: Additional context or constraints for the task
+
+    Returns:
+        Result from the specialist sub-agent
+    """
+    return (
+        f"Task delegated: {task}\n"
+        "The specialist is working on it. "
+        "Result will be provided when ready."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tool factory
+# ---------------------------------------------------------------------------
+
+
+def make_eval_tools(
+    tool_names: list[str],
+    memory_bank: MemoryBank | None = None,
+    *,
+    eval_mode: bool = True,
+) -> list[Callable[..., str]]:
+    """Build the list of tool callables for a given eval prompt.
+
+    Args:
+        tool_names: Which tools to include (from the EvalPrompt.tools field).
+        memory_bank: Raw memory bank for recall/remember. Required if
+            "recall" or "remember" is in tool_names.
+        eval_mode: If True, remember is a no-op stub.
+
+    Returns:
+        List of callable tool functions ready for LLMBackend.generate().
+    """
+    bank = memory_bank or MemoryBank()
+
+    registry: dict[str, Callable[..., str]] = {
+        "search_knowledge": search_knowledge,
+        "read_knowledge": read_knowledge,
+        "delegate": delegate,
+        "recall": make_recall(bank),
+        "remember": make_remember(bank, eval_mode=eval_mode),
+    }
+
+    tools: list[Callable[..., str]] = []
+    for name in tool_names:
+        if name not in registry:
+            raise ValueError(
+                f"Unknown tool '{name}'. Available: {sorted(registry.keys())}"
+            )
+        tools.append(registry[name])
+    return tools

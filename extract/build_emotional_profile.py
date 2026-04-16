@@ -26,13 +26,13 @@ from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
 
 from extract.reflect_scenes import SceneReflection, load_reflections
-from pkna.llm_backends import GenerateResult, LLMBackend, create_backend
-from pkna.pkna_scenes import (
+from pkna.extract.scenes import (
     Scene,
     extract_scenes_from_issue,
     format_scene_view,
     natural_sort_key,
 )
+from pkna.llm.backends import GenerateResult, LLMBackend, create_backend
 
 load_dotenv()
 

@@ -29,11 +29,11 @@ from rich.progress import Progress
 
 from datagen.generate_prompts import load_prompts
 from datagen.user_simulator import simulate_user_turn
-from pkna.datagen_types import DatagenTrace
-from pkna.eval_tools import make_eval_tools
-from pkna.llm_backends import LLMBackend, create_backend
-from pkna.memory_bank import MemoryBank
-from pkna.system_prompts import render_system_prompt
+from pkna.datagen.types import DatagenTrace
+from pkna.inference.memory import MemoryBank
+from pkna.inference.system_prompts import render_system_prompt
+from pkna.inference.tools import make_eval_tools
+from pkna.llm.backends import LLMBackend, create_backend
 
 console = Console(stderr=True)
 logging.basicConfig(

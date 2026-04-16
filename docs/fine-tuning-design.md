@@ -79,7 +79,7 @@ Sub-agents are opaque to the user.
 
 ### Evaluation Pipeline (evals.md)
 
-- [x] **Eval type system** -- `pkna/eval_types.py`: Pydantic models for the
+- [x] **Eval type system** -- `pkna/eval/types.py`: Pydantic models for the
   full 3-stage pipeline (`EvalPrompt`, `EvalTrace`, `JudgeScore`,
   `ScoredTrace`, `SuiteResult`, `EvalReport`). All 6 suites defined.
 - [x] **Stage 1: Generate eval prompts** -- `evals/generate_eval_prompts.py`:
@@ -112,18 +112,18 @@ Sub-agents are opaque to the user.
 
 ### Tool Infrastructure (dataset-generation-agent.md, architecture)
 
-- [x] **Wiki tools** -- `pkna/wiki_tools.py`: in-memory PKNA wiki index with
+- [x] **Wiki tools** -- `pkna/inference/tools.py`: in-memory PKNA wiki index with
   `search_knowledge` and `read_knowledge`. Loads markdown from `results/wiki/`.
-- [x] **Memory bank** -- `pkna/memory_bank.py`: JSONL-backed episodic memory
+- [x] **Memory bank** -- `pkna/inference/memory.py`: JSONL-backed episodic memory
   with `search`, `append`, `recall`, `remember`. Supports eval mode (read-only).
-- [x] **Memory compaction** -- `pkna/memory_compaction.py`: LLM-driven
+- [x] **Memory compaction** -- `pkna/inference/memory_compaction.py`: LLM-driven
   summarization of raw memory banks into concise context for the system prompt.
-- [x] **Eval tool registry** -- `pkna/eval_tools.py`: wires tool names from
+- [x] **Eval tool registry** -- `pkna/inference/tools.py`: wires tool names from
   `EvalPrompt` to real callables (`search_wiki`, `read_wiki`, `delegate`,
   `recall`, `remember`).
-- [x] **Delegate stub** -- `pkna/eval_tools.py`: `delegate()` returns a
+- [x] **Delegate stub** -- `pkna/inference/tools.py`: `delegate()` returns a
   placeholder response; real sub-agent routing is not implemented.
-- [x] **System prompts** -- `pkna/system_prompts.py`: minimal and full
+- [x] **System prompts** -- `pkna/inference/system_prompts.py`: minimal and full
   templates with per-suite mapping and `render_system_prompt()`.
 
 ### Memory Banks (dataset-generation-agent.md, memory consolidation)
@@ -137,14 +137,14 @@ Sub-agents are opaque to the user.
 
 ### LLM Backends
 
-- [x] **Gemini backend** -- `pkna/llm_backends.py`: Google `genai` with tool
+- [x] **Gemini backend** -- `pkna/llm/backends.py`: Google `genai` with tool
   support and retry logic.
-- [x] **Anthropic backend** -- `pkna/llm_backends.py`: Anthropic via Bedrock
+- [x] **Anthropic backend** -- `pkna/llm/backends.py`: Anthropic via Bedrock
   with full tool-use loop.
 
 ### Upstream Data
 
-- [x] **Scene extraction** -- `pkna/pkna_scenes.py`: structures for
+- [x] **Scene extraction** -- `pkna/extract/scenes.py`: structures for
   emotionally annotated comic scenes (panels, dialogue, annotations).
 - [x] **Wiki corpus** -- `results/wiki/`: fandom + Wikipedia articles on PKNA
   characters, technology, locations.
@@ -153,7 +153,7 @@ Sub-agents are opaque to the user.
 
 ### Dataset Generation Agent (dataset-generation-agent.md)
 
-- [x] **Data types** -- `pkna/datagen_types.py`: Pydantic models for the
+- [x] **Data types** -- `pkna/datagen/types.py`: Pydantic models for the
   datagen pipeline (`DatagenPrompt`, `DatagenTrace`, `QualityScore`,
   `ScoredTrace`).
 - [x] **Context composer** -- `datagen/run_datagen.py`:

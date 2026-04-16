@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from pkna.llm_backends import GenerateResult, LLMBackend
+from pkna.llm.backends import GenerateResult, LLMBackend
 
 
 class FakeBackend(LLMBackend):

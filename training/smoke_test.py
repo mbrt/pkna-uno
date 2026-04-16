@@ -45,8 +45,8 @@ from typing import Any
 from rich.console import Console
 from rich.logging import RichHandler
 
-from pkna.llm_backends import GenerateResult
-from pkna.testing import FakeBackend, SequentialBackend
+from pkna.llm.backends import GenerateResult
+from pkna.llm.testing import FakeBackend, SequentialBackend
 
 console = Console(stderr=True)
 logging.basicConfig(

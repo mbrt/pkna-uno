@@ -14,9 +14,9 @@ from datagen.run_datagen import (
     run_single_prompt,
     run_single_turn,
 )
-from pkna.datagen_types import DatagenPrompt, DatagenTrace
-from pkna.llm_backends import GenerateResult
-from pkna.testing import FakeBackend, SequentialBackend
+from pkna.datagen.types import DatagenPrompt, DatagenTrace
+from pkna.llm.backends import GenerateResult
+from pkna.llm.testing import FakeBackend, SequentialBackend
 
 
 class TestComposeDatagenContext:

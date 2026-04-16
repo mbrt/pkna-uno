@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pkna.memory_bank import MemoryBank, MemoryEntry, make_recall, make_remember
+from pkna.inference.memory import MemoryBank, MemoryEntry, make_recall, make_remember
 
 
 class TestMemoryBank:

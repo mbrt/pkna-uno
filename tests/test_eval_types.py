@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from pkna.eval_types import (
+from pkna.eval.types import (
     SUITES,
     EvalPrompt,
     EvalReport,
