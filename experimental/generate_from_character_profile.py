@@ -23,7 +23,6 @@ from rich.logging import RichHandler
 from rich.panel import Panel
 from transformers import pipeline
 
-
 load_dotenv()
 
 # Configure logging
@@ -417,12 +416,11 @@ def initialize_huggingface_backend(model_name: str) -> dict[str, Any]:
     if device == "cpu":
         log.warning("CUDA not available, using CPU (will be slower)")
 
-    # Load pipeline
     pipe = pipeline(
         "text-generation",
         model=model_name,
         device_map="auto" if device == "cuda" else None,
-        torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
+        dtype=torch.bfloat16 if device == "cuda" else torch.float32,
     )
 
     log.info(f"Model loaded successfully on {device}")

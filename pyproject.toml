@@ -76,4 +76,5 @@ link-mode = "symlink"
 # used in experimental, so this should not cause issues for the main codebase.
 override-dependencies = [
     "transformers>=5.2.0,<=5.5.0",
+    "torchao==0.16.0",
 ]
