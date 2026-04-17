@@ -14,6 +14,8 @@ dependencies = [
     "causal-conv1d>=1.6.1",
     "flash-attn>=2.8.3",
     "flash-linear-attention>=0.4.2",
+    "gguf>=0.18.0",
+    "llama-cpp-python>=0.3.16",
     "ninja>=1.13.0",
     "google-genai>=1.73.1",
     "jupyter>=1.1.1",
@@ -69,9 +71,14 @@ packages = ["pkna"]
 # Pre-built CUDA wheels (avoids from-source build which requires nvcc)
 causal-conv1d = { url = "https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.6.1.post4/causal_conv1d-1.6.1%2Bcu12torch2.10cxx11abiTRUE-cp313-cp313-linux_x86_64.whl" }
 flash-attn = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.0/flash_attn-2.8.3%2Bcu128torch2.10-cp313-cp313-linux_x86_64.whl" }
+# Qwen3.5 rope.dimension_sections fix landed post-0.3.20; pin to latest main
+# until a new release. See https://github.com/abetlen/llama-cpp-python/issues/2137
+llama-cpp-python = { git = "https://github.com/abetlen/llama-cpp-python.git", branch = "main" }
 
 [tool.uv]
 link-mode = "symlink"
+# Build llama-cpp-python with CUDA support for GPU-accelerated inference.
+extra-build-variables = { llama-cpp-python = { CMAKE_ARGS = "-DGGML_CUDA=on" } }
 # Required to solve incompatibility between vllm and transformers. vllm is only
 # used in experimental, so this should not cause issues for the main codebase.
 override-dependencies = [

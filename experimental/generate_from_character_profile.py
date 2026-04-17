@@ -1,15 +1,37 @@
 #!/usr/bin/env python3
 
 """
-Chat with a character based on their profile using Google GenAI.
+Chat with a character based on their profile.
 
 This script loads a character profile document and uses it to configure
 an LLM to impersonate the character in an interactive chat session.
+
+Supported backends:
+  - gemini:      Google GenAI API (default)
+  - huggingface: HuggingFace transformers pipeline (BF16, needs large VRAM)
+  - llamacpp:    llama-cpp-python with GGUF models (recommended for local GPU)
+
+llamacpp usage (recommended for consumer GPUs):
+
+    # Download a GGUF model:
+    huggingface-cli download unsloth/Qwen3.5-35B-A3B-GGUF \\
+        Qwen3.5-35B-A3B-Q4_K_M.gguf --local-dir models/
+
+    # Run with auto GPU layer detection:
+    python experimental/generate_from_character_profile.py \\
+        --backend llamacpp --model models/Qwen3.5-35B-A3B-Q4_K_M.gguf
+
+    # Override GPU layers manually:
+    python experimental/generate_from_character_profile.py \\
+        --backend llamacpp --model models/Qwen3.5-35B-A3B-Q4_K_M.gguf \\
+        --n-gpu-layers 20
 """
 
 import argparse
 import json
 import logging
+import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -289,13 +311,8 @@ def chat_loop(
     console.print(welcome_panel)
     console.print()
 
-    # Initialize conversation history for the API (format depends on backend)
-    if backend_type == "gemini":
-        conversation_gemini: list[Content] = []
-        conversation_hf: list[dict[str, str]] = []
-    else:  # huggingface
-        conversation_gemini = []
-        conversation_hf = []
+    conversation_gemini: list[Content] = []
+    conversation_chat: list[dict[str, str]] = []
 
     try:
         while True:
@@ -309,7 +326,6 @@ def chat_loop(
             if not user_input:
                 continue
 
-            # Add to conversation history (backend-specific format)
             if backend_type == "gemini":
                 conversation_gemini.append(
                     Content(
@@ -317,18 +333,11 @@ def chat_loop(
                         parts=[Part.from_text(text=user_input)],
                     ),
                 )
-            else:  # huggingface
-                conversation_hf.append(
-                    {
-                        "role": "user",
-                        "content": user_input,
-                    }
-                )
+            else:
+                conversation_chat.append({"role": "user", "content": user_input})
 
-            # Add to persistent history
             history.add_user_message(user_input)
 
-            # Get response from LLM (backend-specific)
             try:
                 if backend_type == "gemini":
                     assistant_response = generate_response_gemini(
@@ -337,31 +346,33 @@ def chat_loop(
                         system_instructions,
                         model_name,
                     )
-                    # Add to conversation history
                     conversation_gemini.append(
                         Content(
                             role="model",
                             parts=[Part.from_text(text=assistant_response)],
                         ),
                     )
-                else:  # huggingface
-                    assistant_response = generate_response_huggingface(
+                elif backend_type == "llamacpp":
+                    assistant_response = generate_response_llamacpp(
                         backend,
-                        conversation_hf,
+                        conversation_chat,
                         system_instructions,
                     )
-                    # Add to conversation history
-                    conversation_hf.append(
-                        {
-                            "role": "assistant",
-                            "content": assistant_response,
-                        }
+                    conversation_chat.append(
+                        {"role": "assistant", "content": assistant_response}
+                    )
+                else:
+                    assistant_response = generate_response_huggingface(
+                        backend,
+                        conversation_chat,
+                        system_instructions,
+                    )
+                    conversation_chat.append(
+                        {"role": "assistant", "content": assistant_response}
                     )
 
-                # Add to persistent history
                 history.add_assistant_message(assistant_response)
 
-                # Display response
                 console.print(
                     f"[bold green]{character_name}:[/bold green] {assistant_response}\n"
                 )
@@ -371,11 +382,10 @@ def chat_loop(
                 console.print(
                     "\n[bold red]Error:[/bold red] Failed to get response. Please try again.\n"
                 )
-                # Remove the user message from conversation since we didn't get a response
                 if backend_type == "gemini":
                     conversation_gemini.pop()
                 else:
-                    conversation_hf.pop()
+                    conversation_chat.pop()
 
     except KeyboardInterrupt:
         # Ctrl+C - graceful exit
@@ -431,6 +441,71 @@ def initialize_huggingface_backend(model_name: str) -> dict[str, Any]:
     }
 
 
+def estimate_gpu_layers(gguf_path: str, margin_mb: int = 512) -> int:
+    """Estimate how many model layers fit in GPU VRAM.
+
+    Reads the block count from GGUF metadata and divides available VRAM
+    (minus a safety margin) by the approximate per-layer size.
+    """
+    from gguf import GGUFReader
+
+    reader = GGUFReader(gguf_path)
+    n_layers = 0
+    for key, field in reader.fields.items():
+        if key.endswith(".block_count"):
+            n_layers = int(field.parts[field.data[0]][0])
+            break
+    if n_layers == 0:
+        log.warning("Could not read block_count from GGUF metadata")
+        return 0
+
+    file_size_mb = os.path.getsize(gguf_path) / (1024 * 1024)
+    per_layer_mb = file_size_mb / n_layers
+
+    try:
+        free_vram_mb = torch.cuda.mem_get_info()[0] / (1024 * 1024)
+    except Exception:
+        return 0
+
+    usable_mb = free_vram_mb - margin_mb
+    n_gpu = max(0, min(n_layers, int(usable_mb / per_layer_mb)))
+    log.info(
+        "GGUF: %d layers, %.0f MB/layer, %.0f MB free VRAM -> offloading %d layers to GPU",
+        n_layers,
+        per_layer_mb,
+        free_vram_mb,
+        n_gpu,
+    )
+    return n_gpu
+
+
+def initialize_llamacpp_backend(model_path: str, n_gpu_layers: int) -> dict[str, Any]:
+    """Initialize llama-cpp-python backend with a GGUF model.
+
+    Args:
+        model_path: Path to a GGUF model file
+        n_gpu_layers: Number of layers to offload to GPU (-1 = auto)
+    """
+    from llama_cpp import Llama
+
+    if n_gpu_layers < 0:
+        n_gpu_layers = estimate_gpu_layers(model_path)
+
+    log.info(f"Loading GGUF model: {model_path} (n_gpu_layers={n_gpu_layers})")
+    llm = Llama(
+        model_path=model_path,
+        n_gpu_layers=n_gpu_layers,
+        n_ctx=8192,
+        verbose=False,
+    )
+    log.info("GGUF model loaded")
+
+    return {
+        "type": "llamacpp",
+        "llm": llm,
+    }
+
+
 def generate_response_gemini(
     backend: dict[str, Any],
     conversation: list[Content],
@@ -483,12 +558,57 @@ def generate_response_huggingface(
     if not messages or messages[0].get("role") != "system":
         messages.insert(0, {"role": "system", "content": system_instructions})
 
-    # Generate response
+    t0 = time.perf_counter()
     output = pipe(messages, max_new_tokens=1024)
+    elapsed = time.perf_counter() - t0
 
     # Extract assistant's response (last message in generated text)
     generated = output[0]["generated_text"]
     assistant_message = generated[-1]["content"]
+
+    n_tokens = len(pipe.tokenizer.encode(assistant_message))
+    tok_s = n_tokens / elapsed if elapsed > 0 else 0
+    log.info("Generated %d tokens in %.1fs (%.1f tok/s)", n_tokens, elapsed, tok_s)
+
+    return assistant_message
+
+
+def generate_response_llamacpp(
+    backend: dict[str, Any],
+    conversation: list[dict[str, str]],
+    system_instructions: str,
+) -> str:
+    """Generate response using llama-cpp-python backend.
+
+    Args:
+        backend: Backend configuration dict
+        conversation: List of message dicts (OpenAI chat format)
+        system_instructions: System instructions for the model
+
+    Returns:
+        Generated response text
+    """
+    llm = backend["llm"]
+
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": system_instructions}
+    ]
+    messages.extend(conversation)
+
+    t0 = time.perf_counter()
+    result = llm.create_chat_completion(
+        messages=messages,
+        max_tokens=1024,
+        temperature=1.0,
+        top_p=0.95,
+    )
+    elapsed = time.perf_counter() - t0
+
+    assistant_message = result["choices"][0]["message"]["content"] or ""
+
+    n_tokens = result["usage"]["completion_tokens"]
+    tok_s = n_tokens / elapsed if elapsed > 0 else 0
+    log.info("Generated %d tokens in %.1fs (%.1f tok/s)", n_tokens, elapsed, tok_s)
 
     return assistant_message
 
@@ -515,9 +635,16 @@ def main() -> None:
     parser.add_argument(
         "--backend",
         type=str,
-        choices=["gemini", "huggingface"],
+        choices=["gemini", "huggingface", "llamacpp"],
         default="gemini",
         help="Model backend to use (default: gemini)",
+    )
+    parser.add_argument(
+        "--n-gpu-layers",
+        type=int,
+        default=-1,
+        help="Number of layers to offload to GPU for llamacpp backend "
+        "(-1 = auto-detect based on available VRAM, 0 = CPU only)",
     )
     args = parser.parse_args()
 
@@ -529,7 +656,9 @@ def main() -> None:
         # Initialize backend based on CLI argument
         if args.backend == "gemini":
             backend = initialize_gemini_backend()
-        else:  # huggingface
+        elif args.backend == "llamacpp":
+            backend = initialize_llamacpp_backend(args.model, args.n_gpu_layers)
+        else:
             backend = initialize_huggingface_backend(args.model)
 
         # Load profile

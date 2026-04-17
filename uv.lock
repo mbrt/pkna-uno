@@ -2243,6 +2243,17 @@ wheels = [
 ]
 
 [[package]]
+name = "llama-cpp-python"
+version = "0.3.20"
+source = { git = "https://github.com/abetlen/llama-cpp-python.git?branch=main#1b1a320de18c14c3915ba2df59eedb7c6e7cbe69" }
+dependencies = [
+    { name = "diskcache" },
+    { name = "jinja2" },
+    { name = "numpy" },
+    { name = "typing-extensions" },
+]
+
+[[package]]
 name = "llguidance"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3461,9 +3472,11 @@ dependencies = [
     { name = "dspy" },
     { name = "flash-attn" },
     { name = "flash-linear-attention" },
+    { name = "gguf" },
     { name = "google-genai" },
     { name = "jupyter" },
     { name = "layoutparser", extra = ["layoutmodels"] },
+    { name = "llama-cpp-python" },
     { name = "markdown-it-py" },
     { name = "mlflow" },
     { name = "ninja" },
@@ -3507,9 +3520,11 @@ requires-dist = [
     { name = "dspy", specifier = ">=3.1.3" },
     { name = "flash-attn", url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.0/flash_attn-2.8.3%2Bcu128torch2.10-cp313-cp313-linux_x86_64.whl" },
     { name = "flash-linear-attention", specifier = ">=0.4.2" },
+    { name = "gguf", specifier = ">=0.18.0" },
     { name = "google-genai", specifier = ">=1.73.1" },
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "layoutparser", extras = ["layoutmodels"], specifier = ">=0.3.4" },
+    { name = "llama-cpp-python", git = "https://github.com/abetlen/llama-cpp-python.git?branch=main" },
     { name = "markdown-it-py", specifier = ">=4.0.0" },
     { name = "mlflow", specifier = ">=3.11.1" },
     { name = "ninja", specifier = ">=1.13.0" },
