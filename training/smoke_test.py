@@ -249,15 +249,18 @@ def run_stage_filter(output_dir: Path) -> Path:
 
 
 def run_stage_assemble(output_dir: Path, model_name: str) -> Path:
+    from datagen.run_datagen import load_system_prompt
     from training.assemble_sft import assemble_dataset
 
     filtered_path = output_dir / "traces_filtered.jsonl"
     dataset_path = output_dir / "dataset"
+    system_prompt = load_system_prompt(output_dir)
     assemble_dataset(
         input_path=filtered_path,
         output_path=dataset_path,
         model_name=model_name,
         max_seq_length=2048,
+        system_prompt=system_prompt,
     )
     return dataset_path
 

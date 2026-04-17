@@ -28,6 +28,7 @@ from typing import Any
 
 from rich.progress import Progress
 
+from datagen.run_datagen import load_system_prompt
 from pkna.datagen.types import (
     DatagenTrace,
     QualityScore,
@@ -130,9 +131,9 @@ false if the response is in the wrong language.\
 """
 
 
-def _format_trace_for_judge(trace: DatagenTrace) -> str:
+def _format_trace_for_judge(trace: DatagenTrace, system_prompt: str = "") -> str:
     """Format a trace for the judge model."""
-    parts = [f"## System Prompt\n{trace.system_prompt}"]
+    parts = [f"## System Prompt\n{system_prompt}"]
 
     if trace.user_summary:
         parts.append(f"\n## User Summary\n{trace.user_summary}")
@@ -188,9 +189,10 @@ def _parse_judge_response(text: str) -> dict[str, Any] | None:
 def score_trace(
     trace: DatagenTrace,
     backend: LLMBackend,
+    system_prompt: str = "",
 ) -> QualityScore | None:
     """Score a trace using an LLM judge plus a programmatic length check."""
-    formatted = _format_trace_for_judge(trace)
+    formatted = _format_trace_for_judge(trace, system_prompt)
     result = backend.generate(
         system=JUDGE_SYSTEM,
         messages=[{"role": "user", "content": formatted}],
@@ -266,6 +268,7 @@ def filter_traces(
     scored_path: Path,
     filtered_path: Path,
     backend: LLMBackend,
+    system_prompt: str = "",
 ) -> tuple[int, int]:
     """Score and filter traces.
 
@@ -313,7 +316,7 @@ def filter_traces(
         task = progress.add_task("Scoring traces", total=len(pending))
 
         for trace in pending:
-            score = score_trace(trace, backend)
+            score = score_trace(trace, backend, system_prompt)
 
             if score is None:
                 log.warning(f"Skipping trace {trace.id}: judge returned no score")
@@ -373,11 +376,15 @@ def main() -> None:
 
     console.print("[bold cyan]Trace Quality Filter[/bold cyan]\n")
 
+    traces_dir = args.input.parent
+    system_prompt = load_system_prompt(traces_dir)
+    log.info(f"Loaded system prompt from sidecar files in {traces_dir}")
+
     backend = create_backend(args.backend, args.model)
     log.info(f"Using LLM judge: {args.backend}")
 
     total, passed = filter_traces(
-        args.input, args.scored_output, args.filtered_output, backend
+        args.input, args.scored_output, args.filtered_output, backend, system_prompt
     )
 
     if total > 0:

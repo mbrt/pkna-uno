@@ -130,20 +130,24 @@ class TestComposeContext:
         assert "sarcastic" in result
         assert "search_knowledge" in result
 
-    def test_includes_user_summary(self):
-        prompt = _make_prompt(
-            suite="social_reasoning", user_summary="Paperino, anxious"
+    def test_is_static_regardless_of_context(self):
+        prompt_bare = _make_prompt(suite="social_reasoning")
+        prompt_ctx = _make_prompt(
+            suite="social_reasoning",
+            user_summary="Paperino, anxious",
+            memory_context="Yesterday PK was exhausted.",
         )
-        result = compose_context(prompt)
-        assert "Paperino, anxious" in result
+        assert compose_context(prompt_bare) == compose_context(prompt_ctx)
 
-    def test_includes_memory_context(self):
+    def test_does_not_contain_context(self):
         prompt = _make_prompt(
             suite="memory_handling",
+            user_summary="Angus Fangus, annoying",
             memory_context="Yesterday PK was exhausted.",
         )
         result = compose_context(prompt)
-        assert "Yesterday PK was exhausted." in result
+        assert "Angus Fangus" not in result
+        assert "Yesterday PK was exhausted." not in result
 
     def test_unknown_suite_defaults_to_full(self):
         prompt = _make_prompt(suite="unknown_future_suite")

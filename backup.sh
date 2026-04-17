@@ -16,10 +16,11 @@ find input/ -type f | sort > input-files.txt
 
 # Backup some input files and output files
 tar --append -f pkna-llm-backup.tar \
+    --exclude='input/characters' \
+    --exclude='input/models' \
+    --exclude='input/orig' \
     --exclude='input/pkna' \
     --exclude='input/schede' \
-    --exclude='input/characters' \
-    --exclude='input/orig' \
     --exclude='**/mlartifacts' \
     --exclude='output/sft/smoke_test' \
     input/ output/ input-files.txt

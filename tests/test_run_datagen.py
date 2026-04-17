@@ -6,7 +6,6 @@ from typing import Any
 from datagen.run_datagen import (
     _get_directive,
     _visible_messages,
-    compose_datagen_context,
     load_completed_ids,
     load_memory_bank,
     run_datagen,
@@ -22,34 +21,12 @@ from pkna.llm.testing import FakeBackend, SequentialBackend
 SAMPLE_PROFILE = "# Uno - Character Profile\n\nUno is a sarcastic AI."
 
 
-class TestComposeDatagenContext:
-    def test_includes_profile_content(self):
-        result = compose_datagen_context(SAMPLE_PROFILE, "Paperino", "some memories")
-        assert "sarcastic AI" in result
-        assert "search_knowledge" in result
-
-    def test_includes_user_summary(self):
-        result = compose_datagen_context(SAMPLE_PROFILE, "Paperino, anxious", "")
-        assert "Paperino, anxious" in result
-
-    def test_includes_memory_context(self):
-        result = compose_datagen_context(
-            SAMPLE_PROFILE, "", "Yesterday PK was exhausted."
-        )
-        assert "Yesterday PK was exhausted." in result
-
-    def test_empty_profile_still_renders(self):
-        result = compose_datagen_context("", "", "")
-        assert "search_knowledge" in result
-
-
 class TestLoadCompletedIds:
     def test_reads_existing_traces(self, tmp_path: Path):
         path = tmp_path / "traces.jsonl"
         trace = DatagenTrace(
             id="done-001",
             metadata={},
-            system_prompt="sys",
             memory_context="",
             user_summary="",
             messages=[],
@@ -131,7 +108,7 @@ class TestRunSingleTurn:
                 ],
             )
         )
-        trace = run_single_turn(
+        result = run_single_turn(
             prompt_id="t-001",
             system_prompt="You are Uno.",
             user_summary="Paperino",
@@ -141,17 +118,16 @@ class TestRunSingleTurn:
             backend=backend,
             tools=None,
         )
-        assert trace is not None
-        assert trace.id == "t-001"
-        assert trace.system_prompt == "You are Uno."
-        assert trace.user_summary == "Paperino"
-        assert trace.messages[0] == {"role": "user", "content": "Hello"}
-        assert trace.messages[1]["content"] == "Ciao!"
-        assert trace.messages[1]["thinking"] == "greeting"
+        assert result is not None
+        assert result.trace.id == "t-001"
+        assert result.trace.user_summary == "Paperino"
+        assert result.trace.messages[0] == {"role": "user", "content": "Hello"}
+        assert result.trace.messages[1]["content"] == "Ciao!"
+        assert result.trace.messages[1]["thinking"] == "greeting"
 
     def test_returns_none_on_failure(self):
         backend = FakeBackend(None)
-        trace = run_single_turn(
+        result = run_single_turn(
             prompt_id="t-fail",
             system_prompt="sys",
             user_summary="",
@@ -161,11 +137,11 @@ class TestRunSingleTurn:
             backend=backend,
             tools=None,
         )
-        assert trace is None
+        assert result is None
 
     def test_fallback_when_messages_empty(self):
         backend = FakeBackend(GenerateResult(text="fallback text", model_name="test"))
-        trace = run_single_turn(
+        result = run_single_turn(
             prompt_id="t-fb",
             system_prompt="sys",
             user_summary="",
@@ -175,8 +151,11 @@ class TestRunSingleTurn:
             backend=backend,
             tools=None,
         )
-        assert trace is not None
-        assert trace.messages[-1] == {"role": "assistant", "content": "fallback text"}
+        assert result is not None
+        assert result.trace.messages[-1] == {
+            "role": "assistant",
+            "content": "fallback text",
+        }
 
 
 class TestRunMultiTurn:
@@ -206,7 +185,7 @@ class TestRunMultiTurn:
                 GenerateResult(text="User 3", model_name="sim"),
             ]
         )
-        trace = run_multi_turn(
+        result = run_multi_turn(
             prompt_id="mt-001",
             system_prompt="sys",
             user_summary="Paperino",
@@ -217,9 +196,9 @@ class TestRunMultiTurn:
             tools=None,
             simulator_backend=sim_backend,
         )
-        assert trace is not None
-        user_msgs = [m for m in trace.messages if m["role"] == "user"]
-        assistant_msgs = [m for m in trace.messages if m["role"] == "assistant"]
+        assert result is not None
+        user_msgs = [m for m in result.trace.messages if m["role"] == "user"]
+        assistant_msgs = [m for m in result.trace.messages if m["role"] == "assistant"]
         assert len(assistant_msgs) == 3
         assert len(user_msgs) == 3
 
@@ -237,7 +216,7 @@ class TestRunMultiTurn:
         sim_backend = SequentialBackend(
             [GenerateResult(text="Follow up", model_name="sim")]
         )
-        trace = run_multi_turn(
+        result = run_multi_turn(
             prompt_id="mt-fail",
             system_prompt="sys",
             user_summary="",
@@ -248,8 +227,8 @@ class TestRunMultiTurn:
             tools=None,
             simulator_backend=sim_backend,
         )
-        assert trace is not None
-        assert len([m for m in trace.messages if m["role"] == "assistant"]) == 1
+        assert result is not None
+        assert len([m for m in result.trace.messages if m["role"] == "assistant"]) == 1
 
     def test_preserves_tool_messages_across_turns(self):
         """Tool messages from turn 1 should be present in the trace and
@@ -281,7 +260,7 @@ class TestRunMultiTurn:
         sim_backend = SequentialBackend(
             [GenerateResult(text="Thanks!", model_name="sim")]
         )
-        trace = run_multi_turn(
+        result = run_multi_turn(
             prompt_id="mt-tools",
             system_prompt="sys",
             user_summary="Paperino",
@@ -292,16 +271,16 @@ class TestRunMultiTurn:
             tools=None,
             simulator_backend=sim_backend,
         )
-        assert trace is not None
-        tool_msgs = [m for m in trace.messages if m["role"] == "tool"]
+        assert result is not None
+        tool_msgs = [m for m in result.trace.messages if m["role"] == "tool"]
         assert len(tool_msgs) == 1
         assert tool_msgs[0]["name"] == "search"
-        assistant_msgs = [m for m in trace.messages if m["role"] == "assistant"]
+        assistant_msgs = [m for m in result.trace.messages if m["role"] == "assistant"]
         assert len(assistant_msgs) == 3
 
     def test_returns_none_when_no_response(self):
         backend = SequentialBackend([None])
-        trace = run_multi_turn(
+        result = run_multi_turn(
             prompt_id="mt-none",
             system_prompt="sys",
             user_summary="",
@@ -311,7 +290,7 @@ class TestRunMultiTurn:
             backend=backend,
             tools=None,
         )
-        assert trace is None
+        assert result is None
 
 
 class TestRunSinglePromptDispatch:
@@ -325,7 +304,7 @@ class TestRunSinglePromptDispatch:
                 ),
             ]
         )
-        trace = run_single_prompt(
+        result = run_single_prompt(
             prompt_id="dispatch-mt",
             system_prompt="sys",
             user_summary="",
@@ -335,7 +314,7 @@ class TestRunSinglePromptDispatch:
             backend=backend,
             tools=None,
         )
-        assert trace is not None
+        assert result is not None
 
     def test_dispatches_single_turn(self):
         backend = FakeBackend(
@@ -345,7 +324,7 @@ class TestRunSinglePromptDispatch:
                 messages=[{"role": "assistant", "content": "Single"}],
             )
         )
-        trace = run_single_prompt(
+        result = run_single_prompt(
             prompt_id="dispatch-st",
             system_prompt="sys",
             user_summary="",
@@ -355,7 +334,7 @@ class TestRunSinglePromptDispatch:
             backend=backend,
             tools=None,
         )
-        assert trace is not None
+        assert result is not None
 
 
 class TestRunDatagen:
@@ -407,7 +386,6 @@ class TestRunDatagen:
         assert len(lines) == 2
         trace = DatagenTrace.model_validate_json(lines[0])
         assert trace.id == "p-001"
-        assert trace.system_prompt != ""
 
     def test_resumes_from_existing(self, tmp_path: Path):
         prompts_path = tmp_path / "prompts.jsonl"
@@ -440,7 +418,6 @@ class TestRunDatagen:
         existing_trace = DatagenTrace(
             id="p-001",
             metadata={},
-            system_prompt="sys",
             memory_context="",
             user_summary="",
             messages=[{"role": "user", "content": "Hello"}],

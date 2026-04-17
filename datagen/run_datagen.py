@@ -19,6 +19,7 @@ Usage:
 import argparse
 import json
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -28,34 +29,16 @@ from datagen.generate_prompts import load_prompts
 from datagen.user_simulator import simulate_user_turn
 from pkna.datagen.types import DatagenTrace
 from pkna.inference.memory import MemoryBank
-from pkna.inference.system_prompts import render_datagen_prompt
+from pkna.inference.system_prompts import (
+    DATAGEN_TEMPLATE,
+    prepend_context_to_messages,
+    render_datagen_system_prompt,
+)
 from pkna.inference.tools import make_eval_tools
 from pkna.llm.backends import LLMBackend, create_backend
 from pkna.logging import setup_logging
 
 console, log = setup_logging()
-
-
-# ============================================================================
-# Context Composer
-# ============================================================================
-
-
-def compose_datagen_context(
-    character_profile: str,
-    user_summary: str,
-    memory_context: str,
-) -> str:
-    """Build the system prompt for a datagen prompt.
-
-    Uses the full character profile so the strong model produces
-    maximally rich traces for SFT internalization.
-    """
-    return render_datagen_prompt(
-        character_profile=character_profile,
-        user_summary=user_summary,
-        memory_context=memory_context,
-    )
 
 
 # ============================================================================
@@ -113,6 +96,14 @@ def _get_directive(directives: list[str], turn_index: int) -> str:
 # ============================================================================
 
 
+@dataclass
+class TraceResult:
+    """Bundles a DatagenTrace with cumulative LLM usage for cache tracking."""
+
+    trace: DatagenTrace
+    usage: dict[str, Any] = field(default_factory=dict)
+
+
 def run_single_turn(
     prompt_id: str,
     system_prompt: str,
@@ -122,7 +113,7 @@ def run_single_turn(
     metadata: dict[str, Any],
     backend: LLMBackend,
     tools: list[Callable[..., str]] | None,
-) -> DatagenTrace | None:
+) -> TraceResult | None:
     """Run inference for a single-turn prompt and return the trace."""
     result = backend.generate(
         system=system_prompt,
@@ -139,14 +130,14 @@ def run_single_turn(
     else:
         all_messages.append({"role": "assistant", "content": result.text})
 
-    return DatagenTrace(
+    trace = DatagenTrace(
         id=prompt_id,
         metadata=metadata,
-        system_prompt=system_prompt,
         memory_context=memory_context,
         user_summary=user_summary,
         messages=all_messages,
     )
+    return TraceResult(trace=trace, usage=result.usage)
 
 
 def run_multi_turn(
@@ -159,13 +150,14 @@ def run_multi_turn(
     backend: LLMBackend,
     tools: list[Callable[..., str]] | None,
     simulator_backend: LLMBackend | None = None,
-) -> DatagenTrace | None:
+) -> TraceResult | None:
     """Run a multi-turn conversation and return the full trace."""
     sim_backend = simulator_backend or backend
     turn_count: int = metadata.get("turn_count", 5)
     directives: list[str] = metadata.get("directives", [])
 
     all_messages: list[dict[str, Any]] = list(messages)
+    cumulative_usage: dict[str, int] = {}
 
     for turn in range(turn_count):
         result = backend.generate(
@@ -176,6 +168,10 @@ def run_multi_turn(
         if result is None:
             log.error(f"Inference failed for {prompt_id} at turn {turn}")
             break
+
+        for k, v in result.usage.items():
+            if isinstance(v, int):
+                cumulative_usage[k] = cumulative_usage.get(k, 0) + v
 
         if result.messages:
             all_messages.extend(result.messages)
@@ -200,14 +196,14 @@ def run_multi_turn(
     if not any(m["role"] == "assistant" for m in all_messages):
         return None
 
-    return DatagenTrace(
+    trace = DatagenTrace(
         id=prompt_id,
         metadata=metadata,
-        system_prompt=system_prompt,
         memory_context=memory_context,
         user_summary=user_summary,
         messages=all_messages,
     )
+    return TraceResult(trace=trace, usage=cumulative_usage)
 
 
 def run_single_prompt(
@@ -220,7 +216,7 @@ def run_single_prompt(
     backend: LLMBackend,
     tools: list[Callable[..., str]] | None,
     simulator_backend: LLMBackend | None = None,
-) -> DatagenTrace | None:
+) -> TraceResult | None:
     """Run inference for a prompt, dispatching single- or multi-turn."""
     if metadata.get("multi_turn"):
         return run_multi_turn(
@@ -244,6 +240,42 @@ def run_single_prompt(
         backend,
         tools,
     )
+
+
+# ============================================================================
+# Sidecar Files
+# ============================================================================
+
+
+TEMPLATE_FILENAME = "system_prompt_template.txt"
+PROFILE_FILENAME = "character_profile.md"
+
+
+def write_sidecar_files(output_dir: Path, character_profile: str) -> None:
+    """Write the system prompt template and character profile alongside traces.
+
+    These sidecar files let downstream consumers (SFT assembly, filtering)
+    reconstruct the system prompt with any profile, enabling profile swaps.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / TEMPLATE_FILENAME).write_text(DATAGEN_TEMPLATE, encoding="utf-8")
+    (output_dir / PROFILE_FILENAME).write_text(character_profile, encoding="utf-8")
+
+
+def load_system_prompt(output_dir: Path, profile_path: Path | None = None) -> str:
+    """Reconstruct the system prompt from sidecar files.
+
+    Args:
+        output_dir: Directory containing the sidecar files.
+        profile_path: Optional override for the character profile. When None,
+            uses the profile stored in the sidecar files.
+    """
+    template = (output_dir / TEMPLATE_FILENAME).read_text(encoding="utf-8")
+    if profile_path is not None:
+        profile = profile_path.read_text(encoding="utf-8")
+    else:
+        profile = (output_dir / PROFILE_FILENAME).read_text(encoding="utf-8")
+    return template.format(character_profile=profile)
 
 
 # ============================================================================
@@ -281,11 +313,21 @@ def run_datagen(
         log.info("All prompts already processed. Nothing to do.")
         return 0
 
+    # Group identical system prompts together so Gemini's implicit caching
+    # can reuse the cached prefix across consecutive requests.
+    pending.sort(key=lambda p: (p.user_summary, p.memory_context))
+
     skipped = len(prompts) - len(pending)
     if skipped > 0:
         log.info(f"Resuming: skipping {skipped} already-processed prompts")
 
+    system_prompt = render_datagen_system_prompt(character_profile)
+    write_sidecar_files(output_path.parent, character_profile)
+
     written = 0
+    total_prompt_tokens = 0
+    total_cached_tokens = 0
+
     with (
         open(output_path, "a", encoding="utf-8") as f,
         Progress(console=console) as progress,
@@ -293,10 +335,8 @@ def run_datagen(
         task = progress.add_task("Generating traces", total=len(pending))
 
         for prompt in pending:
-            system_prompt = compose_datagen_context(
-                character_profile=character_profile,
-                user_summary=prompt.user_summary,
-                memory_context=prompt.memory_context,
+            messages = prepend_context_to_messages(
+                prompt.messages, prompt.user_summary, prompt.memory_context
             )
 
             bank = load_memory_bank(prompt.memory_bank_id, memory_banks_dir)
@@ -305,24 +345,41 @@ def run_datagen(
             )
             tools_or_none = tool_callables if tool_callables else None
 
-            trace = run_single_prompt(
+            result = run_single_prompt(
                 prompt_id=prompt.id,
                 system_prompt=system_prompt,
                 user_summary=prompt.user_summary,
                 memory_context=prompt.memory_context,
-                messages=prompt.messages,
+                messages=messages,
                 metadata=prompt.metadata,
                 backend=backend,
                 tools=tools_or_none,
                 simulator_backend=simulator_backend,
             )
 
-            if trace is not None:
-                f.write(trace.model_dump_json() + "\n")
+            if result is not None:
+                f.write(result.trace.model_dump_json() + "\n")
                 f.flush()
                 written += 1
 
+                cached = result.usage.get("cached_content_token_count", 0)
+                prompt_toks = result.usage.get("prompt_tokens", 0)
+                total_prompt_tokens += prompt_toks
+                total_cached_tokens += cached
+                if cached:
+                    log.info(
+                        f"[{prompt.id}] cache hit: "
+                        f"{cached}/{prompt_toks} prompt tokens cached"
+                    )
+
             progress.advance(task)
+
+    if total_prompt_tokens > 0:
+        pct = total_cached_tokens / total_prompt_tokens * 100
+        log.info(
+            f"Cache summary: {total_cached_tokens:,}/{total_prompt_tokens:,} "
+            f"prompt tokens cached ({pct:.1f}%)"
+        )
 
     return written
 

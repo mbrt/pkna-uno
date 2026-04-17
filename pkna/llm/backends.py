@@ -139,11 +139,14 @@ class GeminiBackend(LLMBackend):
         if not response.usage_metadata:
             return {}
         um = response.usage_metadata
-        return {
+        usage: dict[str, Any] = {
             "prompt_tokens": um.prompt_token_count,
             "completion_tokens": um.candidates_token_count,
             "total_tokens": um.total_token_count,
         }
+        if getattr(um, "cached_content_token_count", None):
+            usage["cached_content_token_count"] = um.cached_content_token_count
+        return usage
 
     @staticmethod
     def _extract_parts(response: Any) -> tuple[str | None, str]:

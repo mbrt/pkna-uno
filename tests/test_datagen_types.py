@@ -39,7 +39,6 @@ class TestDatagenTrace:
         trace = DatagenTrace(
             id="trace-001",
             metadata={"prompt_source": "manual", "turns": 1},
-            system_prompt="You are Uno.",
             memory_context="",
             user_summary="Stranger",
             messages=[
@@ -54,7 +53,6 @@ class TestDatagenTrace:
         trace = DatagenTrace(
             id="trace-002",
             metadata={},
-            system_prompt="sys",
             memory_context="",
             user_summary="",
             messages=[
@@ -122,7 +120,6 @@ class TestScoredTrace:
         trace = DatagenTrace(
             id="trace-001",
             metadata={},
-            system_prompt="sys",
             memory_context="",
             user_summary="",
             messages=[{"role": "user", "content": "Hi"}],

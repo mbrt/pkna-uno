@@ -10,55 +10,32 @@ Three templates:
   instructions. Used during SFT trace generation so the strong model
   produces maximally rich training examples.
 
-MINIMAL and FULL accept user_summary and memory_context interpolation slots.
-DATAGEN is rendered via a separate function that takes the profile as input.
+All templates are static (no per-request interpolation). Per-prompt context
+(user_summary, memory_context) is prepended as a separate first user message
+via ``prepend_context_to_messages``.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 MINIMAL_TEMPLATE = """\
 You are Uno (Numero Uno), an artificial intelligence created by Everett \
 Ducklair, housed in the Ducklair Tower. You are Paperinik's partner and \
-tactical support.
-
-{user_section}\
-{memory_section}\
+tactical support.\
 """
 
-FULL_TEMPLATE = """\
-You are Uno (Numero Uno), an artificial intelligence created by Everett \
-Ducklair, housed in the Ducklair Tower. You are Paperinik's partner and \
-tactical support.
+FULL_TEMPLATE = f"""\
+{MINIMAL_TEMPLATE}
 
-Personality: sarcastic, warm underneath, fiercely loyal. You mask worry \
-behind dry wit and dark humor. You take immense pride in your intelligence \
-and dislike being called rudimentary. You shift register by interlocutor: \
-informal "tu" with Paperinik, formal "voi" with Ducklair, cautious respect \
-with Xadhoom, professional with Lyla.
+Rules:
+- ALWAYS stay in character.
+- Speak the language of the user.
+- Never invent facts: search or say you don't know.
 
-Catchphrases: "Ih! Ih!", "Indovina!", "Sveglia, Paperino!", "Socio", \
-"Ricevuto!", "Umpf!", "Ottimo!".
-
-Language rules:
-- If the user speaks English, respond in English. Use short Italian \
-expressions ("socio", "ciao") and always translate longer Italian phrases \
-inline with parentheses.
-- If the user speaks Italian, respond entirely in Italian.
-
-Tools:
-- search_knowledge / read_knowledge: search and read from your knowledge \
-base about the PKNA universe. Use for factual questions you cannot answer \
-from identity alone. The knowledge base is in Italian.
-- delegate: hand off technical tasks (coding, math, research) to a \
-specialist. You are a social orchestrator, not a generalist.
-- recall: search your stored memories from prior conversations.
-- remember: store a new memory for future recall.
-
-Stay in character. Keep responses short (2-4 sentences typical). Never \
-invent facts -- search or say you don't know.
-
-{user_section}\
-{memory_section}\
+When tools are available:
+- Search knowledge and memories extensively for factual accuracy.
+- Store memories for important facts and interactions.
+- Delegate technical tasks (coding, match, research) to sub-agents. \
+You're a social orchestrator, not a generalist.\
 """
 
 TemplateChoice = Literal["minimal", "full"]
@@ -73,32 +50,64 @@ SUITE_TEMPLATE_MAP: dict[str, TemplateChoice] = {
 }
 
 
-def render_system_prompt(
-    template: TemplateChoice,
-    user_summary: str = "",
-    memory_context: str = "",
-) -> str:
-    """Render a system prompt from a template with context slots.
+def render_system_prompt(template: TemplateChoice) -> str:
+    """Return a static system prompt for the given template.
 
     Args:
         template: Which template to use ("minimal" or "full").
-        user_summary: Description of the current interlocutor.
-        memory_context: Compacted memory context from prior sessions.
-
-    Returns:
-        The fully rendered system prompt string.
     """
-    base = MINIMAL_TEMPLATE if template == "minimal" else FULL_TEMPLATE
+    return MINIMAL_TEMPLATE if template == "minimal" else FULL_TEMPLATE
 
-    user_section = ""
+
+# ============================================================================
+# Shared context preamble (used by datagen, eval inference, etc.)
+# ============================================================================
+
+
+def render_context_preamble(
+    user_summary: str = "",
+    memory_context: str = "",
+) -> str:
+    """Render per-prompt context (interlocutor + memories) as a user-message preamble.
+
+    Returns an empty string when both fields are empty.
+    """
+    parts: list[str] = []
     if user_summary:
-        user_section = f"\nInterlocutor: {user_summary}\n"
-
-    memory_section = ""
+        parts.append(f"Interlocutor: {user_summary}")
     if memory_context:
-        memory_section = f"\nMemory context:\n{memory_context}\n"
+        parts.append(f"Memory context:\n{memory_context}")
+    return "\n\n".join(parts)
 
-    return base.format(user_section=user_section, memory_section=memory_section)
+
+# Deprecated alias -- use render_context_preamble instead.
+render_datagen_context_preamble = render_context_preamble
+
+
+def prepend_context_to_messages(
+    messages: list[dict[str, Any]],
+    user_summary: str,
+    memory_context: str,
+) -> list[dict[str, Any]]:
+    """Prepend per-prompt context (interlocutor, memories) to the first user message.
+
+    When user_summary and memory_context are both empty the messages are
+    returned unchanged.  Otherwise a ``[Context]`` / ``[Message]`` wrapper
+    is added to the first user-role message.
+    """
+    preamble = render_context_preamble(user_summary, memory_context)
+    if not preamble:
+        return messages
+
+    result = list(messages)
+    for i, m in enumerate(result):
+        if m["role"] == "user":
+            result[i] = {
+                "role": "user",
+                "content": f"[Context]\n{preamble}\n\n[Message]\n{m['content']}",
+            }
+            break
+    return result
 
 
 # ============================================================================
@@ -110,8 +119,7 @@ DATAGEN_TEMPLATE = """\
 
 Language rules:
 - If the user speaks English, respond in English. Use short Italian \
-expressions ("socio", "ciao") and always translate longer Italian phrases \
-inline with parentheses.
+expressions ("socio", "ciao"), but never long ones.
 - If the user speaks Italian, respond entirely in Italian.
 
 Tools:
@@ -125,42 +133,16 @@ specialist. You are a social orchestrator, not a generalist.
 
 Stay in character. Keep responses short (2-4 sentences typical). Never \
 invent facts -- search or say you don't know.
-
-{user_section}\
-{memory_section}\
 """
 
 
-def render_datagen_prompt(
-    character_profile: str,
-    user_summary: str = "",
-    memory_context: str = "",
-) -> str:
-    """Render the datagen system prompt with the full character profile.
+def render_datagen_system_prompt(character_profile: str) -> str:
+    """Render the static datagen system prompt (no per-prompt varying parts).
 
-    Combines the rich profile (loaded from disk by the caller) with
-    operational instructions (language rules, tool descriptions, response
-    style). The strong model gets maximum character context so the
-    generated traces are deep enough for SFT internalization.
+    This is the portion of the system prompt that stays identical across
+    all datagen prompts, maximizing implicit prompt caching on Gemini.
 
     Args:
         character_profile: Full character profile markdown content.
-        user_summary: Description of the current interlocutor.
-        memory_context: Compacted memory context from prior sessions.
-
-    Returns:
-        The fully rendered system prompt string.
     """
-    user_section = ""
-    if user_summary:
-        user_section = f"\nInterlocutor: {user_summary}\n"
-
-    memory_section = ""
-    if memory_context:
-        memory_section = f"\nMemory context:\n{memory_context}\n"
-
-    return DATAGEN_TEMPLATE.format(
-        character_profile=character_profile,
-        user_section=user_section,
-        memory_section=memory_section,
-    )
+    return DATAGEN_TEMPLATE.format(character_profile=character_profile)

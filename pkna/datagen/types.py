@@ -29,14 +29,13 @@ class DatagenPrompt(BaseModel):
 class DatagenTrace(BaseModel):
     """One recorded training example with full context.
 
-    Includes system_prompt, memory_context, and user_summary so that
-    SFT dataset assembly has everything needed to build the training
-    input without re-computing context.
+    The system prompt is stored externally (template + profile sidecar files)
+    so it can be swapped at SFT time. Per-prompt context (user_summary,
+    memory_context) is prepended to the first user message.
     """
 
     id: str
     metadata: dict[str, Any]
-    system_prompt: str
     memory_context: str
     user_summary: str
     messages: list[dict[str, Any]]

@@ -26,6 +26,7 @@ from rich.table import Table
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from datagen.filter_traces import load_traces
+from datagen.run_datagen import load_system_prompt
 from pkna.logging import setup_logging
 from pkna.training.sft_dataset import trace_to_messages
 
@@ -37,6 +38,7 @@ def assemble_dataset(
     output_path: Path,
     model_name: str,
     max_seq_length: int,
+    system_prompt: str,
 ) -> Dataset:
     """Load traces, convert to chat format, tokenize, and save.
 
@@ -60,7 +62,7 @@ def assemble_dataset(
     skipped = 0
 
     for trace in traces:
-        messages = trace_to_messages(trace)
+        messages = trace_to_messages(trace, system_prompt)
         text = cast(
             str,
             tokenizer.apply_chat_template(
@@ -141,15 +143,29 @@ def main() -> None:
         default=8192,
         help="Maximum sequence length in tokens; longer examples are dropped",
     )
+    parser.add_argument(
+        "--profile",
+        type=Path,
+        default=None,
+        help="Override character profile (default: use profile from datagen sidecar)",
+    )
     args = parser.parse_args()
 
     console.print("[bold cyan]SFT Dataset Assembly[/bold cyan]\n")
+
+    traces_dir = args.input.parent
+    system_prompt = load_system_prompt(traces_dir, profile_path=args.profile)
+    if args.profile:
+        log.info(f"Using custom profile: {args.profile}")
+    else:
+        log.info(f"Using datagen profile from {traces_dir}")
 
     assemble_dataset(
         input_path=args.input,
         output_path=args.output,
         model_name=args.model,
         max_seq_length=args.max_seq_length,
+        system_prompt=system_prompt,
     )
 
     console.print("\n[bold green]Done.[/bold green]")

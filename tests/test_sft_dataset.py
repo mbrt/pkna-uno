@@ -10,13 +10,11 @@ from pkna.training.sft_dataset import (
 
 def _make_trace(
     id: str = "t-001",
-    system_prompt: str = "You are Uno.",
     messages: list[dict] | None = None,
 ) -> DatagenTrace:
     return DatagenTrace(
         id=id,
         metadata={},
-        system_prompt=system_prompt,
         memory_context="",
         user_summary="Paperino",
         messages=messages or [],
@@ -126,6 +124,9 @@ class TestConvertMessage:
         assert _convert_message(msg) == {"role": "developer", "content": "debug info"}
 
 
+SYSTEM_PROMPT = "You are Uno."
+
+
 class TestTraceToMessages:
     def test_single_turn(self):
         trace = _make_trace(
@@ -138,7 +139,7 @@ class TestTraceToMessages:
                 },
             ]
         )
-        messages = trace_to_messages(trace)
+        messages = trace_to_messages(trace, SYSTEM_PROMPT)
         assert len(messages) == 3
         assert messages[0] == {"role": "system", "content": "You are Uno."}
         assert messages[1] == {"role": "user", "content": "Hello"}
@@ -179,7 +180,7 @@ class TestTraceToMessages:
                 },
             ]
         )
-        messages = trace_to_messages(trace)
+        messages = trace_to_messages(trace, SYSTEM_PROMPT)
         assert len(messages) == 7  # system + 6 from trace
 
         assert messages[0]["role"] == "system"
@@ -201,20 +202,18 @@ class TestTraceToMessages:
 
     def test_system_prompt_preserved(self):
         trace = _make_trace(
-            system_prompt="Custom system prompt with personality details.",
             messages=[
                 {"role": "user", "content": "Hi"},
                 {"role": "assistant", "content": "Hello"},
             ],
         )
-        messages = trace_to_messages(trace)
-        assert (
-            messages[0]["content"] == "Custom system prompt with personality details."
-        )
+        custom = "Custom system prompt with personality details."
+        messages = trace_to_messages(trace, custom)
+        assert messages[0]["content"] == custom
 
     def test_empty_messages(self):
         trace = _make_trace(messages=[])
-        messages = trace_to_messages(trace)
+        messages = trace_to_messages(trace, SYSTEM_PROMPT)
         assert len(messages) == 1
         assert messages[0]["role"] == "system"
 
@@ -231,7 +230,7 @@ class TestTraceToMessages:
                 },
             ]
         )
-        messages = trace_to_messages(trace)
+        messages = trace_to_messages(trace, SYSTEM_PROMPT)
         tool_msg = messages[1]
         assert tool_msg == {"role": "tool", "content": "result text"}
         assert "name" not in tool_msg

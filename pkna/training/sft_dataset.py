@@ -5,7 +5,7 @@ etc.) into the message format expected by Qwen3.5's tokenizer.apply_chat_templat
 with thinking mode enabled.
 
 Key mappings:
-- trace.system_prompt -> {"role": "system", "content": ...}
+- system_prompt (passed explicitly) -> {"role": "system", "content": ...}
 - assistant 'thinking' field -> 'reasoning_content' (Qwen3.5's field name)
 - assistant 'tool_calls' -> {"function": {"name": ..., "arguments": ...}}
 - tool results -> {"role": "tool", "content": ...}
@@ -62,18 +62,19 @@ def _convert_message(msg: dict[str, Any]) -> dict[str, Any]:
     return {"role": role, "content": msg.get("content", "")}
 
 
-def trace_to_messages(trace: DatagenTrace) -> list[dict[str, Any]]:
+def trace_to_messages(trace: DatagenTrace, system_prompt: str) -> list[dict[str, Any]]:
     """Convert a DatagenTrace to Qwen3.5 chat messages.
 
     Returns a list of message dicts suitable for passing to
     tokenizer.apply_chat_template(messages, enable_thinking=True).
 
-    The system prompt from the trace (which already includes user_summary
-    and memory_context via compose_datagen_context) becomes the first
-    system message.
+    Args:
+        trace: The recorded conversation trace.
+        system_prompt: Rendered system prompt (template + profile). Passed
+            explicitly so callers can swap profiles at SFT assembly time.
     """
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": trace.system_prompt},
+        {"role": "system", "content": system_prompt},
     ]
     for msg in trace.messages:
         messages.append(_convert_message(msg))

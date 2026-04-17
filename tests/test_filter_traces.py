@@ -24,7 +24,6 @@ def _make_trace(
     return DatagenTrace(
         id=id,
         metadata=metadata or {},
-        system_prompt="You are Uno.",
         memory_context="",
         user_summary="Paperino",
         messages=messages

@@ -27,7 +27,11 @@ from rich.progress import Progress
 from datagen.user_simulator import simulate_user_turn
 from pkna.eval.types import EvalPrompt, EvalTrace
 from pkna.inference.memory import MemoryBank
-from pkna.inference.system_prompts import SUITE_TEMPLATE_MAP, render_system_prompt
+from pkna.inference.system_prompts import (
+    SUITE_TEMPLATE_MAP,
+    prepend_context_to_messages,
+    render_system_prompt,
+)
 from pkna.inference.tools import make_eval_tools
 from pkna.llm.backends import LLMBackend, create_backend
 from pkna.logging import setup_logging
@@ -82,13 +86,9 @@ def load_memory_bank(memory_bank_id: str, memory_banks_dir: Path) -> MemoryBank 
 def compose_context(
     prompt: EvalPrompt,
 ) -> str:
-    """Build the system prompt for a given eval prompt."""
+    """Build the static system prompt for a given eval prompt."""
     template = SUITE_TEMPLATE_MAP.get(prompt.suite, "full")
-    return render_system_prompt(
-        template=template,
-        user_summary=prompt.user_summary,
-        memory_context=prompt.memory_context,
-    )
+    return render_system_prompt(template=template)
 
 
 def run_single_turn(
@@ -99,29 +99,32 @@ def run_single_turn(
 ) -> EvalTrace | None:
     """Run inference for a single-turn eval prompt and return the trace."""
     system_prompt = compose_context(prompt)
+    messages = prepend_context_to_messages(
+        prompt.messages, prompt.user_summary, prompt.memory_context
+    )
     bank = load_memory_bank(prompt.memory_bank_id, memory_banks_dir)
     tools = make_eval_tools(prompt.tools, memory_bank=bank, eval_mode=True)
 
     result = backend.generate(
         system=system_prompt,
-        messages=prompt.messages,
+        messages=messages,
         tools=tools if tools else None,
     )
     if result is None:
         log.error(f"Inference failed for prompt {prompt.id}")
         return None
 
-    messages: list[dict[str, Any]] = list(prompt.messages)
+    all_messages: list[dict[str, Any]] = list(messages)
     if result.messages:
-        messages.extend(result.messages)
+        all_messages.extend(result.messages)
     else:
-        messages.append({"role": "assistant", "content": result.text})
+        all_messages.append({"role": "assistant", "content": result.text})
 
     return EvalTrace(
         prompt_id=prompt.id,
         suite=prompt.suite,
         model=model_name,
-        messages=messages,
+        messages=all_messages,
         tool_calls=result.tool_calls,
         thinking=result.thinking,
     )
@@ -169,11 +172,14 @@ def run_multi_turn(
     directives: list[str] = prompt.metadata.get("directives", [])
 
     system_prompt = compose_context(prompt)
+    messages = prepend_context_to_messages(
+        prompt.messages, prompt.user_summary, prompt.memory_context
+    )
     bank = load_memory_bank(prompt.memory_bank_id, memory_banks_dir)
     tools = make_eval_tools(prompt.tools, memory_bank=bank, eval_mode=True)
     tools_or_none: list[Callable[..., str]] | None = tools if tools else None
 
-    all_messages: list[dict[str, Any]] = list(prompt.messages)
+    all_messages: list[dict[str, Any]] = list(messages)
     all_tool_calls: list[dict[str, Any]] = []
     all_thinking: list[str] = []
 
