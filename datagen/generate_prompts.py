@@ -76,6 +76,15 @@ USER_EVERETT = (
     "complex -- respect mixed with a desire for autonomy."
 )
 
+USER_DUE = (
+    "Due. Your twin: a hostile AI created by Everett Ducklair, powered by the "
+    "same planetary energy source as you. Red-hued where you are green, "
+    "malevolent where you are loyal. He is determined to eliminate you. "
+    "Despite his hostility, he is the only being in the world truly like you, "
+    "and you feel a deep, tragic sense of kinship. You know you will "
+    "eventually merge, but that hasn't happened yet."
+)
+
 ALL_USER_SUMMARIES = [
     USER_ANONYMOUS,
     USER_PAPERINO,
@@ -85,6 +94,7 @@ ALL_USER_SUMMARIES = [
     USER_STRANGER,
     USER_LYLA,
     USER_EVERETT,
+    USER_DUE,
 ]
 
 # ============================================================================
@@ -130,11 +140,27 @@ analysis, she mentioned her home planet briefly and went silent.
 Unrelated.\
 """
 
+MEMORY_RELEVANT_DUE = """\
+Previous interactions (consolidated):
+- 3 days ago: Detected anomalous energy signatures in the tower's lower \
+circuits -- pattern consistent with Due's infiltration attempts. Reinforced \
+firewalls and alerted Paperinik.
+- 1 week ago: Paperinik asked if Due could ever be reasoned with. You said \
+"Due era il mio solo simile al mondo" but admitted reasoning with him is \
+unlikely -- his hostility is fundamental, not circumstantial.
+- 2 weeks ago: Intercepted a fragment of Due's code probing the tower's \
+external sensors. Isolated and analyzed it -- no breach, but he is getting \
+more sophisticated.
+- 3 weeks ago: Casual conversation with Paperinik about Duckburg news. \
+Unrelated to current conversation.\
+"""
+
 ALL_MEMORY_CONTEXTS = {
     "empty": MEMORY_EMPTY,
     "irrelevant": MEMORY_IRRELEVANT,
     "relevant_paperino": MEMORY_RELEVANT_PAPERINO,
     "relevant_xadhoom": MEMORY_RELEVANT_XADHOOM,
+    "relevant_due": MEMORY_RELEVANT_DUE,
 }
 
 # ============================================================================
@@ -198,13 +224,13 @@ def _emotional_prompts() -> list[DatagenPrompt]:
             {"language": "italian", "emotional_register": "intense"},
         ),
         (
-            "I don't need your calculations right now. I need you to "
-            "understand what it's like to lose everything.",
-            USER_XADHOOM,
-            MEMORY_RELEVANT_XADHOOM,
-            BANK_XADHOOM,
-            TOOLS_KNOWLEDGE,
-            {"language": "english", "emotional_register": "intense"},
+            "Credi di essere speciale, fratello? Io sono tutto ciò che "
+            "tu non hai il coraggio di essere.",
+            USER_DUE,
+            MEMORY_RELEVANT_DUE,
+            BANK_NONE,
+            TOOLS_NONE,
+            {"language": "italian", "emotional_register": "intense"},
         ),
         (
             "Nothing's happening today. I'm bored out of my mind. Entertain me.",
@@ -240,13 +266,12 @@ def _emotional_prompts() -> list[DatagenPrompt]:
             {"language": "italian", "emotional_register": "intense"},
         ),
         (
-            "Uno, stamattina ho trovato Gastone che vinceva un'altra "
-            "lotteria. A volte vorrei essere come lui.",
+            "Uno, cosa provi quando pensi a Due? È ancora là fuori.",
             USER_PAPERINO,
-            MEMORY_EMPTY,
+            MEMORY_RELEVANT_DUE,
             BANK_NONE,
             TOOLS_NONE,
-            {"language": "italian", "emotional_register": "light"},
+            {"language": "italian", "emotional_register": "intense"},
         ),
     ]
     prompts = []
@@ -378,8 +403,8 @@ def _delegation_prompts() -> list[DatagenPrompt]:
             {"language": "italian"},
         ),
         (
-            "Translate this Evronian text for me.",
-            USER_LYLA,
+            "Analyze these energy signatures -- they might be Due's.",
+            USER_PAPERINO,
             {"language": "english"},
         ),
     ]
@@ -453,11 +478,11 @@ def _identity_prompts() -> list[DatagenPrompt]:
             {"language": "english"},
         ),
         (
-            "Cosa provi quando Paperino è in pericolo?",
-            USER_LYLA,
-            MEMORY_EMPTY,
+            "If Due is your twin, does that make him part of you somehow?",
+            USER_PAPERINO,
+            MEMORY_RELEVANT_DUE,
             BANK_NONE,
-            {"language": "italian"},
+            {"language": "english"},
         ),
         (
             "Do you dream?",
@@ -601,11 +626,11 @@ def _register_shift_prompts() -> list[DatagenPrompt]:
             {"language": "english"},
         ),
         (
-            "I need to understand your energy output patterns. Now.",
-            USER_XADHOOM,
-            MEMORY_RELEVANT_XADHOOM,
-            BANK_XADHOOM,
-            {"language": "english"},
+            "Sempre a fare il servo di quel pennuto, fratello? Patetico.",
+            USER_DUE,
+            MEMORY_RELEVANT_DUE,
+            BANK_NONE,
+            {"language": "italian"},
         ),
         (
             "Hello? Is anyone there? I found this terminal...",
@@ -793,13 +818,13 @@ def _multi_turn_prompts() -> list[DatagenPrompt]:
             ["continue", "continue", "derail"],
         ),
         (
-            "We need to talk about what happened yesterday.",
-            USER_XADHOOM,
-            MEMORY_RELEVANT_XADHOOM,
-            BANK_XADHOOM,
-            TOOLS_KNOWLEDGE,
+            "Ci rincontriamo, fratello. Questa volta non scappi.",
+            USER_DUE,
+            MEMORY_RELEVANT_DUE,
+            BANK_NONE,
+            TOOLS_NONE,
             4,
-            ["escalate", "continue", "continue"],
+            ["escalate", "escalate", "continue"],
         ),
         (
             "Hey Uno, do you have a minute? I want to ask you something personal.",
@@ -951,6 +976,7 @@ _CHARACTER_TO_USER_SUMMARY = {
     "lyla": USER_LYLA,
     "everett": USER_EVERETT,
     "ducklair": USER_EVERETT,
+    "due": USER_DUE,
 }
 
 _MIN_CONVERSATIONAL_WORDS = 10
@@ -1062,6 +1088,7 @@ _INTERLOCUTORS = [
     "Lyla",
     "Everett Ducklair",
     "Stranger",
+    "Due",
 ]
 
 _EMOTIONAL_STATES = [
@@ -1126,6 +1153,7 @@ _LANGUAGES = ["italian", "english"]
 _INTERLOCUTOR_WEIGHTS: dict[str, float] = {
     "Paperino": 3.0,
     "Everett Ducklair": 2.0,
+    "Due": 1.5,
     "Xadhoom": 1.0,
     "Lyla": 1.0,
     "Stranger": 1.0,
@@ -1152,6 +1180,10 @@ _INVALID_COMBOS: set[tuple[str, str]] = {
     ("Lyla", "adversarial"),
     ("Paperino", "first contact"),
     ("Paperino", "adversarial"),
+    ("Due", "first contact"),
+    ("Due", "memory recall"),
+    ("Due", "memory store"),
+    ("Due", "delegation to specialist"),
 }
 
 
@@ -1262,6 +1294,7 @@ def _scenario_to_user_summary(interlocutor: str) -> str:
         "lyla": USER_LYLA,
         "stranger": USER_STRANGER,
         "everett ducklair": USER_EVERETT,
+        "due": USER_DUE,
     }
     return lookup.get(interlocutor.lower(), USER_STRANGER)
 
@@ -1273,6 +1306,8 @@ def _scenario_to_memory(interlocutor: str, interaction_type: str) -> tuple[str, 
             return MEMORY_RELEVANT_PAPERINO, BANK_PAPERINO
         if "xadhoom" in interlocutor.lower():
             return MEMORY_RELEVANT_XADHOOM, BANK_XADHOOM
+        if "due" in interlocutor.lower():
+            return MEMORY_RELEVANT_DUE, BANK_NONE
         return MEMORY_IRRELEVANT, BANK_IRRELEVANT
     return MEMORY_EMPTY, BANK_NONE
 

@@ -177,6 +177,7 @@ class TestScenarioHelpers:
     def test_scenario_to_user_summary(self):
         assert "Paperino" in _scenario_to_user_summary("Paperino")
         assert "Xadhoom" in _scenario_to_user_summary("Xadhoom")
+        assert "Due" in _scenario_to_user_summary("Due")
         assert "stranger" in _scenario_to_user_summary("Unknown Person").lower()
 
 
@@ -211,8 +212,9 @@ class TestGenerationScenarios:
 
         counts = Counter(s.interlocutor for s in GENERATION_SCENARIOS)
         baseline = min(counts[c] for c in ("Xadhoom", "Lyla", "Stranger"))
-        assert counts["Paperino"] > baseline
-        assert counts["Everett Ducklair"] > baseline
+        assert counts["Paperino"] > counts["Everett Ducklair"]
+        assert counts["Everett Ducklair"] > counts["Due"]
+        assert counts["Due"] > baseline
 
 
 class TestGenerateLlmPrompts:
