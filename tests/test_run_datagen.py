@@ -246,6 +246,54 @@ class TestRunMultiTurn:
         assert trace is not None
         assert len([m for m in trace.messages if m["role"] == "assistant"]) == 1
 
+    def test_preserves_tool_messages_across_turns(self):
+        """Tool messages from turn 1 should be present in the trace and
+        passed correctly to the backend on turn 2."""
+        model_backend = SequentialBackend(
+            [
+                GenerateResult(
+                    text="Found it",
+                    model_name="test",
+                    messages=[
+                        {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {"name": "search", "arguments": {"q": "test"}}
+                            ],
+                        },
+                        {"role": "tool", "name": "search", "content": "result"},
+                        {"role": "assistant", "content": "Found it"},
+                    ],
+                ),
+                GenerateResult(
+                    text="Glad to help",
+                    model_name="test",
+                    messages=[{"role": "assistant", "content": "Glad to help"}],
+                ),
+            ]
+        )
+        sim_backend = SequentialBackend(
+            [GenerateResult(text="Thanks!", model_name="sim")]
+        )
+        trace = run_multi_turn(
+            prompt_id="mt-tools",
+            system_prompt="sys",
+            user_summary="Paperino",
+            memory_context="",
+            messages=[{"role": "user", "content": "Search for info"}],
+            metadata={"turn_count": 2, "directives": ["continue"]},
+            backend=model_backend,
+            tools=None,
+            simulator_backend=sim_backend,
+        )
+        assert trace is not None
+        tool_msgs = [m for m in trace.messages if m["role"] == "tool"]
+        assert len(tool_msgs) == 1
+        assert tool_msgs[0]["name"] == "search"
+        assistant_msgs = [m for m in trace.messages if m["role"] == "assistant"]
+        assert len(assistant_msgs) == 3
+
     def test_returns_none_when_no_response(self):
         backend = SequentialBackend([None])
         trace = run_multi_turn(

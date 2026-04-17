@@ -161,6 +161,51 @@ class GeminiBackend(LLMBackend):
         text = "\n".join(text_parts)
         return thinking, text
 
+    @staticmethod
+    def _to_gemini_contents(messages: list[dict[str, Any]]) -> list[Content]:
+        """Convert trace-format messages to Gemini Content objects.
+
+        Handles role mapping (assistant->model, tool->user with function
+        response parts) and groups consecutive tool messages into a single
+        Content with multiple parts.
+        """
+        contents: list[Content] = []
+        pending_tool_parts: list[Part] = []
+
+        for m in messages:
+            role = m["role"]
+            if role == "user":
+                if pending_tool_parts:
+                    contents.append(Content(role="user", parts=pending_tool_parts))
+                    pending_tool_parts = []
+                contents.append(
+                    Content(role="user", parts=[Part.from_text(text=m["content"])])
+                )
+            elif role == "assistant":
+                if pending_tool_parts:
+                    contents.append(Content(role="user", parts=pending_tool_parts))
+                    pending_tool_parts = []
+                parts: list[Part] = []
+                if m.get("content"):
+                    parts.append(Part.from_text(text=m["content"]))
+                for tc in m.get("tool_calls", []):
+                    parts.append(
+                        Part.from_function_call(name=tc["name"], args=tc["arguments"])
+                    )
+                if parts:
+                    contents.append(Content(role="model", parts=parts))
+            elif role == "tool":
+                pending_tool_parts.append(
+                    Part.from_function_response(
+                        name=m["name"], response={"result": m["content"]}
+                    )
+                )
+
+        if pending_tool_parts:
+            contents.append(Content(role="user", parts=pending_tool_parts))
+
+        return contents
+
     def generate(
         self,
         system: str,
@@ -184,10 +229,7 @@ class GeminiBackend(LLMBackend):
             config_kwargs["response_schema"] = list[response_schema]
 
         config = GenerateContentConfig(**config_kwargs)
-        conversation: list[Content] = [
-            Content(role=m["role"], parts=[Part.from_text(text=m["content"])])
-            for m in messages
-        ]
+        conversation = self._to_gemini_contents(messages)
 
         if not tools:
             return self._generate_no_tools(config, conversation)
@@ -307,7 +349,7 @@ class GeminiBackend(LLMBackend):
                     )
                 )
 
-            conversation.append(Content(role="tool", parts=fn_response_parts))
+            conversation.append(Content(role="user", parts=fn_response_parts))
         else:
             log.warning("Gemini: max tool iterations reached")
             return None
