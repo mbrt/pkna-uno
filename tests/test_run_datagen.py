@@ -19,23 +19,28 @@ from pkna.llm.backends import GenerateResult
 from pkna.llm.testing import FakeBackend, SequentialBackend
 
 
+SAMPLE_PROFILE = "# Uno - Character Profile\n\nUno is a sarcastic AI."
+
+
 class TestComposeDatagenContext:
-    def test_uses_full_template(self):
-        result = compose_datagen_context("Paperino", "some memories")
-        assert "sarcastic" in result
+    def test_includes_profile_content(self):
+        result = compose_datagen_context(SAMPLE_PROFILE, "Paperino", "some memories")
+        assert "sarcastic AI" in result
         assert "search_knowledge" in result
 
     def test_includes_user_summary(self):
-        result = compose_datagen_context("Paperino, anxious", "")
+        result = compose_datagen_context(SAMPLE_PROFILE, "Paperino, anxious", "")
         assert "Paperino, anxious" in result
 
     def test_includes_memory_context(self):
-        result = compose_datagen_context("", "Yesterday PK was exhausted.")
+        result = compose_datagen_context(
+            SAMPLE_PROFILE, "", "Yesterday PK was exhausted."
+        )
         assert "Yesterday PK was exhausted." in result
 
-    def test_empty_context(self):
-        result = compose_datagen_context("", "")
-        assert "Uno" in result
+    def test_empty_profile_still_renders(self):
+        result = compose_datagen_context("", "", "")
+        assert "search_knowledge" in result
 
 
 class TestLoadCompletedIds:

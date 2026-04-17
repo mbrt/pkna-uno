@@ -28,7 +28,7 @@ from datagen.generate_prompts import load_prompts
 from datagen.user_simulator import simulate_user_turn
 from pkna.datagen.types import DatagenTrace
 from pkna.inference.memory import MemoryBank
-from pkna.inference.system_prompts import render_system_prompt
+from pkna.inference.system_prompts import render_datagen_prompt
 from pkna.inference.tools import make_eval_tools
 from pkna.llm.backends import LLMBackend, create_backend
 from pkna.logging import setup_logging
@@ -42,16 +42,17 @@ console, log = setup_logging()
 
 
 def compose_datagen_context(
+    character_profile: str,
     user_summary: str,
     memory_context: str,
 ) -> str:
     """Build the system prompt for a datagen prompt.
 
-    Always uses the full template since SFT training examples need the
-    complete personality and tool instructions.
+    Uses the full character profile so the strong model produces
+    maximally rich traces for SFT internalization.
     """
-    return render_system_prompt(
-        template="full",
+    return render_datagen_prompt(
+        character_profile=character_profile,
         user_summary=user_summary,
         memory_context=memory_context,
     )
@@ -255,9 +256,15 @@ def run_datagen(
     output_path: Path,
     memory_banks_dir: Path,
     backend: LLMBackend,
+    character_profile: str = "",
     simulator_backend: LLMBackend | None = None,
 ) -> int:
     """Run trace generation for all prompts.
+
+    Args:
+        character_profile: Full character profile markdown. When empty,
+            the datagen template is used with a blank profile section
+            (useful for smoke tests).
 
     Returns the number of traces written.
     """
@@ -287,6 +294,7 @@ def run_datagen(
 
         for prompt in pending:
             system_prompt = compose_datagen_context(
+                character_profile=character_profile,
                 user_summary=prompt.user_summary,
                 memory_context=prompt.memory_context,
             )
@@ -319,6 +327,9 @@ def run_datagen(
     return written
 
 
+DEFAULT_PROFILE = Path("results/uno_soul_document.md")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run trace generation for SFT dataset construction"
@@ -334,6 +345,12 @@ def main() -> None:
         type=Path,
         default=Path("output/datagen/traces.jsonl"),
         help="Output JSONL file for DatagenTrace entries",
+    )
+    parser.add_argument(
+        "--profile",
+        type=Path,
+        default=DEFAULT_PROFILE,
+        help=f"Character profile markdown file (default: {DEFAULT_PROFILE})",
     )
     parser.add_argument(
         "--memory-banks-dir",
@@ -357,6 +374,13 @@ def main() -> None:
 
     console.print("[bold cyan]SFT Trace Generator[/bold cyan]\n")
 
+    profile_path: Path = args.profile
+    if not profile_path.exists():
+        console.print(f"[bold red]Error:[/bold red] Profile not found: {profile_path}")
+        raise SystemExit(1)
+    character_profile = profile_path.read_text(encoding="utf-8")
+    log.info(f"Loaded character profile from {profile_path}")
+
     backend = create_backend(args.backend, args.model)
 
     written = run_datagen(
@@ -364,6 +388,7 @@ def main() -> None:
         output_path=args.output,
         memory_banks_dir=args.memory_banks_dir,
         backend=backend,
+        character_profile=character_profile,
     )
 
     console.print(

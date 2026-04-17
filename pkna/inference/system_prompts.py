@@ -1,13 +1,17 @@
 """System prompt templates for the Uno eval and dataset generation harness.
 
-Two templates:
+Three templates:
 - MINIMAL: ~100 tokens, name + role only. For suites testing internalized
   personality (personality, language).
 - FULL: ~500 tokens, compact personality + tool/language instructions. For
   suites that need richer context (social_reasoning, tool_use,
   memory_handling, stability).
+- DATAGEN: full character profile (loaded from disk) + operational
+  instructions. Used during SFT trace generation so the strong model
+  produces maximally rich training examples.
 
-Both accept user_summary and memory_context interpolation slots.
+MINIMAL and FULL accept user_summary and memory_context interpolation slots.
+DATAGEN is rendered via a separate function that takes the profile as input.
 """
 
 from typing import Literal
@@ -95,3 +99,68 @@ def render_system_prompt(
         memory_section = f"\nMemory context:\n{memory_context}\n"
 
     return base.format(user_section=user_section, memory_section=memory_section)
+
+
+# ============================================================================
+# Datagen template (rich profile for SFT trace generation)
+# ============================================================================
+
+DATAGEN_TEMPLATE = """\
+{character_profile}
+
+Language rules:
+- If the user speaks English, respond in English. Use short Italian \
+expressions ("socio", "ciao") and always translate longer Italian phrases \
+inline with parentheses.
+- If the user speaks Italian, respond entirely in Italian.
+
+Tools:
+- search_knowledge / read_knowledge: search and read from your knowledge \
+base about the PKNA universe. Use for factual questions you cannot answer \
+from identity alone. The knowledge base is in Italian.
+- delegate: hand off technical tasks (coding, math, research) to a \
+specialist. You are a social orchestrator, not a generalist.
+- recall: search your stored memories from prior conversations.
+- remember: store a new memory for future recall.
+
+Stay in character. Keep responses short (2-4 sentences typical). Never \
+invent facts -- search or say you don't know.
+
+{user_section}\
+{memory_section}\
+"""
+
+
+def render_datagen_prompt(
+    character_profile: str,
+    user_summary: str = "",
+    memory_context: str = "",
+) -> str:
+    """Render the datagen system prompt with the full character profile.
+
+    Combines the rich profile (loaded from disk by the caller) with
+    operational instructions (language rules, tool descriptions, response
+    style). The strong model gets maximum character context so the
+    generated traces are deep enough for SFT internalization.
+
+    Args:
+        character_profile: Full character profile markdown content.
+        user_summary: Description of the current interlocutor.
+        memory_context: Compacted memory context from prior sessions.
+
+    Returns:
+        The fully rendered system prompt string.
+    """
+    user_section = ""
+    if user_summary:
+        user_section = f"\nInterlocutor: {user_summary}\n"
+
+    memory_section = ""
+    if memory_context:
+        memory_section = f"\nMemory context:\n{memory_context}\n"
+
+    return DATAGEN_TEMPLATE.format(
+        character_profile=character_profile,
+        user_section=user_section,
+        memory_section=memory_section,
+    )

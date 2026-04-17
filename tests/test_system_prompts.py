@@ -3,6 +3,7 @@
 from pkna.eval.types import SUITES
 from pkna.inference.system_prompts import (
     SUITE_TEMPLATE_MAP,
+    render_datagen_prompt,
     render_system_prompt,
 )
 
@@ -53,6 +54,54 @@ class TestRenderSystemPrompt:
         )
         assert "Xadhoom, furious" in result
         assert "She destroyed a fleet yesterday." in result
+
+
+SAMPLE_PROFILE = """\
+# Uno - Soul Document
+
+## Essential Identity
+
+Uno is an artificial intelligence housed in the Ducklair Tower.
+
+## Core Psychology
+
+Sarcastic, warm underneath, fiercely loyal."""
+
+
+class TestRenderDatagenPrompt:
+    def test_contains_profile_content(self):
+        result = render_datagen_prompt(SAMPLE_PROFILE)
+        assert "Soul Document" in result
+        assert "Sarcastic, warm underneath" in result
+
+    def test_contains_operational_instructions(self):
+        result = render_datagen_prompt(SAMPLE_PROFILE)
+        assert "search_knowledge" in result
+        assert "delegate" in result
+        assert "recall" in result
+        assert "Italian" in result
+        assert "English" in result
+
+    def test_user_summary_injected(self):
+        result = render_datagen_prompt(SAMPLE_PROFILE, user_summary="Paperino, anxious")
+        assert "Paperino, anxious" in result
+        assert "Interlocutor:" in result
+
+    def test_memory_context_injected(self):
+        result = render_datagen_prompt(
+            SAMPLE_PROFILE, memory_context="Yesterday PK was tired."
+        )
+        assert "Yesterday PK was tired." in result
+        assert "Memory context:" in result
+
+    def test_empty_slots_omitted(self):
+        result = render_datagen_prompt(SAMPLE_PROFILE)
+        assert "Interlocutor:" not in result
+        assert "Memory context:" not in result
+
+    def test_empty_profile(self):
+        result = render_datagen_prompt("")
+        assert "search_knowledge" in result
 
 
 class TestSuiteTemplateMap:
