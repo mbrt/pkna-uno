@@ -12,6 +12,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+from rank_bm25 import BM25L
+
 from pkna.inference.memory import MemoryBank, make_recall, make_remember
 
 TOOL_NAMES = frozenset(
@@ -52,12 +55,13 @@ class WikiSegment:
 
 
 class WikiIndex:
-    """In-memory index of all wiki content."""
+    """In-memory index of all wiki content with BM25 search."""
 
     def __init__(self):
         self.segments: list[WikiSegment] = []
         self.segments_by_id: dict[str, WikiSegment] = {}
         self.total_tokens: int = 0
+        self._bm25: BM25L | None = None
 
     def load_from_directory(self, wiki_root: Path) -> None:
         """Load and parse all markdown files in wiki directory."""
@@ -131,26 +135,33 @@ class WikiIndex:
         self.segments_by_id[segment_id] = segment
         self.total_tokens += token_count
 
+    def _ensure_bm25(self) -> None:
+        """Build BM25 index if not already built."""
+        if self._bm25 is not None:
+            return
+        if not self.segments:
+            return
+        corpus = [
+            (" ".join(seg.section_path) + " " + seg.content).lower().split()
+            for seg in self.segments
+        ]
+        self._bm25 = BM25L(corpus)
+
     def search(self, keywords: str, max_results: int = 5) -> list[WikiSegment]:
-        """Search segments for keywords, return top matches."""
-        keywords_lower = keywords.lower()
-        keyword_list = keywords_lower.split()
-
-        scored_segments = []
-        for segment in self.segments:
-            content_lower = segment.content.lower()
-            section_path_lower = " ".join(segment.section_path).lower()
-
-            score = 0
-            for kw in keyword_list:
-                score += content_lower.count(kw)
-                score += section_path_lower.count(kw) * 5
-
-            if score > 0:
-                scored_segments.append((score, segment))
-
-        scored_segments.sort(key=lambda x: x[0], reverse=True)
-        return [seg for _, seg in scored_segments[:max_results]]
+        """BM25 search over segments, return top matches."""
+        self._ensure_bm25()
+        if self._bm25 is None:
+            return []
+        tokenized = keywords.lower().split()
+        if not tokenized:
+            return []
+        scores: np.ndarray = self._bm25.get_scores(tokenized)
+        ranked_indices = np.argsort(scores)[::-1]
+        results: list[WikiSegment] = []
+        for idx in ranked_indices[:max_results]:
+            if scores[idx] > 0:
+                results.append(self.segments[idx])
+        return results
 
     def get_segment(self, segment_id: str) -> WikiSegment | None:
         """Retrieve full segment by ID."""

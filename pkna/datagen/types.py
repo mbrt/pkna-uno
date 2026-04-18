@@ -11,6 +11,27 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 
+class MemoryCorpusEntry(BaseModel):
+    """A single tagged entry in the shared memory corpus."""
+
+    key: str
+    value: str
+    timestamp: str
+    tags: list[str]
+    archetype: str  # "roleplay" or "casual"
+    character: str  # e.g. "paperino", "xadhoom", "anonymous"
+
+
+class MemoryProfile(BaseModel):
+    """Describes how to compose per-trace memory from the corpus."""
+
+    archetype: str  # "roleplay" or "casual"
+    character: str  # e.g. "paperino", "anonymous"
+    relevant_tags: list[str]  # tags that should match
+    n_relevant: int  # how many relevant entries to include
+    n_irrelevant: int  # how many irrelevant/noise entries to include
+
+
 class DatagenPrompt(BaseModel):
     """A single prompt ready for trace generation.
 
@@ -20,8 +41,9 @@ class DatagenPrompt(BaseModel):
     id: str
     messages: list[dict[str, str]]
     user_summary: str
-    memory_context: str
-    memory_bank_id: str = ""
+    memory_context: str  # kept for backward compat
+    memory_bank_id: str = ""  # kept for backward compat
+    memory_profile: MemoryProfile | None = None
     tools: list[str]
     metadata: dict[str, Any]
 

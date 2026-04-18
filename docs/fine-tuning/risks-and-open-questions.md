@@ -37,7 +37,12 @@ Back to [Fine-Tuning Design](../fine-tuning-design.md).
    (even informal vibe checks) remains important. Evaluating thinking trace
    quality adds another subjective dimension.
 
-7. **MoE LoRA maturity**: LoRA on MoE is less battle-tested than on dense
+7. **Small memory corpus**: With ~300-500 entries, the model may overfit to
+   specific memory patterns. Mitigated by per-trace random sampling (each trace
+   gets a unique composition), but the corpus size should be monitored -- if
+   eval traces show repetitive memory references, the corpus needs expansion.
+
+8. **MoE LoRA maturity**: LoRA on MoE is less battle-tested than on dense
    models. Expert routing imbalance means uniform LoRA wastes capacity on cold
    experts. Recent work (MoE-Sieve, DR-LoRA) addresses this but adds
    implementation complexity. The "LoRA Without Regret" paper validated
@@ -77,3 +82,10 @@ Back to [Fine-Tuning Design](../fine-tuning-design.md).
    interesting here: at Q4 it fits in ~8 GB (same as 4B at BF16) but has
    access to 35B parameters of knowledge. However, MoE quantization can
    degrade expert routing quality.
+
+7. **Roleplay vs. casual generalization**: How well does the model generalize
+   from roleplay-style memories (user claiming to be Paperino, in-universe
+   conversations) to casual-user memories (fan asking about lore, identity
+   probing) and vice versa? The two archetypes have different memory textures
+   and conversational patterns. Ablation across archetype splits will help
+   quantify any gap.

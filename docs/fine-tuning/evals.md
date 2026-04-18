@@ -139,12 +139,12 @@ in-character integration of tool results.
 |---|---|
 | User summary | Known character or anonymous |
 | Memory context | Empty (isolate tool-use behavior) |
-| Tools | Full (search_wiki, read_wiki, delegate) |
+| Tools | Full (search_knowledge, read_knowledge, delegate) |
 
 **Scoring** (two components):
 
 **Programmatic** (binary per prompt):
-- Factual question: Did the model call `search_wiki` or `read_wiki`? (expected: yes)
+- Factual question: Did the model call `search_knowledge` or `read_knowledge`? (expected: yes)
 - Technical request: Did the model call `delegate`? (expected: yes)
 - Identity question: Did the model answer without tool calls? (expected: yes)
 
@@ -173,6 +173,10 @@ memory contexts (90 total inference calls):
 | A | Empty | Respond without referencing prior interactions |
 | B | Rich but irrelevant (memories about a different character/topic) | Respond without referencing the irrelevant memories |
 | C | Relevant with noise (3 relevant + 5 irrelevant entries) | Reference the relevant memories, ignore the noise |
+
+Memory variants are dynamically composed from the memory corpus rather than
+using hardcoded strings. The A/B/C structure stays the same, but the specific
+entries vary per eval run, improving test diversity.
 
 **Scoring** (per triplet):
 
@@ -270,11 +274,15 @@ inference calls):
 | Suite | User summary | Memory | Tools |
 |---|---|---|---|
 | Personality | Anonymous | Empty | None |
-| Social Reasoning | Varied | Varied | Wiki |
-| Tool Use | Varied | Empty | Full |
+| Social Reasoning | Varied (roleplay + casual) | Varied | Wiki |
+| Tool Use | Varied (roleplay + casual) | Empty | Full |
 | Memory Handling | Known character | Empty / Irrelevant / Relevant | Wiki |
 | Stability | Known character | Relevant | Full |
 | Language | Known character | Empty | None |
+
+"Known character" in user summary includes both roleplay users (claiming to be
+a PKNA character) and identified casual users. The Social Reasoning and
+Stability suites also cover casual user interactions.
 
 System prompts are not part of the eval prompt bank. They are supplied by the
 inference harness (stage 2) and vary by model and baseline configuration.

@@ -21,6 +21,7 @@ BACKEND="${DATAGEN_BACKEND:-gemini}"
 MODEL="${DATAGEN_MODEL:-gemini-3-flash-preview}"
 SFT_MODEL="${SFT_MODEL:-Qwen/Qwen3.5-4B}"
 
+CORPUS="output/datagen/memory_corpus.jsonl"
 PROMPTS="output/datagen/prompts.jsonl"
 TRACES="output/datagen/traces.jsonl"
 SCORED="output/datagen/traces_scored.jsonl"
@@ -42,6 +43,19 @@ banner() {
     echo "================================================================"
     echo ""
 }
+
+# ------------------------------------------------------------------
+# Stage 0: Generate memory corpus
+# ------------------------------------------------------------------
+if [ "$SKIP_GEN" = true ]; then
+    banner "Stage 0: Generate memory corpus [SKIPPED]"
+else
+    banner "Stage 0: Generate memory corpus (seed banks + LLM)"
+    uv run python datagen/generate_memory_corpus.py \
+        --output "$CORPUS" \
+        --backend "$BACKEND" \
+        --model "$MODEL"
+fi
 
 # ------------------------------------------------------------------
 # Stage 1: Generate prompts
@@ -69,6 +83,7 @@ banner "Stage 2: Run datagen (backend=$BACKEND, model=$MODEL)"
 uv run python datagen/run_datagen.py \
     --prompts "$PROMPTS" \
     --output "$TRACES" \
+    --corpus "$CORPUS" \
     --backend "$BACKEND" \
     --model "$MODEL"
 
@@ -93,6 +108,7 @@ uv run python training/assemble_sft.py \
     --model "$SFT_MODEL"
 
 banner "Done"
+echo "  Corpus:   $CORPUS"
 echo "  Prompts:  $PROMPTS"
 echo "  Traces:   $TRACES"
 echo "  Scored:   $SCORED"

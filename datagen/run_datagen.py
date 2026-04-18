@@ -18,6 +18,7 @@ Usage:
 
 import argparse
 import json
+import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,7 +28,8 @@ from rich.progress import Progress
 
 from datagen.generate_prompts import load_prompts
 from datagen.user_simulator import simulate_user_turn
-from pkna.datagen.types import DatagenTrace
+from pkna.datagen.memory import compose_memory, load_memory_corpus
+from pkna.datagen.types import DatagenTrace, MemoryCorpusEntry
 from pkna.inference.memory import MemoryBank
 from pkna.inference.system_prompts import (
     DATAGEN_TEMPLATE,
@@ -290,6 +292,8 @@ def run_datagen(
     backend: LLMBackend,
     character_profile: str = "",
     simulator_backend: LLMBackend | None = None,
+    corpus: list[MemoryCorpusEntry] | None = None,
+    seed: int = 42,
 ) -> int:
     """Run trace generation for all prompts.
 
@@ -297,6 +301,10 @@ def run_datagen(
         character_profile: Full character profile markdown. When empty,
             the datagen template is used with a blank profile section
             (useful for smoke tests).
+        corpus: Tagged memory corpus for dynamic composition. When set,
+            prompts with a ``memory_profile`` use ``compose_memory()``
+            instead of loading a static bank.
+        seed: RNG seed for reproducible memory sampling.
 
     Returns the number of traces written.
     """
@@ -324,6 +332,7 @@ def run_datagen(
     system_prompt = render_datagen_system_prompt(character_profile)
     write_sidecar_files(output_path.parent, character_profile)
 
+    rng = random.Random(seed)
     written = 0
     total_prompt_tokens = 0
     total_cached_tokens = 0
@@ -335,11 +344,20 @@ def run_datagen(
         task = progress.add_task("Generating traces", total=len(pending))
 
         for prompt in pending:
+            # Compose memory: prefer dynamic composition from corpus,
+            # fall back to static bank for backward compatibility.
+            if prompt.memory_profile is not None and corpus:
+                memory_context, bank = compose_memory(
+                    prompt.memory_profile, corpus, rng
+                )
+            else:
+                memory_context = prompt.memory_context
+                bank = load_memory_bank(prompt.memory_bank_id, memory_banks_dir)
+
             messages = prepend_context_to_messages(
-                prompt.messages, prompt.user_summary, prompt.memory_context
+                prompt.messages, prompt.user_summary, memory_context
             )
 
-            bank = load_memory_bank(prompt.memory_bank_id, memory_banks_dir)
             tool_callables = make_eval_tools(
                 prompt.tools, memory_bank=bank, eval_mode=False
             )
@@ -349,7 +367,7 @@ def run_datagen(
                 prompt_id=prompt.id,
                 system_prompt=system_prompt,
                 user_summary=prompt.user_summary,
-                memory_context=prompt.memory_context,
+                memory_context=memory_context,
                 messages=messages,
                 metadata=prompt.metadata,
                 backend=backend,
@@ -416,6 +434,12 @@ def main() -> None:
         help="Directory containing memory bank JSONL files",
     )
     parser.add_argument(
+        "--corpus",
+        type=Path,
+        default=Path("output/datagen/memory_corpus.jsonl"),
+        help="Memory corpus JSONL file (for dynamic composition)",
+    )
+    parser.add_argument(
         "--backend",
         type=str,
         default="gemini",
@@ -426,6 +450,12 @@ def main() -> None:
         type=str,
         default=None,
         help="Model name (defaults to backend's default)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducible memory sampling",
     )
     args = parser.parse_args()
 
@@ -438,6 +468,14 @@ def main() -> None:
     character_profile = profile_path.read_text(encoding="utf-8")
     log.info(f"Loaded character profile from {profile_path}")
 
+    corpus: list[MemoryCorpusEntry] = []
+    corpus_path: Path = args.corpus
+    if corpus_path.exists():
+        corpus = load_memory_corpus(corpus_path)
+        log.info(f"Loaded {len(corpus)} corpus entries from {corpus_path}")
+    else:
+        log.info(f"No corpus file at {corpus_path}, using static memory banks")
+
     backend = create_backend(args.backend, args.model)
 
     written = run_datagen(
@@ -446,6 +484,8 @@ def main() -> None:
         memory_banks_dir=args.memory_banks_dir,
         backend=backend,
         character_profile=character_profile,
+        corpus=corpus if corpus else None,
+        seed=args.seed,
     )
 
     console.print(

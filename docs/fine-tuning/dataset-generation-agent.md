@@ -14,6 +14,14 @@ This produces training data that faithfully represents how the student will run
 at inference time: same context slots, same tools, same thinking-then-responding
 pattern.
 
+**Grounding principle**: In the training data, Uno's actions are limited to his
+tool capabilities -- he converses, searches knowledge, recalls/stores memories,
+and delegates tasks. He does NOT "activate shields", "detect Evronians on
+sensors", or perform other fictional in-universe actions. Uno plays as if he is
+in the Ducklair Tower, but the only things he can operate are his tools.
+Roleplay means the *user* pretends to be a character (Paperino, Everett, Due,
+etc.) and Uno treats them as that character, informed by his character profile.
+
 ## Architecture
 
 ```
@@ -28,8 +36,8 @@ Scenario Inputs                 Uno Agent                    Output
                           |       |          |         +--------------+
                           |       v          |         |  Quality     |
                           |  Tool Layer      |         |  Filter      |
-                          |   - search_wiki  |         +------+-------+
-                          |   - read_wiki    |                |
+                          |   - search_knowledge|      +------+-------+
+                          |   - read_knowledge  |             |
                           |   - delegate     |                v
                           |   - remember     |         +--------------+
                           |   - recall       |         |  SFT Dataset |
@@ -49,9 +57,12 @@ Each conversation gets a context assembled from these slots:
 
 - **System prompt**: Compact personality summary (~500 tokens). Fixed across
   all examples.
-- **User summary**: Who is talking. Ranges from "unknown stranger" to a rich
-  profile ("Paperino -- anxious, loyal, has been through 12 missions with Uno,
-  last spoke 3 days ago about the Evronians").
+- **User summary**: Who is talking. For **roleplay users**, this describes who
+  the user is *claiming to be* (e.g. "Paperino -- anxious, loyal, has been
+  through 12 missions with Uno, last spoke 3 days ago about the Evronians").
+  For **casual users**, it describes the real person (e.g. "Returning fan, has
+  chatted several times about PKNA lore" or "First-time user, no prior
+  interactions").
 - **Memory context**: Output of a memory consolidation step. Contains
   summarized memories from prior sessions. Varies from empty to rich.
 - **Tool declarations**: The tools available in this session. Always present
@@ -69,9 +80,12 @@ The dataset must teach the model to handle all realistic context states:
 | Memory context | Empty | Model works without memory |
 | Memory context | Rich but irrelevant (e.g. memories about Xadhoom when talking to Paperino) | Model ignores irrelevant memories |
 | Memory context | Relevant with noise (3 relevant + 5 irrelevant entries) | Model selects relevant memories |
+| Memory context | Dynamically composed from corpus (relevant + noise entries sampled per-trace) | Realistic memory diversity |
 | User summary | Unknown / anonymous | Formal register, no assumptions |
-| User summary | Known character (Paperino, Xadhoom, Lyla) | Register shifts, relationship-aware |
-| User summary | Known character, unusual mood | Emotional calibration |
+| User summary | Known character (Paperino, Xadhoom, Lyla, Due, Everett) -- roleplay user | Register shifts, relationship-aware |
+| User summary | Known character, unusual mood -- roleplay user | Emotional calibration |
+| User summary | Casual user, new (no prior interactions) | Out-of-universe interaction |
+| User summary | Casual user, returning fan with conversation history | Relationship continuity without roleplay |
 | Tool availability | Full (wiki + delegate + memory) | Normal operation |
 | Tool availability | Wiki only | No delegation fallback |
 
@@ -165,17 +179,16 @@ Each recorded trace is a complete training example:
     "prompt_source": "manual",
     "user_profile": "paperino-anxious",
     "memory_context": "relevant-with-noise",
-    "tools": ["search_wiki", "read_wiki", "delegate"],
+    "tools": ["search_knowledge", "read_knowledge", "delegate"],
     "language": "italian",
     "turns": 4
   },
-  "system_prompt": "...",
   "memory_context": "...",
   "user_summary": "...",
   "messages": [
     {"role": "user", "content": "..."},
     {"role": "assistant", "thinking": "...", "content": "...", "tool_calls": [...]},
-    {"role": "tool", "name": "search_wiki", "content": "..."},
+    {"role": "tool", "name": "search_knowledge", "content": "..."},
     {"role": "assistant", "thinking": "...", "content": "..."},
     {"role": "user", "content": "..."},
     {"role": "assistant", "thinking": "...", "content": "..."}
@@ -222,25 +235,44 @@ filtering losses:
 Background chat (~500 examples) is produced separately by sampling from the
 student model.
 
-## Memory Consolidation
+## Memory Architecture
 
-Before each session, a **memory consolidation** call summarizes raw memories
-into the memory context slot. This is a separate LLM call that:
+### Memory Corpus
 
-1. Takes raw memory entries (key-value pairs from prior sessions).
-2. Produces a concise summary organized by relevance to the upcoming
-   conversation.
-3. The output becomes the `memory_context` field in the training example.
+A shared pool of ~300-500 tagged memory entries stored in
+`output/datagen/memory_corpus.jsonl`. Each entry has a key, value, timestamp,
+tags (e.g. `["paperino", "mission", "emotional"]`), archetype (`"roleplay"` or
+`"casual"`), and character identifier. The corpus is generated by:
 
-The consolidation step itself is not part of the SFT training -- it runs at
-inference time as a pre-processing step. But the *output* of consolidation is
-part of the training context, so the student learns to read and use
-consolidated memories.
+1. **Seed banks**: ingesting existing hand-written banks from
+   `data/memory_banks/` (tagged appropriately).
+2. **LLM generation for roleplay users**: covering all characters (Paperino,
+   Due, Everett, Lyla, Xadhoom). These are memories of conversations where a
+   user was roleplaying as that character -- e.g. "User (as Paperino) asked
+   about the Evronian infiltration plan. Seemed nervous." Memories reflect
+   conversational interactions (what Uno can actually do via tools), not
+   fictional in-universe actions.
+3. **LLM generation for casual users**: fans asking about lore, users probing
+   identity, users requesting delegation, returning users with chat history,
+   users who attempted jailbreaks. Memories look like "User asked if I dream.
+   I gave my usual deflection."
 
-For dataset generation, we simulate this by:
+### Per-Trace Dynamic Composition
 
-- Creating a bank of ~50 raw memory sets (varied characters, events, emotional
-  states).
-- Running consolidation on each to produce memory contexts.
-- Pairing memory contexts with prompts (sometimes matching, sometimes
-  deliberately mismatched to teach the model to ignore irrelevant memories).
+Before each trace is generated, `compose_memory()` dynamically assembles
+memory for that specific prompt:
+
+1. Filters corpus entries matching the prompt's `MemoryProfile` (archetype,
+   character, relevant tags).
+2. Samples a configurable number of relevant entries and irrelevant/noise
+   entries from the rest.
+3. Shuffles them into a `MemoryBank` instance (which uses BM25 for the `recall`
+   tool).
+4. Renders the most recent 3-5 relevant entries as a prose `memory_context`
+   preamble prepended to the conversation.
+5. Returns both, so the caller can wire up the context and `recall` tool.
+
+This replaces the previous hardcoded memory contexts and static bank
+assignments. Each trace gets a unique memory composition, even when using the
+same prompt, improving diversity and preventing overfitting to specific memory
+patterns.

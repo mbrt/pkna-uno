@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+from rank_bm25 import BM25L
+
 
 @dataclass
 class MemoryEntry:
@@ -24,10 +27,26 @@ class MemoryEntry:
 
 
 class MemoryBank:
-    """In-memory store of raw memory entries with keyword search."""
+    """In-memory store of raw memory entries with BM25 search."""
 
     def __init__(self, entries: list[MemoryEntry] | None = None):
         self._entries: list[MemoryEntry] = list(entries) if entries else []
+        self._bm25: BM25L | None = None
+        self._index_size: int = 0
+
+    def _ensure_index(self) -> None:
+        """Rebuild BM25 index if entries have changed since last build."""
+        if self._bm25 is not None and self._index_size == len(self._entries):
+            return
+        if not self._entries:
+            self._bm25 = None
+            self._index_size = 0
+            return
+        corpus = [
+            (entry.key + " " + entry.value).lower().split() for entry in self._entries
+        ]
+        self._bm25 = BM25L(corpus)
+        self._index_size = len(self._entries)
 
     @staticmethod
     def load(path: Path) -> "MemoryBank":
@@ -53,23 +72,20 @@ class MemoryBank:
         return list(self._entries)
 
     def search(self, query: str, max_results: int = 5) -> list[MemoryEntry]:
-        """Keyword search over keys and values, returning top matches."""
-        query_lower = query.lower()
-        keywords = query_lower.split()
-
-        scored: list[tuple[int, MemoryEntry]] = []
-        for entry in self._entries:
-            key_lower = entry.key.lower()
-            value_lower = entry.value.lower()
-            score = 0
-            for kw in keywords:
-                score += key_lower.count(kw) * 3
-                score += value_lower.count(kw)
-            if score > 0:
-                scored.append((score, entry))
-
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [entry for _, entry in scored[:max_results]]
+        """BM25 search over keys and values, returning top matches."""
+        self._ensure_index()
+        if self._bm25 is None:
+            return []
+        tokenized_query = query.lower().split()
+        if not tokenized_query:
+            return []
+        scores: np.ndarray = self._bm25.get_scores(tokenized_query)
+        ranked_indices = np.argsort(scores)[::-1]
+        results: list[MemoryEntry] = []
+        for idx in ranked_indices[:max_results]:
+            if scores[idx] > 0:
+                results.append(self._entries[idx])
+        return results
 
     def append(self, key: str, value: str) -> MemoryEntry:
         """Append a new entry with the current timestamp."""

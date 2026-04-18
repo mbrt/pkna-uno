@@ -51,9 +51,9 @@ What we are *not* training:
 
 ```
 User <-> [Uno model] <-> Tools
-                          |-- search_wiki(query) -> wiki segments
-                          |-- read_wiki(id) -> full article
-                          |-- delegate(task, agent_type) -> sub-agent result
+                          |-- search_knowledge(query) -> wiki segments
+                          |-- read_knowledge(id) -> full article
+                          |-- delegate(task, context) -> sub-agent result
                           |-- remember(key, value) -> memory store
                           |-- recall(query) -> memory retrieval
 ```
@@ -61,6 +61,15 @@ User <-> [Uno model] <-> Tools
 The Uno model is the only component that talks to the user. It decides when to
 search for facts, when to delegate, and how to phrase everything in character.
 Sub-agents are opaque to the user.
+
+Uno always acts as if he is in the Ducklair Tower within the PKNA universe, but
+his actual capabilities are limited to his available tools. He does not claim to
+operate fictional systems (activate shields, detect Evronians via sensors). In
+deployment, users fall into two categories: **casual users** (fans and curious
+strangers talking to Uno as a character chatbot) and **roleplay users**
+(pretending to be PKNA characters like Paperino, Everett, or Due). In the
+roleplay case, the *user* adopts a character identity and Uno treats them
+accordingly, informed by his character profile.
 
 ## Roadmap
 
@@ -119,13 +128,16 @@ Sub-agents are opaque to the user.
 
 - [x] **Wiki tools** -- `pkna/inference/tools.py`: in-memory PKNA wiki index with
   `search_knowledge` and `read_knowledge`. Loads markdown from `results/wiki/`.
+  Both wiki and memory search use BM25 ranking (`rank-bm25`) for
+  production-quality retrieval.
 - [x] **Memory bank** -- `pkna/inference/memory.py`: JSONL-backed episodic memory
-  with `search`, `append`, `recall`, `remember`. Supports eval mode (read-only).
+  with BM25-based `search`, `append`, `recall`, `remember`. Supports eval mode
+  (read-only).
 - [x] **Memory compaction** -- `pkna/inference/memory_compaction.py`: LLM-driven
   summarization of raw memory banks into concise context for the system prompt.
 - [x] **Eval tool registry** -- `pkna/inference/tools.py`: wires tool names from
-  `EvalPrompt` to real callables (`search_wiki`, `read_wiki`, `delegate`,
-  `recall`, `remember`).
+  `EvalPrompt` to real callables (`search_knowledge`, `read_knowledge`,
+  `delegate`, `recall`, `remember`).
 - [x] **Delegate stub** -- `pkna/inference/tools.py`: `delegate()` returns a
   placeholder response; real sub-agent routing is not implemented.
 - [x] **System prompts** -- `pkna/inference/system_prompts.py`: minimal and full
@@ -133,12 +145,17 @@ Sub-agents are opaque to the user.
 
 ### Memory Banks (dataset-generation-agent.md, memory consolidation)
 
-- [x] **Synthetic memory bank generator** -- `evals/generate_memory_banks.py`:
-  LLM-driven generation of JSONL memory banks from scenario descriptions.
-- [x] **Generated banks on disk** -- `data/memory_banks/`: 3 banks
-  (`paperino_recent`, `xadhoom_research`, `mixed_irrelevant`).
-- [ ] **Full bank coverage** -- the design calls for ~50 raw memory sets with
-  varied characters, events, and emotional states; only 3 exist.
+- [x] **Seed memory banks on disk** -- `data/memory_banks/`: 3 seed banks
+  (`paperino_recent`, `xadhoom_research`, `mixed_irrelevant`), used as input
+  to the corpus generator.
+- [x] **Memory corpus generator** -- `datagen/generate_memory_corpus.py`:
+  ingests seed banks and LLM-generates additional entries (roleplay characters
+  and casual users) to produce `output/datagen/memory_corpus.jsonl` (~300-500
+  tagged entries). Supersedes `evals/generate_memory_banks.py`.
+- [x] **Dynamic memory composition** -- `pkna/datagen/memory.py`:
+  `compose_memory()` samples relevant and irrelevant entries from the corpus
+  per-trace, producing both a `memory_context` preamble and a `MemoryBank`
+  instance wired to the `recall` tool.
 
 ### LLM Backends
 

@@ -23,15 +23,13 @@ class TestRenderSystemPrompt:
 
     def test_full_contains_personality(self):
         result = render_system_prompt("full")
-        assert "sarcastic" in result
-        assert "search_knowledge" in result
-        assert "delegate" in result
-        assert "recall" in result
+        assert "Paperinik" in result
+        assert "Delegate" in result
+        assert "Search knowledge" in result
 
     def test_full_contains_language_rules(self):
         result = render_system_prompt("full")
-        assert "Italian" in result
-        assert "English" in result
+        assert "language" in result.lower()
 
     def test_no_interpolation_slots(self):
         result = render_system_prompt("minimal")

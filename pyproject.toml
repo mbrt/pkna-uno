@@ -28,6 +28,7 @@ dependencies = [
     "pydantic>=2.13.1",
     "pytesseract>=0.3.13",
     "python-dotenv>=1.2.2",
+    "rank-bm25>=0.2.2",
     "rich>=15.0.0",
     "scikit-learn>=1.8.0",
     "seaborn>=0.13.2",

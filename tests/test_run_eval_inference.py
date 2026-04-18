@@ -127,8 +127,8 @@ class TestComposeContext:
     def test_tool_use_uses_full(self):
         prompt = _make_prompt(suite="tool_use")
         result = compose_context(prompt)
-        assert "sarcastic" in result
-        assert "search_knowledge" in result
+        assert "Delegate" in result
+        assert "Search knowledge" in result
 
     def test_is_static_regardless_of_context(self):
         prompt_bare = _make_prompt(suite="social_reasoning")
@@ -152,7 +152,7 @@ class TestComposeContext:
     def test_unknown_suite_defaults_to_full(self):
         prompt = _make_prompt(suite="unknown_future_suite")
         result = compose_context(prompt)
-        assert "sarcastic" in result
+        assert "Delegate" in result
 
 
 class TestRunSinglePrompt:

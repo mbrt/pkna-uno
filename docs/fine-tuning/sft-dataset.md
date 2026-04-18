@@ -33,6 +33,13 @@ records everything (thinking traces, tool calls, visible responses).
 | Background chat (Tulu3 subset) | ~500 | Catastrophic forgetting prevention |
 | **Total** | **~1,450** | |
 
+The dataset includes both **roleplay users** (pretending to be PKNA characters
+like Paperino, Everett, or Due) and **casual users** (fans and curious strangers
+interacting without adopting a character). This affects user summaries (roleplay
+users have in-universe identities; casual users have real-world descriptions)
+and memory contexts (roleplay memories reference in-universe conversations;
+casual memories reference real-world interactions).
+
 Background chat examples are sampled from the student model itself (on-policy)
 with lightweight thinking traces added.
 
@@ -44,8 +51,8 @@ Each training example includes:
   the full 208-line soul document -- distillation should internalize this)
 - A user summary describing the interlocutor (from "unknown stranger" to a
   rich profile with relationship history and emotional state)
-- A memory context slot containing consolidated memories from prior sessions
-  (may be empty, irrelevant, or relevant with noise)
+- A memory context slot dynamically composed from a tagged memory corpus
+  (may be empty, irrelevant, or relevant with noise -- sampled per-trace)
 - Multi-turn conversation with tool calls where appropriate
 - **Thinking traces** in the assistant's response: an internal reasoning block
   where Uno evaluates the emotional context, the relationship with the

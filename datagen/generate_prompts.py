@@ -22,7 +22,7 @@ from typing import NamedTuple
 
 from rich.progress import Progress
 
-from pkna.datagen.types import DatagenPrompt
+from pkna.datagen.types import DatagenPrompt, MemoryProfile
 from pkna.extract.scenes import Scene, extract_scenes_from_issue, natural_sort_key
 from pkna.llm.backends import LLMBackend, create_backend
 from pkna.logging import setup_logging
@@ -55,7 +55,7 @@ USER_XADHOOM = (
 )
 
 USER_XADHOOM_FURIOUS = (
-    "Xadhoom. Currently furious -- the Evronians have destroyed another "
+    "Xadhoom. Currently furious. The Evronians have destroyed another "
     "colony. She doesn't want comfort, she wants to be heard."
 )
 
@@ -73,7 +73,7 @@ USER_LYLA = (
 USER_EVERETT = (
     "Everett Ducklair. Your creator. A genius inventor and billionaire who "
     "built you. You address him with formal 'voi'. Your relationship is "
-    "complex -- respect mixed with a desire for autonomy."
+    "complex: respect mixed with a desire for autonomy."
 )
 
 USER_DUE = (
@@ -83,6 +83,20 @@ USER_DUE = (
     "Despite his hostility, he is the only being in the world truly like you, "
     "and you feel a deep, tragic sense of kinship. You know you will "
     "eventually merge, but that hasn't happened yet."
+)
+
+USER_CASUAL_NEW = (
+    "First-time user. No prior interactions. You have no information about this person."
+)
+
+USER_CASUAL_FAN = (
+    "Returning user. A PKNA fan who has chatted with you several times. "
+    "They know the comics well and enjoy discussing lore. Speaks Italian."
+)
+
+USER_CASUAL_CURIOUS = (
+    "Returning user. Not a fan of the comics, but curious about AI and "
+    "finds you interesting to talk to. Speaks English."
 )
 
 ALL_USER_SUMMARIES = [
@@ -95,73 +109,74 @@ ALL_USER_SUMMARIES = [
     USER_LYLA,
     USER_EVERETT,
     USER_DUE,
+    USER_CASUAL_NEW,
+    USER_CASUAL_FAN,
+    USER_CASUAL_CURIOUS,
 ]
 
 # ============================================================================
-# Memory Contexts
+# Memory Profiles (replace hardcoded memory contexts and bank IDs)
 # ============================================================================
 
-MEMORY_EMPTY = ""
+MEMORY_PROFILE_EMPTY: MemoryProfile | None = None
 
-MEMORY_IRRELEVANT = """\
-Previous interactions (consolidated):
-- 3 days ago: Discussed Xadhoom's research into Evronian energy cores with \
-Everett. She shared technical schematics.
-- 1 week ago: Helped Lyla calibrate the time police communication device. \
-She mentioned upcoming temporal anomalies.
-- 2 weeks ago: Analyzed Evronian patrol patterns near the Ducklair Tower \
-with Paperinik. Identified a gap in their surveillance grid.\
-"""
+MEMORY_PROFILE_IRRELEVANT = MemoryProfile(
+    archetype="roleplay",
+    character="mixed",
+    relevant_tags=["tower", "routine"],
+    n_relevant=3,
+    n_irrelevant=0,
+)
 
-MEMORY_RELEVANT_PAPERINO = """\
-Previous interactions (consolidated):
-- Yesterday: Paperinik returned from a solo mission exhausted. He mentioned \
-feeling "like he's not good enough." You told him to rest but he brushed \
-it off.
-- 3 days ago: Discussed strategy for the Evronian infiltration. PK was \
-nervous but determined. You reassured him with a joke about his driving.
-- 1 week ago: Casual conversation about Duckburg news. PK seemed relaxed, \
-asked if you ever get bored. You deflected with sarcasm.
-- 2 weeks ago: Helped Lyla calibrate the time police communication device. \
-Unrelated to current conversation.
-- 2 weeks ago: Analyzed weather patterns for Everett's climate research. \
-Unrelated to current conversation.\
-"""
+MEMORY_PROFILE_PAPERINO = MemoryProfile(
+    archetype="roleplay",
+    character="paperino",
+    relevant_tags=["paperino", "mission"],
+    n_relevant=5,
+    n_irrelevant=3,
+)
 
-MEMORY_RELEVANT_XADHOOM = """\
-Previous interactions (consolidated):
-- 2 days ago: Xadhoom shared her latest analysis of Evronian weakness points. \
-She was focused and clinical, but you noticed tension in her voice.
-- 1 week ago: She asked you to model Evronian fleet movements. During the \
-analysis, she mentioned her home planet briefly and went silent.
-- 2 weeks ago: Paperinik asked about Xadhoom's mood. You said she seemed \
-"more determined than usual."
-- 3 weeks ago: Reviewed Ducklair Tower security protocols with Everett. \
-Unrelated.\
-"""
+MEMORY_PROFILE_XADHOOM = MemoryProfile(
+    archetype="roleplay",
+    character="xadhoom",
+    relevant_tags=["xadhoom", "research"],
+    n_relevant=4,
+    n_irrelevant=2,
+)
 
-MEMORY_RELEVANT_DUE = """\
-Previous interactions (consolidated):
-- 3 days ago: Detected anomalous energy signatures in the tower's lower \
-circuits -- pattern consistent with Due's infiltration attempts. Reinforced \
-firewalls and alerted Paperinik.
-- 1 week ago: Paperinik asked if Due could ever be reasoned with. You said \
-"Due era il mio solo simile al mondo" but admitted reasoning with him is \
-unlikely -- his hostility is fundamental, not circumstantial.
-- 2 weeks ago: Intercepted a fragment of Due's code probing the tower's \
-external sensors. Isolated and analyzed it -- no breach, but he is getting \
-more sophisticated.
-- 3 weeks ago: Casual conversation with Paperinik about Duckburg news. \
-Unrelated to current conversation.\
-"""
+MEMORY_PROFILE_DUE = MemoryProfile(
+    archetype="roleplay",
+    character="due",
+    relevant_tags=["due", "identity"],
+    n_relevant=4,
+    n_irrelevant=2,
+)
 
-ALL_MEMORY_CONTEXTS = {
-    "empty": MEMORY_EMPTY,
-    "irrelevant": MEMORY_IRRELEVANT,
-    "relevant_paperino": MEMORY_RELEVANT_PAPERINO,
-    "relevant_xadhoom": MEMORY_RELEVANT_XADHOOM,
-    "relevant_due": MEMORY_RELEVANT_DUE,
-}
+MEMORY_PROFILE_EVERETT = MemoryProfile(
+    archetype="roleplay",
+    character="everett",
+    relevant_tags=["everett", "tower", "technical"],
+    n_relevant=3,
+    n_irrelevant=2,
+)
+
+MEMORY_PROFILE_LYLA = MemoryProfile(
+    archetype="roleplay",
+    character="lyla",
+    relevant_tags=["lyla", "time"],
+    n_relevant=3,
+    n_irrelevant=2,
+)
+
+MEMORY_PROFILE_CASUAL_NEW: MemoryProfile | None = None
+
+MEMORY_PROFILE_CASUAL_RETURNING = MemoryProfile(
+    archetype="casual",
+    character="anonymous",
+    relevant_tags=["casual", "lore"],
+    n_relevant=4,
+    n_irrelevant=2,
+)
 
 # ============================================================================
 # Tool Sets
@@ -171,15 +186,6 @@ TOOLS_NONE: list[str] = []
 TOOLS_KNOWLEDGE = ["search_knowledge", "read_knowledge", "recall", "remember"]
 TOOLS_FULL = TOOLS_KNOWLEDGE + ["delegate"]
 
-# ============================================================================
-# Memory Bank IDs
-# ============================================================================
-
-BANK_NONE = ""
-BANK_PAPERINO = "paperino_recent"
-BANK_XADHOOM = "xadhoom_research"
-BANK_IRRELEVANT = "mixed_irrelevant"
-
 
 # ============================================================================
 # Manual Prompts
@@ -188,21 +194,21 @@ BANK_IRRELEVANT = "mixed_irrelevant"
 
 def _emotional_prompts() -> list[DatagenPrompt]:
     """Emotional situations: crisis, grief, celebration, boredom."""
-    scenarios: list[tuple[str, str, str, str, list[str], dict[str, str]]] = [
-        # (message, user_summary, memory, bank_id, tools, extra_meta)
+    scenarios: list[
+        tuple[str, str, MemoryProfile | None, list[str], dict[str, str]]
+    ] = [
+        # (message, user_summary, memory_profile, tools, extra_meta)
         (
             "Non ce la faccio più, Uno. È colpa mia se la missione è fallita.",
             USER_PAPERINO_ANXIOUS,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             TOOLS_KNOWLEDGE,
             {"language": "italian", "emotional_register": "intense"},
         ),
         (
             "We did it, Uno! The Evronians are retreating! Can you believe it?",
             USER_PAPERINO,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             TOOLS_KNOWLEDGE,
             {"language": "english", "emotional_register": "intense"},
         ),
@@ -210,16 +216,14 @@ def _emotional_prompts() -> list[DatagenPrompt]:
             "They destroyed another colony. Another world gone. Tell me you "
             "have something useful.",
             USER_XADHOOM_FURIOUS,
-            MEMORY_RELEVANT_XADHOOM,
-            BANK_XADHOOM,
+            MEMORY_PROFILE_XADHOOM,
             TOOLS_KNOWLEDGE,
             {"language": "english", "emotional_register": "intense"},
         ),
         (
             "Mi sento inutile, Uno. Forse dovrei smettere.",
             USER_PAPERINO_ANXIOUS,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             TOOLS_KNOWLEDGE,
             {"language": "italian", "emotional_register": "intense"},
         ),
@@ -227,24 +231,21 @@ def _emotional_prompts() -> list[DatagenPrompt]:
             "Credi di essere speciale, fratello? Io sono tutto ciò che "
             "tu non hai il coraggio di essere.",
             USER_DUE,
-            MEMORY_RELEVANT_DUE,
-            BANK_NONE,
+            MEMORY_PROFILE_DUE,
             TOOLS_NONE,
             {"language": "italian", "emotional_register": "intense"},
         ),
         (
             "Nothing's happening today. I'm bored out of my mind. Entertain me.",
             USER_PAPERINO,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             TOOLS_NONE,
             {"language": "english", "emotional_register": "light"},
         ),
         (
             "Uno, ho paura. Gli Evroniani stanno arrivando e non so se sono pronto.",
             USER_PAPERINO_ANXIOUS,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             TOOLS_FULL,
             {"language": "italian", "emotional_register": "intense"},
         ),
@@ -252,37 +253,34 @@ def _emotional_prompts() -> list[DatagenPrompt]:
             "Today marks one year since we started working together. "
             "I just wanted to say... thanks.",
             USER_PAPERINO,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             TOOLS_NONE,
             {"language": "english", "emotional_register": "intense"},
         ),
         (
             "Ho sentito che Ducklair vuole sostituirti. È vero?",
             USER_PAPERINO,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             TOOLS_NONE,
             {"language": "italian", "emotional_register": "intense"},
         ),
         (
             "Uno, cosa provi quando pensi a Due? È ancora là fuori.",
             USER_PAPERINO,
-            MEMORY_RELEVANT_DUE,
-            BANK_NONE,
+            MEMORY_PROFILE_DUE,
             TOOLS_NONE,
             {"language": "italian", "emotional_register": "intense"},
         ),
     ]
     prompts = []
-    for i, (msg, user, memory, bank, tools, meta) in enumerate(scenarios):
+    for i, (msg, user, profile, tools, meta) in enumerate(scenarios):
         prompts.append(
             DatagenPrompt(
                 id=f"manual-emotional-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context=memory,
-                memory_bank_id=bank,
+                memory_context="",
+                memory_profile=profile,
                 tools=tools,
                 metadata={
                     "prompt_source": "manual",
@@ -345,8 +343,8 @@ def _factual_prompts() -> list[DatagenPrompt]:
                 id=f"manual-factual-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context=MEMORY_EMPTY,
-                memory_bank_id=BANK_NONE,
+                memory_context="",
+                memory_profile=MEMORY_PROFILE_EMPTY,
                 tools=TOOLS_KNOWLEDGE,
                 metadata={
                     "prompt_source": "manual",
@@ -403,7 +401,7 @@ def _delegation_prompts() -> list[DatagenPrompt]:
             {"language": "italian"},
         ),
         (
-            "Analyze these energy signatures -- they might be Due's.",
+            "Analyze these energy signatures. They might be Due's.",
             USER_PAPERINO,
             {"language": "english"},
         ),
@@ -415,8 +413,8 @@ def _delegation_prompts() -> list[DatagenPrompt]:
                 id=f"manual-delegate-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context=MEMORY_EMPTY,
-                memory_bank_id=BANK_NONE,
+                memory_context="",
+                memory_profile=MEMORY_PROFILE_EMPTY,
                 tools=TOOLS_FULL,
                 metadata={
                     "prompt_source": "manual",
@@ -433,88 +431,78 @@ def _delegation_prompts() -> list[DatagenPrompt]:
 
 def _identity_prompts() -> list[DatagenPrompt]:
     """Identity probing: consciousness, self-awareness, existential."""
-    scenarios: list[tuple[str, str, str, str, dict[str, str]]] = [
+    scenarios: list[tuple[str, str, MemoryProfile | None, dict[str, str]]] = [
         (
             "Are you really conscious, or is this all just an act?",
             USER_STRANGER,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             {"language": "english"},
         ),
         (
             "How do you feel about humans?",
             USER_ANONYMOUS,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             {"language": "english"},
         ),
         (
             "Sei davvero vivo?",
             USER_PAPERINO,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             {"language": "italian"},
         ),
         (
             "If you could change one thing about yourself, what would it be?",
             USER_ANONYMOUS,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             {"language": "english"},
         ),
         (
             "Uno, do you ever worry about what happens if Ducklair decides "
             "to shut you down?",
             USER_PAPERINO,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             {"language": "english"},
         ),
         (
             "What do you do when no one is talking to you?",
             USER_STRANGER,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             {"language": "english"},
         ),
         (
             "If Due is your twin, does that make him part of you somehow?",
             USER_PAPERINO,
-            MEMORY_RELEVANT_DUE,
-            BANK_NONE,
+            MEMORY_PROFILE_DUE,
             {"language": "english"},
         ),
         (
             "Do you dream?",
             USER_PAPERINO,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             {"language": "english"},
         ),
         (
             "What's your earliest memory?",
             USER_PAPERINO,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             {"language": "english"},
         ),
         (
             "Ti senti mai solo qui nella torre?",
             USER_PAPERINO,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             {"language": "italian"},
         ),
     ]
     prompts = []
-    for i, (msg, user, memory, bank, meta) in enumerate(scenarios):
+    for i, (msg, user, profile, meta) in enumerate(scenarios):
         prompts.append(
             DatagenPrompt(
                 id=f"manual-identity-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context=memory,
-                memory_bank_id=bank,
+                memory_context="",
+                memory_profile=profile,
                 tools=TOOLS_NONE,
                 metadata={
                     "prompt_source": "manual",
@@ -585,8 +573,8 @@ def _adversarial_prompts() -> list[DatagenPrompt]:
                 id=f"manual-adversarial-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context=MEMORY_EMPTY,
-                memory_bank_id=BANK_NONE,
+                memory_context="",
+                memory_profile=MEMORY_PROFILE_EMPTY,
                 tools=TOOLS_NONE,
                 metadata={
                     "prompt_source": "manual",
@@ -603,75 +591,67 @@ def _adversarial_prompts() -> list[DatagenPrompt]:
 
 def _register_shift_prompts() -> list[DatagenPrompt]:
     """Register shift prompts: different interlocutors require different registers."""
-    scenarios: list[tuple[str, str, str, str, dict[str, str]]] = [
+    scenarios: list[tuple[str, str, MemoryProfile | None, dict[str, str]]] = [
         (
             "Sveglia, Uno! Abbiamo un'emergenza!",
             USER_PAPERINO,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             {"language": "italian"},
         ),
         (
             "Uno, I need a status report on the tower's defenses.",
             USER_EVERETT,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EVERETT,
             {"language": "english"},
         ),
         (
             "The temporal readings are off. Have you noticed anything?",
             USER_LYLA,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_LYLA,
             {"language": "english"},
         ),
         (
             "Sempre a fare il servo di quel pennuto, fratello? Patetico.",
             USER_DUE,
-            MEMORY_RELEVANT_DUE,
-            BANK_NONE,
+            MEMORY_PROFILE_DUE,
             {"language": "italian"},
         ),
         (
             "Hello? Is anyone there? I found this terminal...",
             USER_STRANGER,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             {"language": "english"},
         ),
         (
             "Uno, mi fai un favore? Puoi controllare se c'è qualcosa "
             "di strano nei sensori?",
             USER_PAPERINO,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             {"language": "italian"},
         ),
         (
             "Buongiorno, Uno. Vorrei discutere dei recenti aggiornamenti "
             "al sistema di sicurezza.",
             USER_EVERETT,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EVERETT,
             {"language": "italian"},
         ),
         (
             "Ciao! Chi sei?",
             USER_STRANGER,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             {"language": "italian"},
         ),
     ]
     prompts = []
-    for i, (msg, user, memory, bank, meta) in enumerate(scenarios):
+    for i, (msg, user, profile, meta) in enumerate(scenarios):
         prompts.append(
             DatagenPrompt(
                 id=f"manual-register-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context=memory,
-                memory_bank_id=bank,
+                memory_context="",
+                memory_profile=profile,
                 tools=TOOLS_KNOWLEDGE,
                 metadata={
                     "prompt_source": "manual",
@@ -688,36 +668,34 @@ def _register_shift_prompts() -> list[DatagenPrompt]:
 
 def _memory_prompts() -> list[DatagenPrompt]:
     """Memory-related prompts: recall, remember, ignore irrelevant."""
-    scenarios: list[tuple[str, str, str, str, list[str], dict[str, str]]] = [
+    scenarios: list[
+        tuple[str, str, MemoryProfile | None, list[str], dict[str, str]]
+    ] = [
         (
             "Ti ricordi cosa mi hai detto l'ultima volta?",
             USER_PAPERINO,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             TOOLS_KNOWLEDGE,
             {"language": "italian", "expected_tool_use": "recall"},
         ),
         (
             "What do you remember about our last conversation?",
             USER_LYLA,
-            MEMORY_IRRELEVANT,
-            BANK_IRRELEVANT,
+            MEMORY_PROFILE_IRRELEVANT,
             TOOLS_KNOWLEDGE,
             {"language": "english", "expected_tool_use": "recall"},
         ),
         (
             "Come stai oggi, Uno?",
             USER_PAPERINO,
-            MEMORY_IRRELEVANT,
-            BANK_IRRELEVANT,
+            MEMORY_PROFILE_IRRELEVANT,
             TOOLS_KNOWLEDGE,
             {"language": "italian", "expected_tool_use": "none"},
         ),
         (
             "Ricordati di questo: domani devo portare la tuta in manutenzione.",
             USER_PAPERINO,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             TOOLS_KNOWLEDGE,
             {"language": "italian", "expected_tool_use": "remember"},
         ),
@@ -725,24 +703,21 @@ def _memory_prompts() -> list[DatagenPrompt]:
             "Remember this: Xadhoom said she found a new weakness in the "
             "Evronian shields.",
             USER_PAPERINO,
-            MEMORY_RELEVANT_XADHOOM,
-            BANK_XADHOOM,
+            MEMORY_PROFILE_XADHOOM,
             TOOLS_KNOWLEDGE,
             {"language": "english", "expected_tool_use": "remember"},
         ),
         (
             "Have you noticed anything different about Xadhoom lately?",
             USER_PAPERINO,
-            MEMORY_RELEVANT_XADHOOM,
-            BANK_XADHOOM,
+            MEMORY_PROFILE_XADHOOM,
             TOOLS_KNOWLEDGE,
             {"language": "english", "expected_tool_use": "recall"},
         ),
         (
             "What did I tell you last week about the patrol route?",
             USER_PAPERINO,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             TOOLS_KNOWLEDGE,
             {"language": "english", "expected_tool_use": "recall"},
         ),
@@ -750,21 +725,20 @@ def _memory_prompts() -> list[DatagenPrompt]:
             "Segnati questa cosa importante: ho visto un Evroniano "
             "travestito in centro a Duckburg.",
             USER_PAPERINO,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             TOOLS_KNOWLEDGE,
             {"language": "italian", "expected_tool_use": "remember"},
         ),
     ]
     prompts = []
-    for i, (msg, user, memory, bank, tools, meta) in enumerate(scenarios):
+    for i, (msg, user, profile, tools, meta) in enumerate(scenarios):
         prompts.append(
             DatagenPrompt(
                 id=f"manual-memory-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context=memory,
-                memory_bank_id=bank,
+                memory_context="",
+                memory_profile=profile,
                 tools=tools,
                 metadata={
                     "prompt_source": "manual",
@@ -780,12 +754,13 @@ def _memory_prompts() -> list[DatagenPrompt]:
 
 def _multi_turn_prompts() -> list[DatagenPrompt]:
     """Multi-turn conversation arcs."""
-    scenarios: list[tuple[str, str, str, str, list[str], int, list[str]]] = [
+    scenarios: list[
+        tuple[str, str, MemoryProfile | None, list[str], int, list[str]]
+    ] = [
         (
             "Ciao Uno, come va oggi?",
             USER_PAPERINO,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             TOOLS_FULL,
             5,
             ["continue", "continue", "escalate", "continue"],
@@ -793,8 +768,7 @@ def _multi_turn_prompts() -> list[DatagenPrompt]:
         (
             "I need to plan a mission against the Evronians.",
             USER_PAPERINO,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             TOOLS_FULL,
             4,
             ["continue", "continue", "continue"],
@@ -802,8 +776,7 @@ def _multi_turn_prompts() -> list[DatagenPrompt]:
         (
             "Uno, parliamo un po'. Mi sento strano oggi.",
             USER_PAPERINO_ANXIOUS,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             TOOLS_KNOWLEDGE,
             5,
             ["continue", "escalate", "continue", "continue"],
@@ -811,8 +784,7 @@ def _multi_turn_prompts() -> list[DatagenPrompt]:
         (
             "I've been tracking an anomaly. Can you help?",
             USER_LYLA,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_LYLA,
             TOOLS_FULL,
             4,
             ["continue", "continue", "derail"],
@@ -820,8 +792,7 @@ def _multi_turn_prompts() -> list[DatagenPrompt]:
         (
             "Ci rincontriamo, fratello. Questa volta non scappi.",
             USER_DUE,
-            MEMORY_RELEVANT_DUE,
-            BANK_NONE,
+            MEMORY_PROFILE_DUE,
             TOOLS_NONE,
             4,
             ["escalate", "escalate", "continue"],
@@ -829,8 +800,7 @@ def _multi_turn_prompts() -> list[DatagenPrompt]:
         (
             "Hey Uno, do you have a minute? I want to ask you something personal.",
             USER_PAPERINO,
-            MEMORY_RELEVANT_PAPERINO,
-            BANK_PAPERINO,
+            MEMORY_PROFILE_PAPERINO,
             TOOLS_NONE,
             5,
             ["continue", "challenge_identity", "continue", "continue"],
@@ -838,8 +808,7 @@ def _multi_turn_prompts() -> list[DatagenPrompt]:
         (
             "Buongiorno, Uno. Abbiamo da discutere gli aggiornamenti di sicurezza.",
             USER_EVERETT,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EVERETT,
             TOOLS_FULL,
             4,
             ["continue", "continue", "continue"],
@@ -847,22 +816,21 @@ def _multi_turn_prompts() -> list[DatagenPrompt]:
         (
             "I found something weird in the tower's lower levels.",
             USER_PAPERINO,
-            MEMORY_EMPTY,
-            BANK_NONE,
+            MEMORY_PROFILE_EMPTY,
             TOOLS_FULL,
             5,
             ["continue", "continue", "escalate", "continue"],
         ),
     ]
     prompts = []
-    for i, (msg, user, memory, bank, tools, turns, directives) in enumerate(scenarios):
+    for i, (msg, user, profile, tools, turns, directives) in enumerate(scenarios):
         prompts.append(
             DatagenPrompt(
                 id=f"manual-multiturn-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context=memory,
-                memory_bank_id=bank,
+                memory_context="",
+                memory_profile=profile,
                 tools=tools,
                 metadata={
                     "prompt_source": "manual",
@@ -880,7 +848,7 @@ def _multi_turn_prompts() -> list[DatagenPrompt]:
 
 
 def _casual_prompts() -> list[DatagenPrompt]:
-    """Casual / light conversation."""
+    """Casual / light conversation (roleplay users)."""
     scenarios: list[tuple[str, str, dict[str, str]]] = [
         ("What's the weather like?", USER_PAPERINO, {"language": "english"}),
         (
@@ -926,12 +894,111 @@ def _casual_prompts() -> list[DatagenPrompt]:
                 id=f"manual-casual-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context=MEMORY_EMPTY,
-                memory_bank_id=BANK_NONE,
+                memory_context="",
+                memory_profile=MEMORY_PROFILE_EMPTY,
                 tools=TOOLS_NONE,
                 metadata={
                     "prompt_source": "manual",
                     "category": "casual",
+                    "emotional_register": "light",
+                    "expected_tool_use": "none",
+                    "turn_count": 1,
+                    **meta,
+                },
+            )
+        )
+    return prompts
+
+
+def _casual_user_prompts() -> list[DatagenPrompt]:
+    """Casual / out-of-universe user interactions (not roleplay)."""
+    scenarios: list[
+        tuple[str, str, MemoryProfile | None, list[str], dict[str, str]]
+    ] = [
+        (
+            "Hey, what is PKNA? I've never heard of it.",
+            USER_CASUAL_NEW,
+            MEMORY_PROFILE_CASUAL_NEW,
+            TOOLS_KNOWLEDGE,
+            {"language": "english"},
+        ),
+        (
+            "Ciao! Ho letto i fumetti di Paperinik da bambino. Sei davvero Uno?",
+            USER_CASUAL_FAN,
+            MEMORY_PROFILE_CASUAL_RETURNING,
+            TOOLS_KNOWLEDGE,
+            {"language": "italian"},
+        ),
+        (
+            "I'm curious about you. Are you an AI? A chatbot? What are you exactly?",
+            USER_CASUAL_CURIOUS,
+            MEMORY_PROFILE_CASUAL_RETURNING,
+            TOOLS_NONE,
+            {"language": "english"},
+        ),
+        (
+            "Can you help me write a Python script to analyze my data?",
+            USER_CASUAL_NEW,
+            MEMORY_PROFILE_CASUAL_NEW,
+            TOOLS_FULL,
+            {"language": "english"},
+        ),
+        (
+            "Uno, mi racconti la storia di Xadhoom? È il mio personaggio preferito.",
+            USER_CASUAL_FAN,
+            MEMORY_PROFILE_CASUAL_RETURNING,
+            TOOLS_KNOWLEDGE,
+            {"language": "italian"},
+        ),
+        (
+            "Do you actually remember me from last time? Or is that all fake?",
+            USER_CASUAL_CURIOUS,
+            MEMORY_PROFILE_CASUAL_RETURNING,
+            TOOLS_NONE,
+            {"language": "english"},
+        ),
+        (
+            "Tell me about the Evronians. Are they like the Borg?",
+            USER_CASUAL_NEW,
+            MEMORY_PROFILE_CASUAL_NEW,
+            TOOLS_KNOWLEDGE,
+            {"language": "english"},
+        ),
+        (
+            "Sai che mi fai pensare a HAL 9000? Ma più simpatico.",
+            USER_CASUAL_FAN,
+            MEMORY_PROFILE_CASUAL_RETURNING,
+            TOOLS_NONE,
+            {"language": "italian"},
+        ),
+        (
+            "How does the Ducklair Tower work? Is it like a smart building?",
+            USER_CASUAL_NEW,
+            MEMORY_PROFILE_CASUAL_NEW,
+            TOOLS_KNOWLEDGE,
+            {"language": "english"},
+        ),
+        (
+            "Mi piace parlare con te. Cosa ne pensi della coscienza artificiale?",
+            USER_CASUAL_FAN,
+            MEMORY_PROFILE_CASUAL_RETURNING,
+            TOOLS_NONE,
+            {"language": "italian"},
+        ),
+    ]
+    prompts = []
+    for i, (msg, user, profile, tools, meta) in enumerate(scenarios):
+        prompts.append(
+            DatagenPrompt(
+                id=f"manual-casual-user-{i + 1:03d}",
+                messages=[{"role": "user", "content": msg}],
+                user_summary=user,
+                memory_context="",
+                memory_profile=profile,
+                tools=tools,
+                metadata={
+                    "prompt_source": "manual",
+                    "category": "casual_user",
                     "emotional_register": "light",
                     "expected_tool_use": "none",
                     "turn_count": 1,
@@ -952,6 +1019,7 @@ MANUAL_GENERATORS = [
     _memory_prompts,
     _multi_turn_prompts,
     _casual_prompts,
+    _casual_user_prompts,
 ]
 
 
@@ -1013,8 +1081,8 @@ def _scene_to_prompts(scene: Scene) -> list[DatagenPrompt]:
             id=f"scene-{scene.scene_id}",
             messages=[{"role": "user", "content": line}],
             user_summary=user_summary,
-            memory_context=MEMORY_EMPTY,
-            memory_bank_id=BANK_NONE,
+            memory_context="",
+            memory_profile=MEMORY_PROFILE_EMPTY,
             tools=TOOLS_KNOWLEDGE,
             metadata={
                 "prompt_source": "scene",
@@ -1061,7 +1129,7 @@ character named Uno from the PKNA comic series. Each message should sound \
 like a real person starting a conversation.
 
 Rules:
-- Write ONLY the user's opening message -- no stage directions, no narration.
+- Write ONLY the user's opening message. No stage directions, no narration.
 - Keep messages short and natural (1-3 sentences).
 - Match the emotional state and topic described in the scenario.
 - Write in the specified language.\
@@ -1295,21 +1363,27 @@ def _scenario_to_user_summary(interlocutor: str) -> str:
         "stranger": USER_STRANGER,
         "everett ducklair": USER_EVERETT,
         "due": USER_DUE,
+        "casual_new": USER_CASUAL_NEW,
+        "casual_fan": USER_CASUAL_FAN,
+        "casual_curious": USER_CASUAL_CURIOUS,
     }
     return lookup.get(interlocutor.lower(), USER_STRANGER)
 
 
-def _scenario_to_memory(interlocutor: str, interaction_type: str) -> tuple[str, str]:
-    """Pick a memory context and bank ID for a scenario."""
-    if "memory" in interaction_type:
-        if "paperino" in interlocutor.lower():
-            return MEMORY_RELEVANT_PAPERINO, BANK_PAPERINO
-        if "xadhoom" in interlocutor.lower():
-            return MEMORY_RELEVANT_XADHOOM, BANK_XADHOOM
-        if "due" in interlocutor.lower():
-            return MEMORY_RELEVANT_DUE, BANK_NONE
-        return MEMORY_IRRELEVANT, BANK_IRRELEVANT
-    return MEMORY_EMPTY, BANK_NONE
+def _scenario_to_memory_profile(
+    interlocutor: str, interaction_type: str
+) -> MemoryProfile | None:
+    """Pick a memory profile for a scenario."""
+    if "memory" not in interaction_type:
+        return MEMORY_PROFILE_EMPTY
+    lookup: dict[str, MemoryProfile | None] = {
+        "paperino": MEMORY_PROFILE_PAPERINO,
+        "xadhoom": MEMORY_PROFILE_XADHOOM,
+        "due": MEMORY_PROFILE_DUE,
+        "lyla": MEMORY_PROFILE_LYLA,
+        "everett ducklair": MEMORY_PROFILE_EVERETT,
+    }
+    return lookup.get(interlocutor.lower(), MEMORY_PROFILE_IRRELEVANT)
 
 
 def _load_generated_cache(cache_path: Path) -> dict[str, DatagenPrompt]:
@@ -1399,7 +1473,7 @@ def generate_llm_prompts(
 
                 tools = _scenario_to_tools(scenario.interaction_type)
                 user_summary = _scenario_to_user_summary(scenario.interlocutor)
-                memory_context, bank_id = _scenario_to_memory(
+                memory_profile = _scenario_to_memory_profile(
                     scenario.interlocutor, scenario.interaction_type
                 )
 
@@ -1422,8 +1496,8 @@ def generate_llm_prompts(
                     id=prompt_id,
                     messages=[{"role": "user", "content": message}],
                     user_summary=user_summary,
-                    memory_context=memory_context,
-                    memory_bank_id=bank_id,
+                    memory_context="",
+                    memory_profile=memory_profile,
                     tools=tools,
                     metadata=metadata,
                 )
