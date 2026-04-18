@@ -8,7 +8,9 @@ import pytest
 
 from extract.build_emotional_profile import (
     SECTION_ORDER,
+    SECTION_SCOPES,
     ClaimCondenser,
+    ClaimGeneralizer,
     ClaimLedger,
     ClaimRefiner,
     ClaimSynthesizer,
@@ -18,6 +20,7 @@ from extract.build_emotional_profile import (
     _path_prefix,
     format_claims_compact,
     format_claims_detail,
+    infer_claim_scope,
     is_valid_claim_path,
 )
 from pkna.extract.scenes import AnnotatedDialogue, Panel, Scene, format_scene_view
@@ -85,6 +88,8 @@ class TestPathValidation:
             "behavior/evolution",
             "behavior/adaptation/by_audience",
             "behavior/adaptation/by_situation",
+            "behavior/adaptation/archetype/authority_figures",
+            "behavior/adaptation/archetype/trusted_partners",
         ],
     )
     def test_valid_static_paths(self, path: str):
@@ -100,6 +105,9 @@ class TestPathValidation:
             "relationships/paperinik/behavioral_driver",
             "relationships/everett_ducklair",
             "relationships/due/dynamic",
+            "relationships/archetype/authority_figures",
+            "relationships/archetype/trusted_partners",
+            "relationships/archetype/adversaries",
         ],
     )
     def test_valid_relationship_paths(self, path: str):
@@ -1560,3 +1568,290 @@ class TestGenerateSplitOutput:
         success, result, section_map = gen.generate()
         assert not success
         assert section_map == {}
+
+    def test_generate_wraps_sections_with_markers(self):
+        ledger = ClaimLedger()
+        c = ledger.add_claim(
+            path="identity/bio",
+            text="Uno is an AI",
+            scene_id="s1",
+            justification="R1",
+        )
+        ledger.support_claim(claim_id=c.id, scene_id="s2", justification="R2")
+        backend = MockBackend("## Generated Section Content")
+        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        success, document, _ = gen.generate()
+        assert success
+        assert "<!-- section:general:identity -->" in document
+        assert "<!-- /section:identity -->" in document
+
+
+# ============================================================================
+# Claim Scope
+# ============================================================================
+
+
+class TestClaimScope:
+    @pytest.mark.parametrize(
+        ("path", "expected_scope"),
+        [
+            ("identity/bio", "general"),
+            ("psychology/traits/ocean/openness", "general"),
+            ("communication/humor/type", "general"),
+            ("behavior/does", "general"),
+            ("capabilities/skills", "general"),
+            ("motivations/core_drive", "general"),
+            ("behavior/adaptation/archetype/trusted_partners", "general"),
+            ("relationships/archetype/authority_figures", "general"),
+            ("psychology/growth/emotional_arc", "in_universe"),
+            ("psychology/growth/relationship_arc", "in_universe"),
+            ("behavior/evolution", "in_universe"),
+            ("relationships/paperinik", "in_universe"),
+            ("relationships/paperinik/dynamic", "in_universe"),
+            ("relationships/due/uno_believes", "in_universe"),
+        ],
+    )
+    def test_infer_claim_scope(self, path: str, expected_scope: str):
+        assert infer_claim_scope(path) == expected_scope
+
+    def test_scope_assigned_on_add_claim(self):
+        ledger = ClaimLedger()
+        c1 = ledger.add_claim(
+            path="identity/bio",
+            text="General claim",
+            scene_id="s1",
+            justification="R",
+        )
+        assert c1.scope == "general"
+
+        c2 = ledger.add_claim(
+            path="relationships/paperinik/dynamic",
+            text="In-universe claim",
+            scene_id="s2",
+            justification="R",
+        )
+        assert c2.scope == "in_universe"
+
+        c3 = ledger.add_claim(
+            path="psychology/growth/emotional_arc",
+            text="Growth claim",
+            scene_id="s3",
+            justification="R",
+        )
+        assert c3.scope == "in_universe"
+
+    def test_scope_serialization_roundtrip(self):
+        ledger = ClaimLedger()
+        ledger.add_claim(
+            path="relationships/paperinik",
+            text="Partner",
+            scene_id="s1",
+            justification="R",
+        )
+        ledger.add_claim(
+            path="identity/bio",
+            text="AI",
+            scene_id="s2",
+            justification="R",
+        )
+
+        data = ledger.to_json()
+        restored = ClaimLedger.from_json(data)
+
+        c1 = restored.get_claim(1)
+        assert c1 is not None
+        assert c1.scope == "in_universe"
+
+        c2 = restored.get_claim(2)
+        assert c2 is not None
+        assert c2.scope == "general"
+
+    def test_scope_visible_in_format_detail(self):
+        ledger = ClaimLedger()
+        ledger.add_claim(
+            path="relationships/paperinik",
+            text="Partner",
+            scene_id="s1",
+            justification="R",
+        )
+        output = format_claims_detail(ledger, [1])
+        assert "Scope: in_universe" in output
+
+
+# ============================================================================
+# Claim Generalizer
+# ============================================================================
+
+
+class TestClaimGeneralizer:
+    def _make_ledger(self) -> ClaimLedger:
+        ledger = ClaimLedger()
+        c1 = ledger.add_claim(
+            path="relationships/paperinik/dynamic",
+            text="Paperinik is Uno's primary ally and trusted partner",
+            scene_id="s1",
+            justification="Partnership established",
+        )
+        ledger.support_claim(claim_id=c1.id, scene_id="s2", justification="R2")
+
+        c2 = ledger.add_claim(
+            path="relationships/everett_ducklair/dynamic",
+            text="Everett Ducklair is Uno's creator and authority figure",
+            scene_id="s3",
+            justification="Creator relationship",
+        )
+        ledger.support_claim(claim_id=c2.id, scene_id="s4", justification="R4")
+
+        c3 = ledger.add_claim(
+            path="behavior/adaptation/by_audience",
+            text="Uno is more formal with Everett than with Paperinik",
+            scene_id="s5",
+            justification="Register shift observed",
+        )
+        ledger.support_claim(claim_id=c3.id, scene_id="s6", justification="R6")
+
+        # Below threshold -- should not be included
+        ledger.add_claim(
+            path="relationships/due/dynamic",
+            text="Due is a rival",
+            scene_id="s7",
+            justification="R7",
+        )
+        return ledger
+
+    def test_eligible_claims(self):
+        ledger = self._make_ledger()
+        backend = MockBackend()
+        gen = ClaimGeneralizer(backend, ledger, threshold=2)
+        eligible = gen._eligible_claims()
+        assert len(eligible) == 3
+        paths = {c.path for c in eligible}
+        assert "relationships/paperinik/dynamic" in paths
+        assert "relationships/everett_ducklair/dynamic" in paths
+        assert "behavior/adaptation/by_audience" in paths
+
+    def test_eligible_excludes_archetype_claims(self):
+        ledger = self._make_ledger()
+        from extract.build_emotional_profile import Claim, SceneEvidence
+
+        # Manually add an archetype claim with enough support
+        archetype_claim = Claim(
+            id=ledger._next_id,
+            text="Archetype claim",
+            path="relationships/archetype/authority_figures",
+            scope="general",
+            supporting=[
+                SceneEvidence(scene_id="s1", justification="R"),
+                SceneEvidence(scene_id="s2", justification="R"),
+            ],
+        )
+        ledger._claims[ledger._next_id] = archetype_claim
+        ledger._next_id += 1
+
+        backend = MockBackend()
+        gen = ClaimGeneralizer(backend, ledger, threshold=2)
+        eligible = gen._eligible_claims()
+        assert all(not c.path.startswith("relationships/archetype/") for c in eligible)
+
+    def test_generalize_success(self):
+        ledger = self._make_ledger()
+        response = json.dumps(
+            [
+                {
+                    "archetype": "trusted_partners",
+                    "claims": [
+                        {
+                            "path": "relationships/archetype/trusted_partners",
+                            "text": "Uno treats trusted partners with playful sarcasm.",
+                        },
+                        {
+                            "path": "behavior/adaptation/archetype/trusted_partners",
+                            "text": "Uno relaxes formality with trusted partners.",
+                        },
+                    ],
+                    "members": ["Paperinik"],
+                },
+                {
+                    "archetype": "authority_figures",
+                    "claims": [
+                        {
+                            "path": "relationships/archetype/authority_figures",
+                            "text": "Uno defers to authority figures with formal register.",
+                        },
+                        {
+                            "path": "behavior/adaptation/archetype/authority_figures",
+                            "text": "Uno adopts deferential posture with authority figures.",
+                        },
+                    ],
+                    "members": ["Everett Ducklair"],
+                },
+            ]
+        )
+        backend = MockBackend(response)
+        gen = ClaimGeneralizer(backend, ledger, threshold=2)
+        added, failed = gen.generalize()
+
+        assert added == 4
+        assert failed == 0
+
+        archetype_claims = [
+            c
+            for c in ledger._claims.values()
+            if c.path.startswith("relationships/archetype/")
+            or c.path.startswith("behavior/adaptation/archetype/")
+        ]
+        assert len(archetype_claims) == 4
+        assert all(c.scope == "general" for c in archetype_claims)
+
+    def test_generalize_api_failure(self):
+        ledger = self._make_ledger()
+        backend = MockBackend(None)
+        gen = ClaimGeneralizer(backend, ledger, threshold=2)
+        added, failed = gen.generalize()
+
+        assert added == 0
+        assert failed == 1
+
+    def test_generalize_invalid_json(self):
+        ledger = self._make_ledger()
+        backend = MockBackend("not valid json")
+        gen = ClaimGeneralizer(backend, ledger, threshold=2)
+        added, failed = gen.generalize()
+
+        assert added == 0
+        assert failed == 1
+
+    def test_generalize_no_eligible_claims(self):
+        ledger = ClaimLedger()
+        backend = MockBackend()
+        gen = ClaimGeneralizer(backend, ledger, threshold=2)
+        added, failed = gen.generalize()
+
+        assert added == 0
+        assert failed == 0
+
+
+# ============================================================================
+# Section Scopes and Order
+# ============================================================================
+
+
+class TestSectionScopesAndOrder:
+    def test_relationships_generalized_in_order(self):
+        assert "relationships_generalized" in SECTION_ORDER
+        gen_idx = SECTION_ORDER.index("relationships_generalized")
+        rel_idx = SECTION_ORDER.index("relationships")
+        assert gen_idx < rel_idx
+
+    def test_all_sections_have_scopes(self):
+        for section in SECTION_ORDER:
+            assert section in SECTION_SCOPES
+
+    def test_relationships_generalized_is_general(self):
+        assert SECTION_SCOPES["relationships_generalized"] == "general"
+
+    def test_relationships_is_in_universe(self):
+        assert SECTION_SCOPES["relationships"] == "in_universe"
+
+    def test_vignettes_is_in_universe(self):
+        assert SECTION_SCOPES["vignettes"] == "in_universe"

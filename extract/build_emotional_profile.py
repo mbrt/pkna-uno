@@ -68,9 +68,23 @@ SECTION_ORDER = [
     "motivations",
     "capabilities",
     "behavior",
+    "relationships_generalized",
     "relationships",
     "vignettes",
 ]
+
+SECTION_SCOPES: dict[str, str] = {
+    "identity": "general",
+    "psychology": "general",
+    "values": "general",
+    "communication": "general",
+    "motivations": "general",
+    "capabilities": "general",
+    "behavior": "general",
+    "relationships_generalized": "general",
+    "relationships": "in_universe",
+    "vignettes": "in_universe",
+}
 
 VALID_CLAIM_SECTIONS = {
     "identity",
@@ -168,7 +182,12 @@ VALID_PATHS = {
     "behavior/evolution",
     "behavior/adaptation/by_audience",
     "behavior/adaptation/by_situation",
+    "behavior/adaptation/archetype/authority_figures",
+    "behavior/adaptation/archetype/trusted_partners",
+    "behavior/adaptation/archetype/adversaries",
+    "behavior/adaptation/archetype/strangers",
     # Relationships - dynamic sub-paths validated separately
+    # relationships/archetype/{archetype_name}
     # relationships/{name}
     # relationships/{name}/dynamic
     # relationships/{name}/uno_believes
@@ -191,7 +210,7 @@ def is_valid_claim_path(path: str) -> bool:
     Any path with a valid section and at least two segments is accepted.
     VALID_PATHS serves as documentation of the suggested taxonomy, not an
     exhaustive allowlist. Relationships keep stricter validation to enforce
-    the {name}/{sub_path} structure.
+    the {name}/{sub_path} structure, with a special case for archetype paths.
     """
     parts = path.split("/")
     if len(parts) < 2:
@@ -200,12 +219,35 @@ def is_valid_claim_path(path: str) -> bool:
     if section not in VALID_CLAIM_SECTIONS:
         return False
     if section == "relationships":
+        # relationships/archetype/{archetype_name}
+        if len(parts) == 3 and parts[1] == "archetype":
+            return True
+        # relationships/{character}
         if len(parts) == 2:
             return True
+        # relationships/{character}/{sub_path}
         if len(parts) == 3 and parts[2] in RELATIONSHIP_SUB_PATHS:
             return True
         return False
     return True
+
+
+_IN_UNIVERSE_PATH_PREFIXES = (
+    "psychology/growth/",
+    "behavior/evolution",
+)
+
+
+def infer_claim_scope(path: str) -> str:
+    """Determine whether a claim is general or in-universe based on its path."""
+    for prefix in _IN_UNIVERSE_PATH_PREFIXES:
+        if path.startswith(prefix):
+            return "in_universe"
+    if path.startswith("relationships/") and not path.startswith(
+        "relationships/archetype/"
+    ):
+        return "in_universe"
+    return "general"
 
 
 def count_tokens(text: str) -> int:
@@ -241,6 +283,7 @@ class Claim(BaseModel):
     id: int
     text: str
     path: str
+    scope: str = "general"
     supporting: list[SceneEvidence] = []
     contradicting: list[SceneEvidence] = []
     quotes: list[Quote] = []
@@ -258,6 +301,17 @@ class CondensedClaim(BaseModel):
     path: str
     text: str
     source_ids: list[int]
+
+
+class ArchetypeClaim(BaseModel):
+    path: str
+    text: str
+
+
+class ArchetypeGroup(BaseModel):
+    archetype: str
+    claims: list[ArchetypeClaim]
+    members: list[str]
 
 
 # ============================================================================
@@ -357,6 +411,7 @@ class ClaimLedger:
             id=self._next_id,
             text=text,
             path=path,
+            scope=infer_claim_scope(path),
             supporting=[SceneEvidence(scene_id=scene_id, justification=justification)],
             contradicting=[],
             quotes=[],
@@ -785,6 +840,37 @@ Include specific examples from scenes.""",
 How does Uno's behavior change depending on who he's talking to and what's happening?
 
 Split into subsections with concrete examples.""",
+    "relationships_generalized": """## Interaction Archetypes
+
+You are given TWO types of claims:
+1. **Archetype claims** (relationships/archetype/* and behavior/adaptation/archetype/*):
+   Generalized patterns for how Uno relates to types of people.
+2. **Relationship context** (relationships/*): Character-specific claims that ground
+   the archetypes in concrete relationships.
+
+### Output Format
+
+For each archetype, create a subsection:
+
+### {Archetype Name} (e.g. "Authority Figures", "Trusted Partners")
+
+Describe how Uno typically behaves, communicates, and relates to this type of person.
+Include both relational patterns and behavioral adaptations.
+
+After all archetypes, add:
+
+### Key Figures
+
+A brief mapping of the most important named characters to their archetype, with a
+1-sentence role description each. This provides minimal context for readers unfamiliar
+with the source material. Focus on characters central to Uno's identity (creator,
+primary partner) rather than listing every known character.
+
+### Rules
+- Write in general, role-based language for archetype sections (no character names)
+- Every archetype claim must be reflected in the output
+- The Key Figures section is the only place where character names should appear
+- Output ONLY the section content (starting with the ## heading), no preamble""",
     "relationships": """## Key Relationships
 
 For each character with significant claims, create a subsection structured as:
@@ -939,6 +1025,35 @@ of the input claims it subsumes.
 """
 
 
+def get_claim_generalization_prompt() -> str:
+    return """You generalize character-specific relationship and behavioral claims into audience-archetype patterns.
+
+## Task
+Given claims about how a character (Uno) relates to and behaves toward specific named
+characters, identify recurring audience archetypes and produce generalized claims that
+describe Uno's patterns with each type.
+
+## Steps
+1. Read all the character-specific claims.
+2. Identify 3-6 audience archetypes that emerge naturally from the evidence (e.g.
+   "authority figures", "trusted partners/allies", "adversaries/threats",
+   "strangers/civilians"). Use whatever labels fit the actual evidence.
+3. For each archetype, produce 1-3 generalized claims describing how Uno behaves,
+   communicates, and/or relates to that type of person.
+4. For each archetype, list the specific characters that belong to it.
+
+## Field requirements
+- "archetype": short lowercase slug (e.g. "authority_figures", "trusted_partners")
+- claim paths: use "relationships/archetype/{slug}" or "behavior/adaptation/archetype/{slug}"
+- claim text: 1-3 sentences in English, using role-based language (no character names)
+
+## Rules
+- Claims must be grounded in the input evidence, not speculative.
+- Each archetype must have at least one behavioral and one relational claim.
+- Keep claims concise and actionable.
+"""
+
+
 # ============================================================================
 # Tool Formatting Functions
 # ============================================================================
@@ -976,6 +1091,7 @@ def format_claims_detail(ledger: ClaimLedger, claim_ids: list[int]) -> str:
 
         lines.append(f"ID {claim_id}:")
         lines.append(f"  Path: {claim.path}")
+        lines.append(f"  Scope: {claim.scope}")
         lines.append(f"  Text: {claim.text}")
         lines.append(
             f"  Support: {'+' if claim.support_count >= 0 else ''}{claim.support_count} "
@@ -1431,6 +1547,125 @@ class ClaimSynthesizer:
 
 
 # ============================================================================
+# Claim Generalizer
+# ============================================================================
+
+_GENERALIZATION_INPUT_PREFIXES = (
+    "relationships/",
+    "behavior/adaptation/",
+    "communication/interaction/",
+)
+
+
+class ClaimGeneralizer:
+    """Generalizes character-specific claims into audience-archetype patterns."""
+
+    def __init__(self, backend: LLMBackend, ledger: ClaimLedger, threshold: int):
+        self._backend = backend
+        self._ledger = ledger
+        self._threshold = threshold
+        self._system = get_claim_generalization_prompt()
+
+    def _eligible_claims(self) -> list[Claim]:
+        result = []
+        for claim in self._ledger._claims.values():
+            if claim.support_count < self._threshold:
+                continue
+            if claim.path.startswith("relationships/archetype/"):
+                continue
+            if claim.path.startswith("behavior/adaptation/archetype/"):
+                continue
+            if any(
+                claim.path.startswith(prefix)
+                for prefix in _GENERALIZATION_INPUT_PREFIXES
+            ):
+                result.append(claim)
+        return result
+
+    def _format_input_claims(self, claims: list[Claim]) -> str:
+        lines: list[str] = []
+        for claim in claims:
+            lines.append(f"- [{claim.path}] {claim.text} [+{claim.support_count}]")
+            if claim.quotes:
+                for q in claim.quotes[:2]:
+                    lines.append(f'  Quote: "{q.text}" — {q.context}')
+        return "\n".join(lines)
+
+    def generalize(self) -> tuple[int, int]:
+        """Produce archetype claims from character-specific relationship/behavior claims.
+
+        Returns:
+            Tuple of (claims_added, failures).
+        """
+        eligible = self._eligible_claims()
+        if not eligible:
+            log.info("No claims eligible for generalization")
+            return 0, 0
+
+        log.info(f"Generalizing from {len(eligible)} character-specific claims...")
+
+        claims_text = self._format_input_claims(eligible)
+        prompt = (
+            f"Generalize these {len(eligible)} character-specific claims into "
+            f"audience-archetype patterns:\n\n{claims_text}"
+        )
+        messages = [{"role": "user", "content": prompt}]
+
+        result = self._backend.generate(
+            system=self._system,
+            messages=messages,
+            response_schema=ArchetypeGroup,
+        )
+        if result is None:
+            log.warning("Generalization API call failed")
+            return 0, 1
+
+        self._ledger.accumulate_usage(result)
+        text = result.text.strip()
+        if not text:
+            log.warning("Empty generalization response")
+            return 0, 1
+
+        try:
+            groups = [ArchetypeGroup.model_validate(item) for item in json.loads(text)]
+        except (json.JSONDecodeError, ValueError) as e:
+            log.warning(f"Failed to parse generalization response: {e}")
+            return 0, 1
+
+        added = 0
+        for group in groups:
+            for ac in group.claims:
+                if not ac.path or not ac.text:
+                    continue
+                if not is_valid_claim_path(ac.path):
+                    log.warning(f"Invalid archetype claim path: {ac.path}")
+                    continue
+                self._ledger._claims[self._ledger._next_id] = Claim(
+                    id=self._ledger._next_id,
+                    text=ac.text,
+                    path=ac.path,
+                    scope="general",
+                    supporting=[
+                        SceneEvidence(
+                            scene_id="generalized",
+                            justification=(
+                                f"Generalized from archetype '{group.archetype}' "
+                                f"(members: {', '.join(group.members)})"
+                            ),
+                        )
+                    ],
+                )
+                self._ledger._next_id += 1
+                added += 1
+
+        log.info(
+            f"Generalization produced {added} archetype claims "
+            f"from {len(groups)} archetypes"
+        )
+        return added, 0
+
+
+# ============================================================================
 # Claim Condenser
 # ============================================================================
 
@@ -1574,7 +1809,7 @@ class ClaimCondenser:
         return result
 
     def condense_all(self) -> tuple[int, int]:
-        """Run hierarchical condensation: 2-segment then 1-segment.
+        """Run hierarchical condensation: 3-segment, 2-segment, then 1-segment.
 
         Returns:
             Tuple of (original_count, final_count) for low-support claims.
@@ -1590,17 +1825,16 @@ class ClaimCondenser:
             f"(threshold={self._threshold})..."
         )
 
-        # Pass 1: group by 2 path segments
-        after_pass1 = self._apply_condensation(low_support, segments=2)
-
-        # Pass 2: re-group still-below-threshold claims by 1 segment
-        still_low = [c for c in after_pass1 if c.support_count < self._threshold]
-        if still_low:
+        remaining = low_support
+        for segments in (3, 2, 1):
+            remaining = [c for c in remaining if c.support_count < self._threshold]
+            if not remaining:
+                break
             log.info(
-                f"Pass 2: {len(still_low)} claims still below threshold, "
-                f"re-grouping by 1 segment..."
+                f"Pass ({segments}-segment): {len(remaining)} claims "
+                f"still below threshold..."
             )
-            self._apply_condensation(still_low, segments=1)
+            remaining = self._apply_condensation(remaining, segments=segments)
 
         final_count = len(self._low_support_claims())
         log.info(
@@ -1621,16 +1855,11 @@ class SoulDocumentGenerator:
         self._ledger = ledger
         self._threshold = threshold
 
-    def _format_section_claims(self, section: str) -> str:
-        claims_by_section = self._ledger.get_claims_by_section(section=section)
-        claims = [
-            c
-            for c in claims_by_section.get(section, [])
-            if c.support_count >= self._threshold
-        ]
-        if not claims:
-            return ""
-
+    @staticmethod
+    def _format_claim_group(
+        claims: list[Claim], *, include_quotes: bool = False
+    ) -> str:
+        """Format a list of claims grouped by path."""
         by_path: dict[str, list[Claim]] = defaultdict(list)
         for claim in claims:
             by_path[claim.path].append(claim)
@@ -1642,12 +1871,36 @@ class SoulDocumentGenerator:
                 lines.append(
                     f"**Claim (support: +{claim.support_count}):** {claim.text}"
                 )
-                if claim.quotes:
+                if include_quotes and claim.quotes:
                     for q in claim.quotes:
                         lines.append(f'  - "{q.text}" — {q.context}')
             lines.append("")
 
         return "\n".join(lines)
+
+    def _get_relationship_context(
+        self, *, exclude_prefix: str | None = None
+    ) -> list[Claim]:
+        """Get above-threshold relationship claims, optionally excluding a prefix."""
+        return [
+            c
+            for c in self._ledger.get_claims_by_section("relationships").get(
+                "relationships", []
+            )
+            if c.support_count >= self._threshold
+            and (exclude_prefix is None or not c.path.startswith(exclude_prefix))
+        ]
+
+    def _format_section_claims(self, section: str) -> str:
+        claims_by_section = self._ledger.get_claims_by_section(section=section)
+        claims = [
+            c
+            for c in claims_by_section.get(section, [])
+            if c.support_count >= self._threshold
+        ]
+        if not claims:
+            return ""
+        return self._format_claim_group(claims, include_quotes=True)
 
     def _format_values_claims(self) -> str:
         """Format values claims alongside relationship claims for generalization."""
@@ -1657,48 +1910,52 @@ class SoulDocumentGenerator:
             for claim in claims
             if claim.support_count >= self._threshold
         ]
-        relationship_claims = [
-            c
-            for c in self._ledger.get_claims_by_section("relationships").get(
-                "relationships", []
-            )
-            if c.support_count >= self._threshold
-        ]
-
         if not value_claims:
             return ""
 
-        lines: list[str] = []
+        parts = [
+            "## Value Claims (character-specific)",
+            self._format_claim_group(value_claims, include_quotes=True),
+        ]
 
-        lines.append("## Value Claims (character-specific)")
-        by_path: dict[str, list[Claim]] = defaultdict(list)
-        for claim in value_claims:
-            by_path[claim.path].append(claim)
-        for path in sorted(by_path.keys()):
-            lines.append(f"### Path: {path}")
-            for claim in by_path[path]:
-                lines.append(
-                    f"**Claim (support: +{claim.support_count}):** {claim.text}"
-                )
-                if claim.quotes:
-                    for q in claim.quotes:
-                        lines.append(f'  - "{q.text}" — {q.context}')
-            lines.append("")
-
+        relationship_claims = self._get_relationship_context()
         if relationship_claims:
-            lines.append("## Relationship Context (for generalization)")
-            by_rel_path: dict[str, list[Claim]] = defaultdict(list)
-            for claim in relationship_claims:
-                by_rel_path[claim.path].append(claim)
-            for path in sorted(by_rel_path.keys()):
-                lines.append(f"### Path: {path}")
-                for claim in by_rel_path[path]:
-                    lines.append(
-                        f"**Claim (support: +{claim.support_count}):** {claim.text}"
-                    )
-                lines.append("")
+            parts.append("## Relationship Context (for generalization)")
+            parts.append(self._format_claim_group(relationship_claims))
 
-        return "\n".join(lines)
+        return "\n".join(parts)
+
+    def _format_generalized_claims(self) -> str:
+        """Format archetype claims alongside top relationship claims for context."""
+        archetype_claims = [
+            claim
+            for claims in self._ledger.get_claims_by_path(
+                "relationships/archetype"
+            ).values()
+            for claim in claims
+        ] + [
+            claim
+            for claims in self._ledger.get_claims_by_path(
+                "behavior/adaptation/archetype"
+            ).values()
+            for claim in claims
+        ]
+        if not archetype_claims:
+            return ""
+
+        parts = [
+            "## Archetype Claims",
+            self._format_claim_group(archetype_claims),
+        ]
+
+        relationship_claims = self._get_relationship_context(
+            exclude_prefix="relationships/archetype/"
+        )
+        if relationship_claims:
+            parts.append("## Relationship Context (for Key Figures section)")
+            parts.append(self._format_claim_group(relationship_claims))
+
+        return "\n".join(parts)
 
     def _format_vignette_claims(self) -> str:
         """Format top claims across all sections for vignette generation."""
@@ -1722,6 +1979,8 @@ class SoulDocumentGenerator:
             claims_text = self._format_vignette_claims()
         elif section == "values":
             claims_text = self._format_values_claims()
+        elif section == "relationships_generalized":
+            claims_text = self._format_generalized_claims()
         else:
             claims_text = self._format_section_claims(section)
 
@@ -1771,7 +2030,13 @@ class SoulDocumentGenerator:
                 log.error(f"Soul document generation failed at section '{section}'")
                 return False, result, {}
             if result:
-                sections.append(result)
+                scope = SECTION_SCOPES.get(section, "general")
+                wrapped = (
+                    f"<!-- section:{scope}:{section} -->\n"
+                    f"{result}\n"
+                    f"<!-- /section:{section} -->"
+                )
+                sections.append(wrapped)
                 section_map[section] = result
 
         if not sections:
@@ -1988,6 +2253,34 @@ def run_claim_synthesis(
     return ledger
 
 
+def run_claim_generalization(
+    backend: LLMBackend, ledger: ClaimLedger, threshold: int
+) -> ClaimLedger:
+    generalized_ledger_path = OUTPUT_DIR / "generalized_ledger.json"
+
+    if generalized_ledger_path.exists():
+        log.info(
+            f"Generalized ledger already exists at {path_str(generalized_ledger_path)}, skipping"
+        )
+        with open(generalized_ledger_path, encoding="utf-8") as f:
+            data = json.load(f)
+        return ClaimLedger.from_json(data)
+
+    console.print(
+        "\n[bold cyan]Generalizing claims (audience archetypes)...[/bold cyan]"
+    )
+    generalizer = ClaimGeneralizer(backend, ledger, threshold)
+    added, failed = generalizer.generalize()
+
+    console.print(f"Generalization: {added} archetype claims added, {failed} failed.")
+
+    with open(generalized_ledger_path, "w", encoding="utf-8") as f:
+        json.dump(ledger.to_json(), f, ensure_ascii=False, indent=2)
+    log.info(f"Saved generalized ledger to {path_str(generalized_ledger_path)}")
+
+    return ledger
+
+
 def run_claim_condensation(
     backend: LLMBackend, ledger: ClaimLedger, threshold: int
 ) -> ClaimLedger:
@@ -2107,6 +2400,7 @@ def main() -> None:
     ledger = run_claim_generation(backend, args.max_scenes)
     ledger = run_claim_refinement(backend, ledger)
     ledger = run_claim_synthesis(backend, ledger, args.threshold)
+    ledger = run_claim_generalization(backend, ledger, args.threshold)
     ledger = run_claim_condensation(backend, ledger, args.threshold)
     run_document_generation(backend, ledger, args.threshold)
 
