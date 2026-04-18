@@ -13,7 +13,7 @@ def _make_corpus() -> list[MemoryCorpusEntry]:
         MemoryCorpusEntry(
             key="PK mission",
             value="Discussed strategy with Paperino",
-            timestamp="2026-04-01T10:00:00Z",
+            days_ago=5,
             tags=["paperino", "mission"],
             archetype="roleplay",
             character="paperino",
@@ -21,7 +21,7 @@ def _make_corpus() -> list[MemoryCorpusEntry]:
         MemoryCorpusEntry(
             key="PK mood",
             value="Paperino seemed anxious today",
-            timestamp="2026-04-02T10:00:00Z",
+            days_ago=2,
             tags=["paperino", "emotional"],
             archetype="roleplay",
             character="paperino",
@@ -29,7 +29,7 @@ def _make_corpus() -> list[MemoryCorpusEntry]:
         MemoryCorpusEntry(
             key="Xadhoom research",
             value="Analyzed Evronian energy patterns",
-            timestamp="2026-03-28T10:00:00Z",
+            days_ago=14,
             tags=["xadhoom", "research"],
             archetype="roleplay",
             character="xadhoom",
@@ -37,7 +37,7 @@ def _make_corpus() -> list[MemoryCorpusEntry]:
         MemoryCorpusEntry(
             key="Tower routine",
             value="All systems nominal",
-            timestamp="2026-03-25T10:00:00Z",
+            days_ago=21,
             tags=["tower", "routine"],
             archetype="roleplay",
             character="mixed",
@@ -45,7 +45,7 @@ def _make_corpus() -> list[MemoryCorpusEntry]:
         MemoryCorpusEntry(
             key="Fan lore question",
             value="User asked about the Evronians origin story",
-            timestamp="2026-04-03T10:00:00Z",
+            days_ago=1,
             tags=["casual", "lore"],
             archetype="casual",
             character="anonymous",
@@ -53,7 +53,7 @@ def _make_corpus() -> list[MemoryCorpusEntry]:
         MemoryCorpusEntry(
             key="Identity probe",
             value="User asked if I dream",
-            timestamp="2026-04-04T10:00:00Z",
+            days_ago=0,
             tags=["casual", "identity"],
             archetype="casual",
             character="anonymous",
@@ -136,7 +136,7 @@ class TestComposeMemory:
         context, _ = compose_memory(profile, corpus, rng)
 
         assert "Recent interactions:" in context
-        assert "2026-04" in context
+        assert "ago" in context or "today" in context
 
     def test_deterministic_with_seed(self):
         corpus = _make_corpus()

@@ -22,7 +22,7 @@ class TestCompactMemories:
                 MemoryEntry(
                     key="mission",
                     value="PK was tired after patrol",
-                    timestamp="2026-04-01T10:00:00Z",
+                    days_ago=3,
                 ),
             ]
         )
@@ -39,7 +39,7 @@ class TestCompactMemories:
         backend.generate.assert_not_called()
 
     def test_passes_topic_to_prompt(self):
-        bank = MemoryBank([MemoryEntry(key="k", value="v", timestamp="t")])
+        bank = MemoryBank([MemoryEntry(key="k", value="v", days_ago=0)])
         backend = _make_backend("summary")
         compact_memories(bank, "Evronian threat", backend)
 
@@ -52,7 +52,7 @@ class TestCompactMemories:
 
     def test_includes_all_entries(self):
         entries = [
-            MemoryEntry(key=f"entry{i}", value=f"value{i}", timestamp=f"t{i}")
+            MemoryEntry(key=f"entry{i}", value=f"value{i}", days_ago=i)
             for i in range(5)
         ]
         bank = MemoryBank(entries)
@@ -68,7 +68,7 @@ class TestCompactMemories:
             assert f"entry{i}" in prompt_text
 
     def test_handles_none_response(self):
-        bank = MemoryBank([MemoryEntry(key="k", value="v", timestamp="t")])
+        bank = MemoryBank([MemoryEntry(key="k", value="v", days_ago=0)])
         backend = MagicMock()
         backend.generate.return_value = None
         result = compact_memories(bank, "topic", backend)

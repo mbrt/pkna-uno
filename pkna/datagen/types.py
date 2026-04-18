@@ -16,7 +16,7 @@ class MemoryCorpusEntry(BaseModel):
 
     key: str
     value: str
-    timestamp: str
+    days_ago: int = 0
     tags: list[str]
     archetype: str  # "roleplay" or "casual"
     character: str  # e.g. "paperino", "xadhoom", "anonymous"

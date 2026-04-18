@@ -4,14 +4,14 @@ Compacts raw memory bank entries into a concise summary suitable for
 injection into the system prompt's memory context slot.
 """
 
+from pkna.inference.memory import MemoryBank, relative_time
 from pkna.llm.backends import LLMBackend
-from pkna.inference.memory import MemoryBank
 
 COMPACTION_PROMPT = """\
 You are a memory consolidation module for an AI assistant named Uno.
 
 Below are raw memory entries from prior conversations, each with a \
-timestamp. Your task is to produce a concise summary (max 200 words) \
+relative time marker. Your task is to produce a concise summary (max 200 words) \
 of these memories, organized by relevance to the upcoming conversation \
 topic.
 
@@ -53,7 +53,7 @@ def compact_memories(
         return ""
 
     memories_text = "\n".join(
-        f"[{e.timestamp}] {e.key}: {e.value}" for e in bank.entries
+        f"[{relative_time(e.days_ago)}] {e.key}: {e.value}" for e in bank.entries
     )
 
     prompt = COMPACTION_PROMPT.format(

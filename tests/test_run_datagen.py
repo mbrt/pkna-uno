@@ -49,7 +49,7 @@ class TestLoadCompletedIds:
 class TestLoadMemoryBank:
     def test_loads_existing(self, tmp_path: Path):
         path = tmp_path / "test_bank.jsonl"
-        path.write_text('{"key": "k", "value": "v", "timestamp": "t"}\n')
+        path.write_text('{"key": "k", "value": "v", "days_ago": 0}\n')
         bank = load_memory_bank("test_bank", tmp_path)
         assert bank is not None
         assert len(bank.entries) == 1

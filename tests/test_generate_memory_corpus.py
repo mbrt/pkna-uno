@@ -3,7 +3,8 @@
 from pathlib import Path
 
 from datagen.generate_memory_corpus import (
-    _parse_llm_entries,
+    RawMemoryEntry,
+    _raw_to_corpus,
     ingest_seed_banks,
     write_corpus,
 )
@@ -38,29 +39,34 @@ class TestIngestSeedBanks:
         assert "xadhoom" in characters
         assert "mixed" in characters
 
+    def test_seed_banks_have_days_ago(self):
+        banks_dir = Path("data/memory_banks")
+        entries = ingest_seed_banks(banks_dir)
+        for entry in entries:
+            assert entry.days_ago >= 0
 
-class TestParseLlmEntries:
-    def test_parses_valid_jsonl(self):
-        text = (
-            '{"key": "test", "value": "hello", "timestamp": "2026-01-01T00:00:00Z"}\n'
-            '{"key": "test2", "value": "world", "timestamp": "2026-01-02T00:00:00Z"}\n'
-        )
-        entries = _parse_llm_entries(text, ["tag1"], "roleplay", "paperino")
-        assert len(entries) == 2
-        assert entries[0].tags == ["tag1"]
-        assert entries[0].archetype == "roleplay"
-        assert entries[0].character == "paperino"
 
-    def test_skips_malformed_lines(self):
-        text = '{"key": "valid", "value": "ok", "timestamp": "t"}\nnot json\n'
-        entries = _parse_llm_entries(text, ["tag"], "casual", "anonymous")
-        assert len(entries) == 1
+class TestRawToCorpus:
+    def test_assigns_days_ago_spread(self):
+        raw = [RawMemoryEntry(key=f"k{i}", value=f"v{i}") for i in range(5)]
+        corpus = _raw_to_corpus(raw, ["tag"], "roleplay", "paperino")
+        assert len(corpus) == 5
+        assert corpus[0].days_ago == 0
+        assert corpus[-1].days_ago == 60
+        for entry in corpus:
+            assert entry.tags == ["tag"]
+            assert entry.archetype == "roleplay"
+            assert entry.character == "paperino"
 
-    def test_handles_missing_timestamp(self):
-        text = '{"key": "test", "value": "hello"}\n'
-        entries = _parse_llm_entries(text, ["tag"], "casual", "anonymous")
-        assert len(entries) == 1
-        assert entries[0].timestamp == "2026-03-01T00:00:00Z"
+    def test_single_entry_gets_zero(self):
+        raw = [RawMemoryEntry(key="k", value="v")]
+        corpus = _raw_to_corpus(raw, ["tag"], "casual", "anonymous")
+        assert len(corpus) == 1
+        assert corpus[0].days_ago == 0
+
+    def test_empty_input(self):
+        corpus = _raw_to_corpus([], ["tag"], "casual", "anonymous")
+        assert corpus == []
 
 
 class TestWriteCorpus:
@@ -69,7 +75,7 @@ class TestWriteCorpus:
             MemoryCorpusEntry(
                 key="k1",
                 value="v1",
-                timestamp="t1",
+                days_ago=3,
                 tags=["a"],
                 archetype="roleplay",
                 character="paperino",
@@ -77,7 +83,7 @@ class TestWriteCorpus:
             MemoryCorpusEntry(
                 key="k2",
                 value="v2",
-                timestamp="t2",
+                days_ago=10,
                 tags=["b"],
                 archetype="casual",
                 character="anonymous",

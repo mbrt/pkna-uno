@@ -33,7 +33,7 @@ class TestMakeEvalTools:
         assert names == {"search_knowledge", "read_knowledge"}
 
     def test_all_tools(self):
-        bank = MemoryBank([MemoryEntry(key="k", value="v", timestamp="t")])
+        bank = MemoryBank([MemoryEntry(key="k", value="v", days_ago=0)])
         tools = make_eval_tools(list(TOOL_NAMES), memory_bank=bank)
         assert len(tools) == len(TOOL_NAMES)
 
@@ -43,7 +43,7 @@ class TestMakeEvalTools:
 
     def test_recall_tool_searches_bank(self):
         bank = MemoryBank(
-            [MemoryEntry(key="mission", value="PK was tired", timestamp="t1")]
+            [MemoryEntry(key="mission", value="PK was tired", days_ago=1)]
         )
         tools = make_eval_tools(["recall"], memory_bank=bank)
         recall = tools[0]

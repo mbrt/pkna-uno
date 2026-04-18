@@ -9,25 +9,25 @@ class TestMemoryBankBM25:
         bank = MemoryBank(
             [
                 MemoryEntry(
-                    key="weather report", value="sunny day in Duckburg", timestamp="t1"
+                    key="weather report", value="sunny day in Duckburg", days_ago=1
                 ),
                 MemoryEntry(
                     key="PK mission debrief",
                     value="Evronian patrol detected near tower",
-                    timestamp="t2",
+                    days_ago=2,
                 ),
                 MemoryEntry(
-                    key="routine check", value="all systems nominal", timestamp="t3"
+                    key="routine check", value="all systems nominal", days_ago=3
                 ),
                 MemoryEntry(
                     key="Evronian fleet analysis",
                     value="Evronian ships spotted in sector 7",
-                    timestamp="t4",
+                    days_ago=4,
                 ),
                 MemoryEntry(
                     key="soap opera",
                     value="Episode 42 was entertaining",
-                    timestamp="t5",
+                    days_ago=5,
                 ),
             ]
         )
@@ -40,13 +40,13 @@ class TestMemoryBankBM25:
     def test_multi_keyword_ranking(self):
         bank = MemoryBank(
             [
-                MemoryEntry(key="mission", value="routine patrol", timestamp="t1"),
+                MemoryEntry(key="mission", value="routine patrol", days_ago=1),
                 MemoryEntry(
                     key="mission debrief",
                     value="Evronian mission complete",
-                    timestamp="t2",
+                    days_ago=2,
                 ),
-                MemoryEntry(key="weather", value="rain all day", timestamp="t3"),
+                MemoryEntry(key="weather", value="rain all day", days_ago=3),
             ]
         )
         results = bank.search("mission Evronian")

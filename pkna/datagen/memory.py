@@ -11,7 +11,7 @@ import random
 from pathlib import Path
 
 from pkna.datagen.types import MemoryCorpusEntry, MemoryProfile
-from pkna.inference.memory import MemoryBank, MemoryEntry
+from pkna.inference.memory import MemoryBank, MemoryEntry, relative_time
 
 MAX_CONTEXT_ENTRIES = 5
 
@@ -38,18 +38,18 @@ def _is_relevant(entry: MemoryCorpusEntry, profile: MemoryProfile) -> bool:
 
 
 def _corpus_entry_to_memory(entry: MemoryCorpusEntry) -> MemoryEntry:
-    return MemoryEntry(key=entry.key, value=entry.value, timestamp=entry.timestamp)
+    return MemoryEntry(key=entry.key, value=entry.value, days_ago=entry.days_ago)
 
 
 def _render_context(entries: list[MemoryCorpusEntry]) -> str:
     """Render the most recent entries as a prose memory_context preamble."""
     if not entries:
         return ""
-    sorted_entries = sorted(entries, key=lambda e: e.timestamp, reverse=True)
+    sorted_entries = sorted(entries, key=lambda e: e.days_ago)
     recent = sorted_entries[:MAX_CONTEXT_ENTRIES]
     lines = ["Recent interactions:"]
     for entry in recent:
-        lines.append(f"- [{entry.timestamp}] {entry.key}: {entry.value}")
+        lines.append(f"- [{relative_time(entry.days_ago)}] {entry.key}: {entry.value}")
     return "\n".join(lines)
 
 

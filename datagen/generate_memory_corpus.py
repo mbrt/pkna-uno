@@ -7,7 +7,7 @@ Produces ``output/datagen/memory_corpus.jsonl`` by:
 2. LLM-generating roleplay memories for all major characters
 3. LLM-generating casual-user memories
 
-Each entry is a ``MemoryCorpusEntry`` (key, value, timestamp, tags,
+Each entry is a ``MemoryCorpusEntry`` (key, value, days_ago, tags,
 archetype, character).
 
 Usage:
@@ -17,9 +17,10 @@ Usage:
 """
 
 import argparse
-import json
+import logging
 from pathlib import Path
 
+from pydantic import BaseModel, TypeAdapter
 from rich.progress import Progress
 
 from pkna.datagen.types import MemoryCorpusEntry
@@ -28,6 +29,23 @@ from pkna.llm.backends import LLMBackend, create_backend
 from pkna.logging import setup_logging
 
 console, log = setup_logging()
+
+MAX_SPREAD_DAYS = 60
+
+
+# ---------------------------------------------------------------------------
+# Structured output model -- only what the LLM generates
+# ---------------------------------------------------------------------------
+
+
+class RawMemoryEntry(BaseModel):
+    """LLM-generated memory: just key and value."""
+
+    key: str
+    value: str
+
+
+_RAW_LIST_ADAPTER: TypeAdapter[list[RawMemoryEntry]] = TypeAdapter(list[RawMemoryEntry])
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +89,7 @@ def ingest_seed_banks(banks_dir: Path) -> list[MemoryCorpusEntry]:
                 MemoryCorpusEntry(
                     key=mem.key,
                     value=mem.value,
-                    timestamp=mem.timestamp,
+                    days_ago=mem.days_ago,
                     tags=list(meta.tags),
                     archetype=meta.archetype,
                     character=meta.character,
@@ -102,13 +120,9 @@ the user who is pretending to be {character}.
 - Include a mix of significant conversations and mundane chit-chat.
 - Reference specific PKNA characters and locations where appropriate.
 
-Each entry should be a JSON object on its own line with these fields:
+For each entry provide:
 - "key": a short label/topic (5-10 words)
-- "value": detailed content of the memory (1-3 sentences)
-- "timestamp": ISO 8601 timestamp, spread over the last 2 months, \
-most recent first
-
-Output ONLY the JSON lines, no other text."""
+- "value": detailed content of the memory (1-3 sentences)"""
 
 CASUAL_GENERATION_PROMPT = """\
 You are generating synthetic memory entries for an AI character named Uno \
@@ -126,13 +140,9 @@ pretending to be PKNA characters.
 - Include a mix of interaction types: lore questions, identity probing, \
 casual chat, delegation requests, returning users.
 
-Each entry should be a JSON object on its own line with these fields:
+For each entry provide:
 - "key": a short label/topic (5-10 words)
-- "value": detailed content of the memory (1-3 sentences)
-- "timestamp": ISO 8601 timestamp, spread over the last 2 months, \
-most recent first
-
-Output ONLY the JSON lines, no other text."""
+- "value": detailed content of the memory (1-3 sentences)"""
 
 
 ROLEPLAY_SCENARIOS: list[tuple[str, str, list[str], int]] = [
@@ -222,33 +232,43 @@ CASUAL_SCENARIOS: list[tuple[str, list[str], int]] = [
 ]
 
 
-def _parse_llm_entries(
-    text: str,
+def _raw_to_corpus(
+    raw_entries: list[RawMemoryEntry],
     tags: list[str],
     archetype: str,
     character: str,
 ) -> list[MemoryCorpusEntry]:
-    """Parse JSONL lines from LLM output into corpus entries."""
-    entries: list[MemoryCorpusEntry] = []
-    for line in text.strip().split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            data = json.loads(line)
-            entries.append(
-                MemoryCorpusEntry(
-                    key=data["key"],
-                    value=data["value"],
-                    timestamp=data.get("timestamp", "2026-03-01T00:00:00Z"),
-                    tags=tags,
-                    archetype=archetype,
-                    character=character,
-                )
-            )
-        except (json.JSONDecodeError, KeyError) as e:
-            log.warning(f"Skipping malformed line: {e}")
-    return entries
+    """Convert raw LLM output to corpus entries with programmatic days_ago."""
+    count = len(raw_entries)
+    return [
+        MemoryCorpusEntry(
+            key=raw.key,
+            value=raw.value,
+            days_ago=i * MAX_SPREAD_DAYS // max(count - 1, 1),
+            tags=tags,
+            archetype=archetype,
+            character=character,
+        )
+        for i, raw in enumerate(raw_entries)
+    ]
+
+
+def _parse_structured(text: str) -> list[RawMemoryEntry]:
+    """Parse structured JSON output from the LLM."""
+    try:
+        return _RAW_LIST_ADAPTER.validate_json(text)
+    except Exception:
+        log.warning("Failed to parse structured output, attempting line-by-line")
+        entries: list[RawMemoryEntry] = []
+        for line in text.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(RawMemoryEntry.model_validate_json(line))
+            except Exception as e:
+                logging.debug(f"Skipping malformed line: {e}")
+        return entries
 
 
 def generate_roleplay_entries(backend: LLMBackend) -> list[MemoryCorpusEntry]:
@@ -263,16 +283,16 @@ def generate_roleplay_entries(backend: LLMBackend) -> list[MemoryCorpusEntry]:
                 count=count, character=character, description=description
             )
             result = backend.generate(
-                system="You output only valid JSONL. Each line is a JSON object.",
+                system="Generate memory entries as requested.",
                 messages=[{"role": "user", "content": prompt}],
+                response_schema=RawMemoryEntry,
             )
             if result is None:
                 log.error(f"Failed to generate {character} memories")
                 progress.advance(task)
                 continue
-            parsed = _parse_llm_entries(
-                result.text, tags, "roleplay", character.lower()
-            )
+            raw = _parse_structured(result.text)
+            parsed = _raw_to_corpus(raw, tags, "roleplay", character.lower())
             entries.extend(parsed)
             log.info(f"Generated {len(parsed)} entries for {character}")
             progress.advance(task)
@@ -291,14 +311,16 @@ def generate_casual_entries(backend: LLMBackend) -> list[MemoryCorpusEntry]:
                 count=count, description=description
             )
             result = backend.generate(
-                system="You output only valid JSONL. Each line is a JSON object.",
+                system="Generate memory entries as requested.",
                 messages=[{"role": "user", "content": prompt}],
+                response_schema=RawMemoryEntry,
             )
             if result is None:
                 log.error(f"Failed to generate casual memories: {tags}")
                 progress.advance(task)
                 continue
-            parsed = _parse_llm_entries(result.text, tags, "casual", "anonymous")
+            raw = _parse_structured(result.text)
+            parsed = _raw_to_corpus(raw, tags, "casual", "anonymous")
             entries.extend(parsed)
             log.info(f"Generated {len(parsed)} casual entries ({tags})")
             progress.advance(task)

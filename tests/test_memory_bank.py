@@ -9,8 +9,8 @@ class TestMemoryBank:
     def test_load_from_file(self, tmp_path: Path):
         path = tmp_path / "bank.jsonl"
         path.write_text(
-            '{"key": "greeting", "value": "Said hello to PK", "timestamp": "2026-04-01T10:00:00Z"}\n'
-            '{"key": "mission", "value": "Evronian patrol detected", "timestamp": "2026-04-02T12:00:00Z"}\n'
+            '{"key": "greeting", "value": "Said hello to PK", "days_ago": 0}\n'
+            '{"key": "mission", "value": "Evronian patrol detected", "days_ago": 2}\n'
         )
         bank = MemoryBank.load(path)
         assert len(bank.entries) == 2
@@ -20,9 +20,9 @@ class TestMemoryBank:
     def test_load_skips_blank_lines(self, tmp_path: Path):
         path = tmp_path / "bank.jsonl"
         path.write_text(
-            '{"key": "a", "value": "b", "timestamp": "2026-01-01T00:00:00Z"}\n'
+            '{"key": "a", "value": "b", "days_ago": 0}\n'
             "\n"
-            '{"key": "c", "value": "d", "timestamp": "2026-01-02T00:00:00Z"}\n'
+            '{"key": "c", "value": "d", "days_ago": 5}\n'
         )
         bank = MemoryBank.load(path)
         assert len(bank.entries) == 2
@@ -30,8 +30,8 @@ class TestMemoryBank:
     def test_search_by_key(self):
         bank = MemoryBank(
             [
-                MemoryEntry(key="PK mission", value="routine patrol", timestamp="t1"),
-                MemoryEntry(key="weather", value="sunny day", timestamp="t2"),
+                MemoryEntry(key="PK mission", value="routine patrol", days_ago=1),
+                MemoryEntry(key="weather", value="sunny day", days_ago=2),
             ]
         )
         results = bank.search("mission")
@@ -41,8 +41,8 @@ class TestMemoryBank:
     def test_search_by_value(self):
         bank = MemoryBank(
             [
-                MemoryEntry(key="note", value="Evronian fleet spotted", timestamp="t1"),
-                MemoryEntry(key="note", value="sunny day in Duckburg", timestamp="t2"),
+                MemoryEntry(key="note", value="Evronian fleet spotted", days_ago=1),
+                MemoryEntry(key="note", value="sunny day in Duckburg", days_ago=2),
             ]
         )
         results = bank.search("Evronian")
@@ -51,7 +51,7 @@ class TestMemoryBank:
 
     def test_search_respects_max_results(self):
         entries = [
-            MemoryEntry(key=f"note {i}", value="Uno test", timestamp=f"t{i}")
+            MemoryEntry(key=f"note {i}", value="Uno test", days_ago=i)
             for i in range(10)
         ]
         bank = MemoryBank(entries)
@@ -59,7 +59,7 @@ class TestMemoryBank:
         assert len(results) == 3
 
     def test_search_no_matches(self):
-        bank = MemoryBank([MemoryEntry(key="a", value="b", timestamp="t1")])
+        bank = MemoryBank([MemoryEntry(key="a", value="b", days_ago=0)])
         results = bank.search("nonexistent")
         assert results == []
 
@@ -68,7 +68,7 @@ class TestMemoryBank:
         entry = bank.append("test key", "test value")
         assert entry.key == "test key"
         assert entry.value == "test value"
-        assert entry.timestamp  # non-empty
+        assert entry.days_ago == 0
         assert len(bank.entries) == 1
 
     def test_save_and_load_roundtrip(self, tmp_path: Path):
@@ -85,7 +85,7 @@ class TestMemoryBank:
         assert loaded.entries[1].value == "v2"
 
     def test_entries_returns_copy(self):
-        bank = MemoryBank([MemoryEntry(key="a", value="b", timestamp="t")])
+        bank = MemoryBank([MemoryEntry(key="a", value="b", days_ago=0)])
         entries = bank.entries
         entries.clear()
         assert len(bank.entries) == 1
@@ -98,7 +98,7 @@ class TestRecallTool:
                 MemoryEntry(
                     key="PK debrief",
                     value="He was tired",
-                    timestamp="2026-04-01T10:00:00Z",
+                    days_ago=3,
                 ),
             ]
         )
@@ -106,7 +106,7 @@ class TestRecallTool:
         result = recall("debrief")
         assert "PK debrief" in result
         assert "He was tired" in result
-        assert "2026-04-01" in result
+        assert "3 days ago" in result
 
     def test_recall_no_matches(self):
         bank = MemoryBank()
@@ -161,7 +161,7 @@ class TestHandWrittenBanks:
         for entry in bank.entries:
             assert entry.key
             assert entry.value
-            assert entry.timestamp
+            assert entry.days_ago >= 0
 
     def test_xadhoom_research_loads(self):
         bank = MemoryBank.load(self.BANKS_DIR / "xadhoom_research.jsonl")

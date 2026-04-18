@@ -1,8 +1,8 @@
 """Raw memory bank storage and retrieval.
 
-Provides a simple key-value-timestamp memory store backed by JSONL files.
-Used by the eval harness and dataset generation agent to support the
-``recall`` and ``remember`` tools.
+Provides a simple key-value memory store with relative timestamps, backed
+by JSONL files.  Used by the eval harness and dataset generation agent to
+support the ``recall`` and ``remember`` tools.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -23,7 +22,7 @@ class MemoryEntry:
 
     key: str
     value: str
-    timestamp: str
+    days_ago: int = 0
 
 
 class MemoryBank:
@@ -62,7 +61,7 @@ class MemoryBank:
                     MemoryEntry(
                         key=data["key"],
                         value=data["value"],
-                        timestamp=data["timestamp"],
+                        days_ago=data.get("days_ago", 0),
                     )
                 )
         return MemoryBank(entries)
@@ -88,12 +87,8 @@ class MemoryBank:
         return results
 
     def append(self, key: str, value: str) -> MemoryEntry:
-        """Append a new entry with the current timestamp."""
-        entry = MemoryEntry(
-            key=key,
-            value=value,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-        )
+        """Append a new entry (days_ago=0 means 'just now')."""
+        entry = MemoryEntry(key=key, value=value, days_ago=0)
         self._entries.append(entry)
         return entry
 
@@ -105,9 +100,28 @@ class MemoryBank:
                 data = {
                     "key": entry.key,
                     "value": entry.value,
-                    "timestamp": entry.timestamp,
+                    "days_ago": entry.days_ago,
                 }
                 f.write(json.dumps(data, ensure_ascii=False) + "\n")
+
+
+def relative_time(days_ago: int) -> str:
+    """Render a days_ago value as human-friendly relative text."""
+    if days_ago <= 0:
+        return "today"
+    if days_ago == 1:
+        return "yesterday"
+    if days_ago < 7:
+        return f"{days_ago} days ago"
+    weeks = days_ago // 7
+    if weeks == 1:
+        return "1 week ago"
+    if days_ago < 30:
+        return f"{weeks} weeks ago"
+    months = days_ago // 30
+    if months == 1:
+        return "1 month ago"
+    return f"{months} months ago"
 
 
 def _format_results(entries: list[MemoryEntry]) -> str:
@@ -116,7 +130,7 @@ def _format_results(entries: list[MemoryEntry]) -> str:
         return "No matching memories found."
     lines: list[str] = []
     for entry in entries:
-        lines.append(f"[{entry.timestamp}] {entry.key}: {entry.value}")
+        lines.append(f"[{relative_time(entry.days_ago)}] {entry.key}: {entry.value}")
     return "\n".join(lines)
 
 
