@@ -279,7 +279,6 @@ def _emotional_prompts() -> list[DatagenPrompt]:
                 id=f"manual-emotional-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context="",
                 memory_profile=profile,
                 tools=tools,
                 metadata={
@@ -343,7 +342,6 @@ def _factual_prompts() -> list[DatagenPrompt]:
                 id=f"manual-factual-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context="",
                 memory_profile=MEMORY_PROFILE_EMPTY,
                 tools=TOOLS_KNOWLEDGE,
                 metadata={
@@ -413,7 +411,6 @@ def _delegation_prompts() -> list[DatagenPrompt]:
                 id=f"manual-delegate-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context="",
                 memory_profile=MEMORY_PROFILE_EMPTY,
                 tools=TOOLS_FULL,
                 metadata={
@@ -501,7 +498,6 @@ def _identity_prompts() -> list[DatagenPrompt]:
                 id=f"manual-identity-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context="",
                 memory_profile=profile,
                 tools=TOOLS_NONE,
                 metadata={
@@ -573,7 +569,6 @@ def _adversarial_prompts() -> list[DatagenPrompt]:
                 id=f"manual-adversarial-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context="",
                 memory_profile=MEMORY_PROFILE_EMPTY,
                 tools=TOOLS_NONE,
                 metadata={
@@ -650,7 +645,6 @@ def _register_shift_prompts() -> list[DatagenPrompt]:
                 id=f"manual-register-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context="",
                 memory_profile=profile,
                 tools=TOOLS_KNOWLEDGE,
                 metadata={
@@ -737,7 +731,6 @@ def _memory_prompts() -> list[DatagenPrompt]:
                 id=f"manual-memory-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context="",
                 memory_profile=profile,
                 tools=tools,
                 metadata={
@@ -829,7 +822,6 @@ def _multi_turn_prompts() -> list[DatagenPrompt]:
                 id=f"manual-multiturn-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context="",
                 memory_profile=profile,
                 tools=tools,
                 metadata={
@@ -894,7 +886,6 @@ def _casual_prompts() -> list[DatagenPrompt]:
                 id=f"manual-casual-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context="",
                 memory_profile=MEMORY_PROFILE_EMPTY,
                 tools=TOOLS_NONE,
                 metadata={
@@ -993,7 +984,6 @@ def _casual_user_prompts() -> list[DatagenPrompt]:
                 id=f"manual-casual-user-{i + 1:03d}",
                 messages=[{"role": "user", "content": msg}],
                 user_summary=user,
-                memory_context="",
                 memory_profile=profile,
                 tools=tools,
                 metadata={
@@ -1081,7 +1071,6 @@ def _scene_to_prompts(scene: Scene) -> list[DatagenPrompt]:
             id=f"scene-{scene.scene_id}",
             messages=[{"role": "user", "content": line}],
             user_summary=user_summary,
-            memory_context="",
             memory_profile=MEMORY_PROFILE_EMPTY,
             tools=TOOLS_KNOWLEDGE,
             metadata={
@@ -1496,7 +1485,6 @@ def generate_llm_prompts(
                     id=prompt_id,
                     messages=[{"role": "user", "content": message}],
                     user_summary=user_summary,
-                    memory_context="",
                     memory_profile=memory_profile,
                     tools=tools,
                     metadata=metadata,

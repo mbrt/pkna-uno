@@ -41,8 +41,6 @@ class DatagenPrompt(BaseModel):
     id: str
     messages: list[dict[str, str]]
     user_summary: str
-    memory_context: str  # kept for backward compat
-    memory_bank_id: str = ""  # kept for backward compat
     memory_profile: MemoryProfile | None = None
     tools: list[str]
     metadata: dict[str, Any]

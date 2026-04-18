@@ -208,7 +208,6 @@ def run_stage_datagen(output_dir: Path) -> Path:
 
     prompts_path = output_dir / "prompts.jsonl"
     traces_path = output_dir / "traces.jsonl"
-    memory_banks_dir = Path("data/memory_banks")
 
     from datagen.generate_prompts import load_prompts
 
@@ -218,7 +217,6 @@ def run_stage_datagen(output_dir: Path) -> Path:
     written = run_datagen(
         prompts_path=prompts_path,
         output_path=traces_path,
-        memory_banks_dir=memory_banks_dir,
         backend=backend,
     )
     log.info("Generated %d traces -> %s", written, traces_path)
@@ -315,14 +313,12 @@ def run_stage_eval_infer(output_dir: Path) -> Path:
         log.info("Eval prompts: %s -> %d", suite, len(prompts))
 
     backend = _make_eval_backend(len(all_prompts) * 2)
-    memory_banks_dir = Path("data/memory_banks")
 
     written = run_eval(
         prompts=all_prompts,
         backend=backend,
         model_name="fake",
         output_dir=traces_dir,
-        memory_banks_dir=memory_banks_dir,
     )
     log.info("Eval inference: %d traces -> %s", written, traces_dir)
     return traces_dir

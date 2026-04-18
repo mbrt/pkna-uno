@@ -14,8 +14,6 @@ class TestDatagenPrompt:
             id="p-001",
             messages=[{"role": "user", "content": "Ciao, Uno!"}],
             user_summary="Paperino, anxious",
-            memory_context="Yesterday PK was exhausted.",
-            memory_bank_id="paperino_recent",
             tools=["search_knowledge", "read_knowledge"],
             metadata={"prompt_source": "manual", "language": "italian"},
         )
@@ -27,11 +25,10 @@ class TestDatagenPrompt:
             id="p-002",
             messages=[{"role": "user", "content": "Hello"}],
             user_summary="",
-            memory_context="",
             tools=[],
             metadata={},
         )
-        assert prompt.memory_bank_id == ""
+        assert prompt.memory_profile is None
 
 
 class TestDatagenTrace:

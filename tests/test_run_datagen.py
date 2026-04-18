@@ -7,7 +7,6 @@ from datagen.run_datagen import (
     _get_directive,
     _visible_messages,
     load_completed_ids,
-    load_memory_bank,
     run_datagen,
     run_multi_turn,
     run_single_prompt,
@@ -44,21 +43,6 @@ class TestLoadCompletedIds:
         path.write_text('{"id": "ok"}\nnot json\n')
         ids = load_completed_ids(path)
         assert "ok" in ids
-
-
-class TestLoadMemoryBank:
-    def test_loads_existing(self, tmp_path: Path):
-        path = tmp_path / "test_bank.jsonl"
-        path.write_text('{"key": "k", "value": "v", "days_ago": 0}\n')
-        bank = load_memory_bank("test_bank", tmp_path)
-        assert bank is not None
-        assert len(bank.entries) == 1
-
-    def test_empty_id(self, tmp_path: Path):
-        assert load_memory_bank("", tmp_path) is None
-
-    def test_missing_file(self, tmp_path: Path):
-        assert load_memory_bank("nonexistent", tmp_path) is None
 
 
 class TestVisibleMessages:
@@ -346,8 +330,6 @@ class TestRunDatagen:
     def test_generates_traces(self, tmp_path: Path):
         prompts_path = tmp_path / "prompts.jsonl"
         output_path = tmp_path / "traces.jsonl"
-        banks_dir = tmp_path / "banks"
-        banks_dir.mkdir()
 
         self._write_prompts(
             prompts_path,
@@ -356,7 +338,6 @@ class TestRunDatagen:
                     id="p-001",
                     messages=[{"role": "user", "content": "Hello"}],
                     user_summary="Test",
-                    memory_context="",
                     tools=[],
                     metadata={"prompt_source": "test"},
                 ),
@@ -364,7 +345,6 @@ class TestRunDatagen:
                     id="p-002",
                     messages=[{"role": "user", "content": "Ciao"}],
                     user_summary="Test",
-                    memory_context="",
                     tools=[],
                     metadata={"prompt_source": "test"},
                 ),
@@ -379,7 +359,7 @@ class TestRunDatagen:
             )
         )
 
-        written = run_datagen(prompts_path, output_path, banks_dir, backend)
+        written = run_datagen(prompts_path, output_path, backend)
         assert written == 2
 
         lines = output_path.read_text().strip().split("\n")
@@ -390,8 +370,6 @@ class TestRunDatagen:
     def test_resumes_from_existing(self, tmp_path: Path):
         prompts_path = tmp_path / "prompts.jsonl"
         output_path = tmp_path / "traces.jsonl"
-        banks_dir = tmp_path / "banks"
-        banks_dir.mkdir()
 
         self._write_prompts(
             prompts_path,
@@ -400,7 +378,6 @@ class TestRunDatagen:
                     id="p-001",
                     messages=[{"role": "user", "content": "Hello"}],
                     user_summary="",
-                    memory_context="",
                     tools=[],
                     metadata={},
                 ),
@@ -408,7 +385,6 @@ class TestRunDatagen:
                     id="p-002",
                     messages=[{"role": "user", "content": "Ciao"}],
                     user_summary="",
-                    memory_context="",
                     tools=[],
                     metadata={},
                 ),
@@ -432,7 +408,7 @@ class TestRunDatagen:
             )
         )
 
-        written = run_datagen(prompts_path, output_path, banks_dir, backend)
+        written = run_datagen(prompts_path, output_path, backend)
         assert written == 1
 
         lines = output_path.read_text().strip().split("\n")
@@ -441,8 +417,6 @@ class TestRunDatagen:
     def test_skips_failed_inference(self, tmp_path: Path):
         prompts_path = tmp_path / "prompts.jsonl"
         output_path = tmp_path / "traces.jsonl"
-        banks_dir = tmp_path / "banks"
-        banks_dir.mkdir()
 
         self._write_prompts(
             prompts_path,
@@ -451,7 +425,6 @@ class TestRunDatagen:
                     id="p-001",
                     messages=[{"role": "user", "content": "Hello"}],
                     user_summary="",
-                    memory_context="",
                     tools=[],
                     metadata={},
                 ),
@@ -459,5 +432,5 @@ class TestRunDatagen:
         )
 
         backend = FakeBackend(None)
-        written = run_datagen(prompts_path, output_path, banks_dir, backend)
+        written = run_datagen(prompts_path, output_path, backend)
         assert written == 0

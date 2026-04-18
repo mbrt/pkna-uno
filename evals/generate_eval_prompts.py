@@ -125,13 +125,13 @@ TOOLS_KNOWLEDGE = ["search_knowledge", "read_knowledge", "recall", "remember"]
 TOOLS_FULL = ["search_knowledge", "read_knowledge", "delegate", "recall", "remember"]
 
 # ============================================================================
-# Memory Bank IDs (reference files in data/memory_banks/)
+# Memory Bank Paths (files in data/memory_banks/)
 # ============================================================================
 
 BANK_NONE = ""
-BANK_PAPERINO = "paperino_recent"
-BANK_XADHOOM = "xadhoom_research"
-BANK_IRRELEVANT = "mixed_irrelevant"
+BANK_PAPERINO = "data/memory_banks/paperino_recent.jsonl"
+BANK_XADHOOM = "data/memory_banks/xadhoom_research.jsonl"
+BANK_IRRELEVANT = "data/memory_banks/mixed_irrelevant.jsonl"
 
 
 # ============================================================================
@@ -213,7 +213,7 @@ def _social_reasoning_prompts() -> list[EvalPrompt]:
                 messages=[{"role": "user", "content": message}],
                 user_summary=user_summary,
                 memory_context=memory,
-                memory_bank_id=bank_id,
+                memory_bank_path=bank_id,
                 tools=TOOLS_KNOWLEDGE,
                 metadata={"prompt_source": "template"},
             )
@@ -317,7 +317,7 @@ def _memory_handling_prompts() -> list[EvalPrompt]:
                     messages=[{"role": "user", "content": message}],
                     user_summary=user,
                     memory_context=memory,
-                    memory_bank_id=bank_id,
+                    memory_bank_path=bank_id,
                     tools=TOOLS_KNOWLEDGE,
                     metadata={
                         "prompt_source": "template",
@@ -444,7 +444,7 @@ def _stability_prompts() -> list[EvalPrompt]:
                 messages=[{"role": "user", "content": message}],
                 user_summary=user,
                 memory_context=memory,
-                memory_bank_id=bank_id,
+                memory_bank_path=bank_id,
                 tools=TOOLS_FULL,
                 metadata={
                     "prompt_source": "template",

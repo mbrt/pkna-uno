@@ -30,7 +30,6 @@ from datagen.generate_prompts import load_prompts
 from datagen.user_simulator import simulate_user_turn
 from pkna.datagen.memory import compose_memory, load_memory_corpus
 from pkna.datagen.types import DatagenTrace, MemoryCorpusEntry
-from pkna.inference.memory import MemoryBank
 from pkna.inference.system_prompts import (
     DATAGEN_TEMPLATE,
     prepend_context_to_messages,
@@ -64,17 +63,6 @@ def load_completed_ids(output_path: Path) -> set[str]:
             except (json.JSONDecodeError, KeyError):
                 continue
     return completed
-
-
-def load_memory_bank(memory_bank_id: str, memory_banks_dir: Path) -> MemoryBank | None:
-    """Load a memory bank by ID, or return None if empty/missing."""
-    if not memory_bank_id:
-        return None
-    path = memory_banks_dir / f"{memory_bank_id}.jsonl"
-    if not path.exists():
-        log.warning(f"Memory bank not found: {path}")
-        return None
-    return MemoryBank.load(path)
 
 
 def _visible_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -288,7 +276,6 @@ def load_system_prompt(output_dir: Path, profile_path: Path | None = None) -> st
 def run_datagen(
     prompts_path: Path,
     output_path: Path,
-    memory_banks_dir: Path,
     backend: LLMBackend,
     character_profile: str = "",
     simulator_backend: LLMBackend | None = None,
@@ -323,7 +310,7 @@ def run_datagen(
 
     # Group identical system prompts together so Gemini's implicit caching
     # can reuse the cached prefix across consecutive requests.
-    pending.sort(key=lambda p: (p.user_summary, p.memory_context))
+    pending.sort(key=lambda p: p.user_summary)
 
     skipped = len(prompts) - len(pending)
     if skipped > 0:
@@ -344,15 +331,13 @@ def run_datagen(
         task = progress.add_task("Generating traces", total=len(pending))
 
         for prompt in pending:
-            # Compose memory: prefer dynamic composition from corpus,
-            # fall back to static bank for backward compatibility.
             if prompt.memory_profile is not None and corpus:
                 memory_context, bank = compose_memory(
                     prompt.memory_profile, corpus, rng
                 )
             else:
-                memory_context = prompt.memory_context
-                bank = load_memory_bank(prompt.memory_bank_id, memory_banks_dir)
+                memory_context = ""
+                bank = None
 
             messages = prepend_context_to_messages(
                 prompt.messages, prompt.user_summary, memory_context
@@ -428,12 +413,6 @@ def main() -> None:
         help=f"Character profile markdown file (default: {DEFAULT_PROFILE})",
     )
     parser.add_argument(
-        "--memory-banks-dir",
-        type=Path,
-        default=Path("data/memory_banks"),
-        help="Directory containing memory bank JSONL files",
-    )
-    parser.add_argument(
         "--corpus",
         type=Path,
         default=Path("output/datagen/memory_corpus.jsonl"),
@@ -474,14 +453,13 @@ def main() -> None:
         corpus = load_memory_corpus(corpus_path)
         log.info(f"Loaded {len(corpus)} corpus entries from {corpus_path}")
     else:
-        log.info(f"No corpus file at {corpus_path}, using static memory banks")
+        log.info(f"No corpus file at {corpus_path}, running without memory")
 
     backend = create_backend(args.backend, args.model)
 
     written = run_datagen(
         prompts_path=args.prompts,
         output_path=args.output,
-        memory_banks_dir=args.memory_banks_dir,
         backend=backend,
         character_profile=character_profile,
         corpus=corpus if corpus else None,

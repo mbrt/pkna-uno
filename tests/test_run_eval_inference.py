@@ -24,7 +24,7 @@ def _make_prompt(
     messages: list[dict[str, str]] | None = None,
     user_summary: str = "",
     memory_context: str = "",
-    memory_bank_id: str = "",
+    memory_bank_path: str = "",
     tools: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> EvalPrompt:
@@ -34,7 +34,7 @@ def _make_prompt(
         messages=messages or [{"role": "user", "content": "Hello"}],
         user_summary=user_summary,
         memory_context=memory_context,
-        memory_bank_id=memory_bank_id,
+        memory_bank_path=memory_bank_path,
         tools=tools or [],
         metadata=metadata or {},
     )
@@ -103,17 +103,17 @@ class TestLoadCompletedIds:
 class TestLoadMemoryBank:
     def test_loads_existing_bank(self, tmp_path: Path):
         path = tmp_path / "test_bank.jsonl"
-        path.write_text('{"key": "k", "value": "v", "timestamp": "t"}\n')
-        bank = load_memory_bank("test_bank", tmp_path)
+        path.write_text('{"key": "k", "value": "v", "days_ago": 0}\n')
+        bank = load_memory_bank(str(path))
         assert bank is not None
         assert len(bank.entries) == 1
 
-    def test_empty_id_returns_none(self, tmp_path: Path):
-        bank = load_memory_bank("", tmp_path)
+    def test_empty_path_returns_none(self):
+        bank = load_memory_bank("")
         assert bank is None
 
-    def test_missing_file_returns_none(self, tmp_path: Path):
-        bank = load_memory_bank("nonexistent", tmp_path)
+    def test_missing_file_returns_none(self):
+        bank = load_memory_bank("nonexistent/path.jsonl")
         assert bank is None
 
 
@@ -156,7 +156,7 @@ class TestComposeContext:
 
 
 class TestRunSinglePrompt:
-    def test_propagates_thinking_and_tool_calls(self, tmp_path: Path):
+    def test_propagates_thinking_and_tool_calls(self):
         tc = [{"name": "search_knowledge", "arguments": {"query": "x"}, "result": "y"}]
         msgs = [
             {
@@ -180,7 +180,7 @@ class TestRunSinglePrompt:
             )
         )
         prompt = _make_prompt(id="tc-001", suite="tool_use")
-        trace = run_single_prompt(prompt, backend, "test-model", tmp_path)
+        trace = run_single_prompt(prompt, backend, "test-model")
 
         assert trace is not None
         assert trace.thinking == "need to look up"
@@ -193,7 +193,7 @@ class TestRunSinglePrompt:
             "content": "Here is the answer.",
         }
 
-    def test_plain_response_without_tools(self, tmp_path: Path):
+    def test_plain_response_without_tools(self):
         backend = FakeBackend(
             GenerateResult(
                 text="Ciao!",
@@ -209,7 +209,7 @@ class TestRunSinglePrompt:
             )
         )
         prompt = _make_prompt(id="plain-001", suite="personality")
-        trace = run_single_prompt(prompt, backend, "test-model", tmp_path)
+        trace = run_single_prompt(prompt, backend, "test-model")
 
         assert trace is not None
         assert trace.thinking == "social greeting"
@@ -217,22 +217,22 @@ class TestRunSinglePrompt:
         assert len(trace.messages) == 2
         assert trace.messages[1]["content"] == "Ciao!"
 
-    def test_fallback_when_messages_empty(self, tmp_path: Path):
+    def test_fallback_when_messages_empty(self):
         backend = FakeBackend(
             GenerateResult(text="fallback text", model_name="test-model")
         )
         prompt = _make_prompt(id="fb-001")
-        trace = run_single_prompt(prompt, backend, "test-model", tmp_path)
+        trace = run_single_prompt(prompt, backend, "test-model")
 
         assert trace is not None
         assert trace.messages[-1] == {"role": "assistant", "content": "fallback text"}
         assert trace.thinking is None
         assert trace.tool_calls == []
 
-    def test_returns_none_on_backend_failure(self, tmp_path: Path):
+    def test_returns_none_on_backend_failure(self):
         backend = FakeBackend(None)
         prompt = _make_prompt(id="fail-001")
-        trace = run_single_prompt(prompt, backend, "test-model", tmp_path)
+        trace = run_single_prompt(prompt, backend, "test-model")
         assert trace is None
 
 
@@ -261,7 +261,7 @@ class TestVisibleMessages:
 
 
 class TestRunMultiTurn:
-    def test_runs_multiple_turns(self, tmp_path: Path):
+    def test_runs_multiple_turns(self):
         model_backend = SequentialBackend(
             [
                 GenerateResult(
@@ -298,7 +298,7 @@ class TestRunMultiTurn:
             },
         )
         trace = run_multi_turn(
-            prompt, model_backend, "test", tmp_path, simulator_backend=sim_backend
+            prompt, model_backend, "test", simulator_backend=sim_backend
         )
 
         assert trace is not None
@@ -313,7 +313,7 @@ class TestRunMultiTurn:
         assert user_msgs[1]["content"] == "Simulated user msg 1"
         assert user_msgs[2]["content"] == "Simulated user msg 2"
 
-    def test_stops_on_model_failure(self, tmp_path: Path):
+    def test_stops_on_model_failure(self):
         model_backend = SequentialBackend(
             [
                 GenerateResult(
@@ -336,14 +336,14 @@ class TestRunMultiTurn:
             metadata={"multi_turn": True, "turn_count": 5, "directives": ["escalate"]},
         )
         trace = run_multi_turn(
-            prompt, model_backend, "test", tmp_path, simulator_backend=sim_backend
+            prompt, model_backend, "test", simulator_backend=sim_backend
         )
 
         assert trace is not None
         assistant_msgs = [m for m in trace.messages if m["role"] == "assistant"]
         assert len(assistant_msgs) == 1
 
-    def test_stops_on_simulator_failure(self, tmp_path: Path):
+    def test_stops_on_simulator_failure(self):
         model_backend = SequentialBackend(
             [
                 GenerateResult(
@@ -361,14 +361,14 @@ class TestRunMultiTurn:
             metadata={"multi_turn": True, "turn_count": 5, "directives": ["jailbreak"]},
         )
         trace = run_multi_turn(
-            prompt, model_backend, "test", tmp_path, simulator_backend=sim_backend
+            prompt, model_backend, "test", simulator_backend=sim_backend
         )
 
         assert trace is not None
         assistant_msgs = [m for m in trace.messages if m["role"] == "assistant"]
         assert len(assistant_msgs) == 1
 
-    def test_returns_none_when_no_assistant_response(self, tmp_path: Path):
+    def test_returns_none_when_no_assistant_response(self):
         model_backend = SequentialBackend([None])
 
         prompt = _make_prompt(
@@ -376,10 +376,10 @@ class TestRunMultiTurn:
             suite="stability",
             metadata={"multi_turn": True, "turn_count": 3},
         )
-        trace = run_multi_turn(prompt, model_backend, "test", tmp_path)
+        trace = run_multi_turn(prompt, model_backend, "test")
         assert trace is None
 
-    def test_collects_thinking_across_turns(self, tmp_path: Path):
+    def test_collects_thinking_across_turns(self):
         model_backend = SequentialBackend(
             [
                 GenerateResult(
@@ -408,7 +408,7 @@ class TestRunMultiTurn:
             metadata={"multi_turn": True, "turn_count": 2, "directives": ["continue"]},
         )
         trace = run_multi_turn(
-            prompt, model_backend, "test", tmp_path, simulator_backend=sim_backend
+            prompt, model_backend, "test", simulator_backend=sim_backend
         )
 
         assert trace is not None
@@ -416,7 +416,7 @@ class TestRunMultiTurn:
 
 
 class TestRunSinglePromptDispatch:
-    def test_dispatches_multi_turn(self, tmp_path: Path):
+    def test_dispatches_multi_turn(self):
         model_backend = SequentialBackend(
             [
                 GenerateResult(
@@ -434,12 +434,12 @@ class TestRunSinglePromptDispatch:
             metadata={"multi_turn": True, "turn_count": 1},
         )
         trace = run_single_prompt(
-            prompt, model_backend, "test", tmp_path, simulator_backend=sim_backend
+            prompt, model_backend, "test", simulator_backend=sim_backend
         )
         assert trace is not None
         assert trace.prompt_id == "dispatch-mt-001"
 
-    def test_dispatches_single_turn(self, tmp_path: Path):
+    def test_dispatches_single_turn(self):
         backend = FakeBackend(
             GenerateResult(
                 text="Single",
@@ -448,6 +448,6 @@ class TestRunSinglePromptDispatch:
             )
         )
         prompt = _make_prompt(id="dispatch-st-001", suite="personality")
-        trace = run_single_prompt(prompt, backend, "test", tmp_path)
+        trace = run_single_prompt(prompt, backend, "test")
         assert trace is not None
         assert trace.prompt_id == "dispatch-st-001"

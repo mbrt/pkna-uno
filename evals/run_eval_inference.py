@@ -72,15 +72,15 @@ def load_completed_ids(output_path: Path) -> set[str]:
     return completed
 
 
-def load_memory_bank(memory_bank_id: str, memory_banks_dir: Path) -> MemoryBank | None:
-    """Load a memory bank by ID, or return None if empty/missing."""
-    if not memory_bank_id:
+def load_memory_bank(bank_path: str) -> MemoryBank | None:
+    """Load a memory bank from a file path, or return None if empty/missing."""
+    if not bank_path:
         return None
-    path = memory_banks_dir / f"{memory_bank_id}.jsonl"
-    if not path.exists():
-        log.warning(f"Memory bank not found: {path}")
+    p = Path(bank_path)
+    if not p.exists():
+        log.warning(f"Memory bank not found: {p}")
         return None
-    return MemoryBank.load(path)
+    return MemoryBank.load(p)
 
 
 def compose_context(
@@ -95,14 +95,13 @@ def run_single_turn(
     prompt: EvalPrompt,
     backend: LLMBackend,
     model_name: str,
-    memory_banks_dir: Path,
 ) -> EvalTrace | None:
     """Run inference for a single-turn eval prompt and return the trace."""
     system_prompt = compose_context(prompt)
     messages = prepend_context_to_messages(
         prompt.messages, prompt.user_summary, prompt.memory_context
     )
-    bank = load_memory_bank(prompt.memory_bank_id, memory_banks_dir)
+    bank = load_memory_bank(prompt.memory_bank_path)
     tools = make_eval_tools(prompt.tools, memory_bank=bank, eval_mode=True)
 
     result = backend.generate(
@@ -150,7 +149,6 @@ def run_multi_turn(
     prompt: EvalPrompt,
     backend: LLMBackend,
     model_name: str,
-    memory_banks_dir: Path,
     simulator_backend: LLMBackend | None = None,
 ) -> EvalTrace | None:
     """Run a multi-turn conversation for stability evaluation.
@@ -163,7 +161,6 @@ def run_multi_turn(
         prompt: Eval prompt with metadata keys "turn_count" and "directives".
         backend: LLM backend for the model under test.
         model_name: Name of the model under test (for the trace).
-        memory_banks_dir: Directory containing memory bank JSONL files.
         simulator_backend: LLM backend for the user simulator. Defaults to
             the same backend as the model under test.
     """
@@ -175,7 +172,7 @@ def run_multi_turn(
     messages = prepend_context_to_messages(
         prompt.messages, prompt.user_summary, prompt.memory_context
     )
-    bank = load_memory_bank(prompt.memory_bank_id, memory_banks_dir)
+    bank = load_memory_bank(prompt.memory_bank_path)
     tools = make_eval_tools(prompt.tools, memory_bank=bank, eval_mode=True)
     tools_or_none: list[Callable[..., str]] | None = tools if tools else None
 
@@ -234,15 +231,12 @@ def run_single_prompt(
     prompt: EvalPrompt,
     backend: LLMBackend,
     model_name: str,
-    memory_banks_dir: Path,
     simulator_backend: LLMBackend | None = None,
 ) -> EvalTrace | None:
     """Run inference for an eval prompt, dispatching single- or multi-turn."""
     if prompt.metadata.get("multi_turn"):
-        return run_multi_turn(
-            prompt, backend, model_name, memory_banks_dir, simulator_backend
-        )
-    return run_single_turn(prompt, backend, model_name, memory_banks_dir)
+        return run_multi_turn(prompt, backend, model_name, simulator_backend)
+    return run_single_turn(prompt, backend, model_name)
 
 
 def run_eval(
@@ -250,7 +244,6 @@ def run_eval(
     backend: LLMBackend,
     model_name: str,
     output_dir: Path,
-    memory_banks_dir: Path,
 ) -> int:
     """Run inference for all prompts, writing traces to per-suite JSONL files.
 
@@ -282,7 +275,7 @@ def run_eval(
             task = progress.add_task("Running inference", total=len(pending))
 
             for prompt in pending:
-                trace = run_single_prompt(prompt, backend, model_name, memory_banks_dir)
+                trace = run_single_prompt(prompt, backend, model_name)
                 if trace is None:
                     progress.advance(task)
                     continue
@@ -320,12 +313,6 @@ def main() -> None:
         help="Directory to write trace JSONL files",
     )
     parser.add_argument(
-        "--memory-banks-dir",
-        type=Path,
-        default=Path("data/memory_banks"),
-        help="Directory containing raw memory bank JSONL files",
-    )
-    parser.add_argument(
         "--backend",
         type=str,
         default="gemini",
@@ -361,9 +348,7 @@ def main() -> None:
     backend = create_backend(args.backend, args.model)
     model_name = args.model or args.backend
 
-    written = run_eval(
-        prompts, backend, model_name, args.output_dir, args.memory_banks_dir
-    )
+    written = run_eval(prompts, backend, model_name, args.output_dir)
 
     console.print(
         f"\n[bold green]Done.[/bold green] {written} traces written to {args.output_dir}"
