@@ -43,6 +43,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview"
 DEFAULT_ANTHROPIC_MODEL = "eu.anthropic.claude-sonnet-4-6"
+DEFAULT_MAX_OUTPUT_TOKENS = 20000
 
 # Retry settings
 MAX_RETRIES = 5
@@ -83,6 +84,10 @@ def _retry_with_backoff(
 # ============================================================================
 
 
+class OutputTruncatedError(Exception):
+    """Raised when the LLM output is cut short by hitting the max token limit."""
+
+
 @dataclass
 class GenerateResult:
     text: str
@@ -121,8 +126,9 @@ class LLMBackend(ABC):
 
 
 class GeminiBackend(LLMBackend):
-    def __init__(self, model: str):
+    def __init__(self, model: str, max_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS):
         self._model = model
+        self._max_tokens = max_tokens
         self._client = genai.Client(
             http_options=HttpOptions(timeout=API_TIMEOUT_SECONDS * 1000)
         )
@@ -218,6 +224,7 @@ class GeminiBackend(LLMBackend):
     ) -> GenerateResult | None:
         config_kwargs: dict[str, Any] = {
             "system_instruction": system,
+            "max_output_tokens": self._max_tokens,
             "temperature": 0.7,
             "top_p": 0.95,
             "thinking_config": ThinkingConfig(include_thoughts=True),
@@ -238,6 +245,14 @@ class GeminiBackend(LLMBackend):
             return self._generate_no_tools(config, conversation)
         return self._generate_with_tools(config, conversation, tools)
 
+    @staticmethod
+    def _check_truncated(response: Any) -> None:
+        finish = response.candidates[0].finish_reason
+        if finish is not None and finish.name == "MAX_TOKENS":
+            raise OutputTruncatedError(
+                "Gemini output truncated: response hit the max token limit"
+            )
+
     def _generate_no_tools(
         self,
         config: GenerateContentConfig,
@@ -253,6 +268,8 @@ class GeminiBackend(LLMBackend):
         response = _retry_with_backoff(_call, self._is_retryable)
         if response is None:
             return None
+
+        self._check_truncated(response)
 
         thinking, text = self._extract_parts(response)
         msg: dict[str, Any] = {"role": "assistant", "content": text}
@@ -306,6 +323,7 @@ class GeminiBackend(LLMBackend):
 
             fn_calls = response.function_calls
             if not fn_calls:
+                self._check_truncated(response)
                 msg: dict[str, Any] = {"role": "assistant", "content": text}
                 if thinking:
                     msg["thinking"] = thinking
@@ -549,8 +567,9 @@ def _add_additional_properties_false(schema: dict | list) -> None:
 
 
 class AnthropicBackend(LLMBackend):
-    def __init__(self, model: str):
+    def __init__(self, model: str, max_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS):
         self._model = model
+        self._max_tokens = max_tokens
         self._client = AnthropicBedrock(
             aws_access_key=os.getenv("AWS_ACCESS_KEY_ID"),
             aws_secret_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
@@ -607,7 +626,15 @@ class AnthropicBackend(LLMBackend):
         text = "\n".join(text_parts)
         return thinking, text
 
+    @staticmethod
+    def _check_truncated(response: Any) -> None:
+        if response.stop_reason == "max_tokens":
+            raise OutputTruncatedError(
+                "Anthropic output truncated: response hit the max token limit"
+            )
+
     def _make_result(self, response: Any) -> GenerateResult:
+        self._check_truncated(response)
         usage = self._extract_usage(response)
         thinking, text = self._extract_content(response)
         msg: dict[str, Any] = {"role": "assistant", "content": text}
@@ -632,7 +659,7 @@ class AnthropicBackend(LLMBackend):
         def _call():
             return self._client.messages.create(
                 model=self._model,
-                max_tokens=8192,
+                max_tokens=self._max_tokens,
                 temperature=1.0,
                 system=_system_with_cache(system),
                 messages=api_messages,
@@ -657,7 +684,7 @@ class AnthropicBackend(LLMBackend):
         def _call():
             return self._client.messages.create(
                 model=self._model,
-                max_tokens=8192,
+                max_tokens=self._max_tokens,
                 temperature=1.0,
                 system=_system_with_cache(system),
                 messages=api_messages,
@@ -696,7 +723,7 @@ class AnthropicBackend(LLMBackend):
             def _call():
                 return self._client.messages.create(
                     model=self._model,
-                    max_tokens=8192,
+                    max_tokens=self._max_tokens,
                     temperature=1.0,
                     system=cached_system,
                     messages=api_messages,
@@ -716,6 +743,7 @@ class AnthropicBackend(LLMBackend):
                 all_thinking.append(thinking)
 
             if response.stop_reason != "tool_use":
+                self._check_truncated(response)
                 msg: dict[str, Any] = {"role": "assistant", "content": text}
                 if thinking:
                     msg["thinking"] = thinking
@@ -797,9 +825,15 @@ class AnthropicBackend(LLMBackend):
 # ============================================================================
 
 
-def create_backend(backend_name: str, model: str | None = None) -> LLMBackend:
+def create_backend(
+    backend_name: str,
+    model: str | None = None,
+    max_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+) -> LLMBackend:
     if backend_name == "gemini":
-        return GeminiBackend(model=model or DEFAULT_GEMINI_MODEL)
+        return GeminiBackend(model=model or DEFAULT_GEMINI_MODEL, max_tokens=max_tokens)
     if backend_name == "anthropic":
-        return AnthropicBackend(model=model or DEFAULT_ANTHROPIC_MODEL)
+        return AnthropicBackend(
+            model=model or DEFAULT_ANTHROPIC_MODEL, max_tokens=max_tokens
+        )
     raise ValueError(f"Unknown backend: {backend_name}")

@@ -13,6 +13,7 @@ Compared to build_claim_ledger_profile.py (v11), this script:
 """
 
 import argparse
+import itertools
 import json
 import logging
 from collections import defaultdict
@@ -41,8 +42,30 @@ console, log = setup_logging(logging.DEBUG, root_level=logging.CRITICAL)
 # Settings
 CHARACTER_NAME = "Uno"
 ENCODING_NAME = "cl100k_base"
-VERSION_TAG = "v13"
-CLAIM_SUPPORT_THRESHOLD = 2
+VERSION_TAG = "v14"
+DEFAULT_THRESHOLD = 3
+MAX_CONDENSE_BATCH = 60
+
+SECTION_THRESHOLDS: dict[str, int] = {
+    # P1
+    "identity": 2,
+    "values": 2,
+    "motivations": 2,
+    "relationships_generalized": 2,
+    # P2
+    "relationships": 3,
+    "psychology": 3,
+    "communication": 3,
+    # P3
+    "capabilities": 5,
+    "behavior": 5,
+    "vignettes": 5,
+}
+
+
+def threshold_for_section(section: str) -> int:
+    return SECTION_THRESHOLDS.get(section, DEFAULT_THRESHOLD)
+
 
 # Paths
 BASE_DIR = Path(__file__).parent.parent
@@ -925,7 +948,7 @@ Character: "Dialogue line"
 }
 
 
-def get_section_prompt(section: str, threshold: int) -> str:
+def get_section_prompt(section: str) -> str:
     template = SECTION_PROMPTS[section]
     return f"""Generate one section of a soul document from validated claims.
 
@@ -1021,8 +1044,8 @@ of the input claims it subsumes.
 - Keep each claim concise: 1-3 sentences in English.
 - "source_ids" must list the ids of the input claims that the output claim subsumes.
   Every input claim id must appear in exactly one output claim's source_ids.
-- It is acceptable to return the same number of claims as the input if they are all
-  genuinely distinct. Reducing count is a goal, not a requirement.
+- It is acceptable to condense nothing if they are all genuinely distinct.
+  Reducing count is a goal, not a requirement.
 """
 
 
@@ -1473,10 +1496,9 @@ _REASONING_SECTIONS = {"behavior", "communication", "relationships"}
 class ClaimSynthesizer:
     """Enriches claims with causal reasoning and adds negative/boundary claims."""
 
-    def __init__(self, backend: LLMBackend, ledger: ClaimLedger, threshold: int):
+    def __init__(self, backend: LLMBackend, ledger: ClaimLedger):
         self._backend = backend
         self._ledger = ledger
-        self._threshold = threshold
         self._reasoning_system = get_claim_synthesis_reasoning_prompt()
 
     def _eligible_claims_for_reasoning(self) -> list[Claim]:
@@ -1484,8 +1506,9 @@ class ClaimSynthesizer:
         for section, claims in self._ledger.get_claims_by_section().items():
             if section not in _REASONING_SECTIONS:
                 continue
+            t = threshold_for_section(section)
             for claim in claims:
-                if claim.support_count >= self._threshold:
+                if claim.support_count >= t:
                     result.append(claim)
         return result
 
@@ -1561,16 +1584,15 @@ _GENERALIZATION_INPUT_PREFIXES = (
 class ClaimGeneralizer:
     """Generalizes character-specific claims into audience-archetype patterns."""
 
-    def __init__(self, backend: LLMBackend, ledger: ClaimLedger, threshold: int):
+    def __init__(self, backend: LLMBackend, ledger: ClaimLedger):
         self._backend = backend
         self._ledger = ledger
-        self._threshold = threshold
         self._system = get_claim_generalization_prompt()
 
     def _eligible_claims(self) -> list[Claim]:
         result = []
         for claim in self._ledger._claims.values():
-            if claim.support_count < self._threshold:
+            if claim.support_count < threshold_for_section(claim.section):
                 continue
             if claim.path.startswith("relationships/archetype/"):
                 continue
@@ -1713,17 +1735,17 @@ def _merge_quotes(claims: list[Claim]) -> list[Quote]:
 class ClaimCondenser:
     """Condenses low-support claims into fewer, broader claims via LLM merging."""
 
-    def __init__(self, backend: LLMBackend, ledger: ClaimLedger, threshold: int):
+    def __init__(self, backend: LLMBackend, ledger: ClaimLedger):
         self._backend = backend
         self._ledger = ledger
-        self._threshold = threshold
         self._system = get_claim_condensation_prompt()
 
     def _low_support_claims(self) -> list[Claim]:
         result = []
-        for claims in self._ledger.get_claims_by_section().values():
+        for section, claims in self._ledger.get_claims_by_section().items():
+            t = threshold_for_section(section)
             for claim in claims:
-                if 0 < claim.support_count < self._threshold:
+                if 0 < claim.support_count < t:
                     result.append(claim)
         return result
 
@@ -1767,44 +1789,59 @@ class ClaimCondenser:
                 result.extend(group)
                 continue
 
-            condensed = self._condense_group(group)
-            if not condensed:
-                result.extend(group)
-                continue
-
-            claims_by_id = {c.id: c for c in group}
-
-            for orig in group:
-                self._ledger.remove_claim(orig.id)
-
-            for cd in condensed:
-                if not cd.path or not cd.text:
-                    continue
-                if not is_valid_claim_path(cd.path):
-                    log.warning(f"Invalid condensed claim path: {cd.path}")
+            group_before = len(group)
+            produced = 0
+            for batch in itertools.batched(group, MAX_CONDENSE_BATCH):
+                batch = list(batch)
+                condensed = self._condense_group(batch)
+                if not condensed:
+                    result.extend(batch)
                     continue
 
-                sources = [
-                    claims_by_id[sid] for sid in cd.source_ids if sid in claims_by_id
-                ]
-                if not sources:
-                    sources = group
+                claims_by_id = {c.id: c for c in batch}
 
-                claim = Claim(
-                    id=self._ledger._next_id,
-                    text=cd.text,
-                    path=cd.path,
-                    supporting=_merge_evidence(sources),
-                    contradicting=[],
-                    quotes=_merge_quotes(sources),
-                )
-                self._ledger._claims[claim.id] = claim
-                self._ledger._next_id += 1
-                result.append(claim)
+                new_claims: list[Claim] = []
+                for cd in condensed:
+                    if not cd.path or not cd.text:
+                        continue
+                    if not is_valid_claim_path(cd.path):
+                        log.warning(f"Invalid condensed claim path: {cd.path}")
+                        continue
+
+                    sources = [
+                        claims_by_id[sid]
+                        for sid in cd.source_ids
+                        if sid in claims_by_id
+                    ]
+                    if not sources:
+                        sources = batch
+
+                    new_claims.append(
+                        Claim(
+                            id=self._ledger._next_id,
+                            text=cd.text,
+                            path=cd.path,
+                            supporting=_merge_evidence(sources),
+                            contradicting=[],
+                            quotes=_merge_quotes(sources),
+                        )
+                    )
+                    self._ledger._next_id += 1
+
+                if not new_claims:
+                    result.extend(batch)
+                    continue
+
+                for orig in batch:
+                    self._ledger.remove_claim(orig.id)
+                for claim in new_claims:
+                    self._ledger._claims[claim.id] = claim
+                    result.append(claim)
+                    produced += 1
 
             log.debug(
-                f"Condensed {len(group)} claims under '{prefix}' "
-                f"into {len(condensed)} claims"
+                f"Condensed {group_before} claims under '{prefix}' "
+                f"into {produced} claims"
             )
 
         return result
@@ -1821,14 +1858,15 @@ class ClaimCondenser:
             return 0, 0
 
         original_count = len(low_support)
-        log.info(
-            f"Condensing {original_count} low-support claims "
-            f"(threshold={self._threshold})..."
-        )
+        log.info(f"Condensing {original_count} low-support claims...")
 
         remaining = low_support
         for segments in (3, 2, 1):
-            remaining = [c for c in remaining if c.support_count < self._threshold]
+            remaining = [
+                c
+                for c in remaining
+                if c.support_count < threshold_for_section(c.section)
+            ]
             if not remaining:
                 break
             log.info(
@@ -1851,10 +1889,9 @@ class ClaimCondenser:
 
 
 class SoulDocumentGenerator:
-    def __init__(self, backend: LLMBackend, ledger: ClaimLedger, threshold: int):
+    def __init__(self, backend: LLMBackend, ledger: ClaimLedger):
         self._backend = backend
         self._ledger = ledger
-        self._threshold = threshold
 
     @staticmethod
     def _format_claim_group(
@@ -1883,33 +1920,32 @@ class SoulDocumentGenerator:
         self, *, exclude_prefix: str | None = None
     ) -> list[Claim]:
         """Get above-threshold relationship claims, optionally excluding a prefix."""
+        t = threshold_for_section("relationships")
         return [
             c
             for c in self._ledger.get_claims_by_section("relationships").get(
                 "relationships", []
             )
-            if c.support_count >= self._threshold
+            if c.support_count >= t
             and (exclude_prefix is None or not c.path.startswith(exclude_prefix))
         ]
 
     def _format_section_claims(self, section: str) -> str:
         claims_by_section = self._ledger.get_claims_by_section(section=section)
-        claims = [
-            c
-            for c in claims_by_section.get(section, [])
-            if c.support_count >= self._threshold
-        ]
+        t = threshold_for_section(section)
+        claims = [c for c in claims_by_section.get(section, []) if c.support_count >= t]
         if not claims:
             return ""
         return self._format_claim_group(claims, include_quotes=True)
 
     def _format_values_claims(self) -> str:
         """Format values claims alongside relationship claims for generalization."""
+        t = threshold_for_section("values")
         value_claims = [
             claim
             for claims in self._ledger.get_claims_by_path("psychology/values").values()
             for claim in claims
-            if claim.support_count >= self._threshold
+            if claim.support_count >= t
         ]
         if not value_claims:
             return ""
@@ -1961,8 +1997,9 @@ class SoulDocumentGenerator:
     def _format_vignette_claims(self) -> str:
         """Format top claims across all sections for vignette generation."""
         all_claims: list[Claim] = []
-        for claims in self._ledger.get_claims_by_section().values():
-            all_claims.extend(c for c in claims if c.support_count >= self._threshold)
+        for section, claims in self._ledger.get_claims_by_section().items():
+            t = threshold_for_section(section)
+            all_claims.extend(c for c in claims if c.support_count >= t)
 
         all_claims.sort(key=lambda c: c.support_count, reverse=True)
         top_claims = all_claims[:50]
@@ -1996,7 +2033,7 @@ class SoulDocumentGenerator:
 
         log.info(f"Section '{section}': generating from {claim_count} claims")
 
-        system = get_section_prompt(section, self._threshold)
+        system = get_section_prompt(section)
 
         if section == "vignettes":
             prompt = (
@@ -2239,9 +2276,7 @@ def run_claim_refinement(backend: LLMBackend, ledger: ClaimLedger) -> ClaimLedge
     return ledger
 
 
-def run_claim_synthesis(
-    backend: LLMBackend, ledger: ClaimLedger, threshold: int
-) -> ClaimLedger:
+def run_claim_synthesis(backend: LLMBackend, ledger: ClaimLedger) -> ClaimLedger:
     synthesized_ledger_path = OUTPUT_DIR / "synthesized_ledger.json"
 
     if synthesized_ledger_path.exists():
@@ -2253,7 +2288,7 @@ def run_claim_synthesis(
         return ClaimLedger.from_json(data)
 
     console.print("\n[bold cyan]Synthesizing claims (causal reasoning)...[/bold cyan]")
-    synthesizer = ClaimSynthesizer(backend, ledger, threshold)
+    synthesizer = ClaimSynthesizer(backend, ledger)
     enriched, failed = synthesizer.synthesize_all()
 
     console.print(f"Reasoning: {enriched} enriched, {failed} failed.")
@@ -2265,9 +2300,7 @@ def run_claim_synthesis(
     return ledger
 
 
-def run_claim_generalization(
-    backend: LLMBackend, ledger: ClaimLedger, threshold: int
-) -> ClaimLedger:
+def run_claim_generalization(backend: LLMBackend, ledger: ClaimLedger) -> ClaimLedger:
     generalized_ledger_path = OUTPUT_DIR / "generalized_ledger.json"
 
     if generalized_ledger_path.exists():
@@ -2281,7 +2314,7 @@ def run_claim_generalization(
     console.print(
         "\n[bold cyan]Generalizing claims (audience archetypes)...[/bold cyan]"
     )
-    generalizer = ClaimGeneralizer(backend, ledger, threshold)
+    generalizer = ClaimGeneralizer(backend, ledger)
     added, failed = generalizer.generalize()
 
     console.print(f"Generalization: {added} archetype claims added, {failed} failed.")
@@ -2293,9 +2326,7 @@ def run_claim_generalization(
     return ledger
 
 
-def run_claim_condensation(
-    backend: LLMBackend, ledger: ClaimLedger, threshold: int
-) -> ClaimLedger:
+def run_claim_condensation(backend: LLMBackend, ledger: ClaimLedger) -> ClaimLedger:
     condensed_ledger_path = OUTPUT_DIR / "condensed_ledger.json"
 
     if condensed_ledger_path.exists():
@@ -2307,7 +2338,7 @@ def run_claim_condensation(
         return ClaimLedger.from_json(data)
 
     console.print("\n[bold cyan]Condensing low-support claims...[/bold cyan]")
-    condenser = ClaimCondenser(backend, ledger, threshold)
+    condenser = ClaimCondenser(backend, ledger)
     original, final = condenser.condense_all()
 
     if original > 0:
@@ -2322,9 +2353,7 @@ def run_claim_condensation(
     return ledger
 
 
-def run_document_generation(
-    backend: LLMBackend, ledger: ClaimLedger, threshold: int
-) -> None:
+def run_document_generation(backend: LLMBackend, ledger: ClaimLedger) -> None:
     soul_doc_path = OUTPUT_DIR / "uno_soul_document.md"
 
     if soul_doc_path.exists():
@@ -2333,7 +2362,7 @@ def run_document_generation(
 
     console.print("\n[bold cyan]Generating soul document...[/bold cyan]")
 
-    generator = SoulDocumentGenerator(backend, ledger, threshold)
+    generator = SoulDocumentGenerator(backend, ledger)
     success, result, section_map = generator.generate()
 
     if success:
@@ -2347,13 +2376,14 @@ def run_document_generation(
         console.print(f"Output: {path_str(soul_doc_path)}")
         console.print(f"Sections: {path_str(SECTIONS_DIR)}/")
         console.print(f"Size: {tokens:,} tokens (~{words:,} words)")
-        console.print(f"Threshold: support >= {threshold}")
+        thresholds_str = ", ".join(f"{s}={t}" for s, t in SECTION_THRESHOLDS.items())
+        console.print(f"Thresholds: {thresholds_str}")
 
         validated = sum(
             1
-            for claims in ledger.get_claims_by_section().values()
+            for section, claims in ledger.get_claims_by_section().items()
             for c in claims
-            if c.support_count >= threshold
+            if c.support_count >= threshold_for_section(section)
         )
         console.print(f"Claims: {validated} validated / {ledger.claim_count()} total")
     else:
@@ -2371,12 +2401,6 @@ def main() -> None:
         type=int,
         default=None,
         help="Maximum number of scenes to process (for testing)",
-    )
-    parser.add_argument(
-        "--threshold",
-        type=int,
-        default=CLAIM_SUPPORT_THRESHOLD,
-        help=f"Minimum support count for claims in final document (default: {CLAIM_SUPPORT_THRESHOLD})",
     )
     parser.add_argument(
         "--backend",
@@ -2404,10 +2428,10 @@ def main() -> None:
 
     ledger = run_claim_generation(backend, args.max_scenes)
     ledger = run_claim_refinement(backend, ledger)
-    ledger = run_claim_synthesis(backend, ledger, args.threshold)
-    ledger = run_claim_generalization(backend, ledger, args.threshold)
-    ledger = run_claim_condensation(backend, ledger, args.threshold)
-    run_document_generation(backend, ledger, args.threshold)
+    ledger = run_claim_synthesis(backend, ledger)
+    ledger = run_claim_generalization(backend, ledger)
+    ledger = run_claim_condensation(backend, ledger)
+    run_document_generation(backend, ledger)
 
     console.print(f"\n[bold]Output directory:[/bold] {path_str(OUTPUT_DIR)}")
     console.print(f"Checkpoints: {path_str(CHECKPOINTS_DIR)}/")

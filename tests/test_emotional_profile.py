@@ -9,6 +9,7 @@ import pytest
 from extract.build_emotional_profile import (
     SECTION_ORDER,
     SECTION_SCOPES,
+    SECTION_THRESHOLDS,
     ClaimCondenser,
     ClaimGeneralizer,
     ClaimLedger,
@@ -28,6 +29,13 @@ from pkna.llm.backends import GenerateResult, LLMBackend
 from pydantic import BaseModel
 
 MOCK_MODEL = "test-model"
+
+
+@pytest.fixture(autouse=True)
+def _low_thresholds(monkeypatch):
+    """Set all section thresholds to 2 so tests with support_count=2 pass."""
+    patched = {section: 2 for section in SECTION_THRESHOLDS}
+    monkeypatch.setattr("extract.build_emotional_profile.SECTION_THRESHOLDS", patched)
 
 
 class MockBackend(LLMBackend):
@@ -868,7 +876,7 @@ class TestClaimSynthesizer:
     def test_eligible_claims_for_reasoning(self):
         ledger = self._make_ledger()
         backend = MockBackend()
-        synthesizer = ClaimSynthesizer(backend, ledger, threshold=2)
+        synthesizer = ClaimSynthesizer(backend, ledger)
         eligible = synthesizer._eligible_claims_for_reasoning()
         # Only behavior and communication claims (not psychology)
         assert len(eligible) == 2
@@ -881,7 +889,7 @@ class TestClaimSynthesizer:
         backend = MockBackend(
             "Uno monitors all tower systems, because he sees it as his core duty."
         )
-        synthesizer = ClaimSynthesizer(backend, ledger, threshold=2)
+        synthesizer = ClaimSynthesizer(backend, ledger)
         enriched, failed = synthesizer.synthesize_reasoning()
 
         assert enriched == 2
@@ -890,7 +898,7 @@ class TestClaimSynthesizer:
     def test_synthesize_reasoning_api_failure(self):
         ledger = self._make_ledger()
         backend = MockBackend(None)
-        synthesizer = ClaimSynthesizer(backend, ledger, threshold=2)
+        synthesizer = ClaimSynthesizer(backend, ledger)
         enriched, failed = synthesizer.synthesize_reasoning()
 
         assert enriched == 0
@@ -900,7 +908,7 @@ class TestClaimSynthesizer:
         ledger = self._make_ledger()
         reasoning_text = "Enriched claim text because reasons."
         backend = MockBackend([reasoning_text, reasoning_text])
-        synthesizer = ClaimSynthesizer(backend, ledger, threshold=2)
+        synthesizer = ClaimSynthesizer(backend, ledger)
         enriched, failed = synthesizer.synthesize_all()
 
         assert enriched == 2
@@ -1180,7 +1188,7 @@ class TestCondensationHelpers:
 
 
 class TestClaimCondenser:
-    def _make_ledger_with_low_support(self, threshold: int = 2) -> ClaimLedger:
+    def _make_ledger_with_low_support(self) -> ClaimLedger:
         """Create a ledger with claims below the threshold."""
         ledger = ClaimLedger()
         # Two claims under psychology/traits -- same 2-segment prefix
@@ -1216,7 +1224,7 @@ class TestClaimCondenser:
     def test_low_support_claims_identified(self):
         ledger = self._make_ledger_with_low_support()
         backend = MockBackend()
-        condenser = ClaimCondenser(backend, ledger, threshold=2)
+        condenser = ClaimCondenser(backend, ledger)
         low = condenser._low_support_claims()
         assert len(low) == 3
         assert all(c.support_count < 2 for c in low)
@@ -1258,7 +1266,7 @@ class TestClaimCondenser:
             ]
         )
         backend = MockBackend([pass1_json, pass2_json])
-        condenser = ClaimCondenser(backend, ledger, threshold=2)
+        condenser = ClaimCondenser(backend, ledger)
         original, final = condenser.condense_all()
 
         assert original == 3
@@ -1276,7 +1284,7 @@ class TestClaimCondenser:
             ]
         )
         backend = MockBackend(merged_json)
-        condenser = ClaimCondenser(backend, ledger, threshold=2)
+        condenser = ClaimCondenser(backend, ledger)
         condenser.condense_all()
 
         behavior_claims = [
@@ -1290,11 +1298,44 @@ class TestClaimCondenser:
     def test_condense_api_failure_preserves_claims(self):
         ledger = self._make_ledger_with_low_support()
         backend = MockBackend(None)
-        condenser = ClaimCondenser(backend, ledger, threshold=2)
+        condenser = ClaimCondenser(backend, ledger)
         original, final = condenser.condense_all()
 
         assert original == 3
         assert final == 3
+
+    def test_condense_invalid_paths_preserves_originals(self):
+        """When all condensed claims have invalid paths, originals are kept."""
+        ledger = ClaimLedger()
+        c1 = ledger.add_claim(
+            path="relationships/gorthan",
+            text="Gorthan is an adversary",
+            scene_id="s1",
+            justification="R1",
+        )
+        c2 = ledger.add_claim(
+            path="relationships/gorthan/dynamic",
+            text="Gorthan threatens Uno",
+            scene_id="s2",
+            justification="R2",
+        )
+        response = json.dumps(
+            [
+                {
+                    "path": "relationships/gorthan/general",
+                    "text": "Merged claim about Gorthan",
+                    "source_ids": [c1.id, c2.id],
+                }
+            ]
+        )
+        backend = MockBackend(response)
+        condenser = ClaimCondenser(backend, ledger)
+        remaining = condenser._apply_condensation([c1, c2], segments=2)
+
+        assert len(remaining) == 2
+        assert ledger.claim_count() == 2
+        assert ledger.get_claim(c1.id) is not None
+        assert ledger.get_claim(c2.id) is not None
 
     def test_condensed_claims_inherit_evidence_from_sources(self):
         """Evidence is attributed per-claim based on source_ids, not pooled."""
@@ -1371,7 +1412,7 @@ class TestClaimCondenser:
                 return GenerateResult(text=text, model_name=MOCK_MODEL)
 
         backend = CondenserBackend(ledger)
-        condenser = ClaimCondenser(backend, ledger, threshold=3)
+        condenser = ClaimCondenser(backend, ledger)
         condenser.condense_all()
 
         comm_claims = ledger.get_claims_by_section("communication").get(
@@ -1384,6 +1425,53 @@ class TestClaimCondenser:
         assert {e.scene_id for e in merged.supporting} == {"s1", "s2"}
         assert len(separate.supporting) == 1
         assert separate.supporting[0].scene_id == "s3"
+
+    def test_large_group_is_batched(self, monkeypatch):
+        """Groups larger than MAX_CONDENSE_BATCH are split into batches."""
+        monkeypatch.setattr("extract.build_emotional_profile.MAX_CONDENSE_BATCH", 3)
+
+        ledger = ClaimLedger()
+        claims = []
+        for i in range(5):
+            c = ledger.add_claim(
+                path="psychology/traits/ocean/openness",
+                text=f"Claim {i}",
+                scene_id=f"s{i}",
+                justification=f"R{i}",
+            )
+            claims.append(c)
+
+        call_sizes: list[int] = []
+
+        class BatchTrackingBackend(LLMBackend):
+            def generate(
+                self,
+                system: str,
+                messages: list[dict[str, str]],
+                tools: list[Callable[..., str]] | None = None,
+                response_schema: type[BaseModel] | None = None,
+            ) -> GenerateResult | None:
+                n = messages[0]["content"].count("[id=")
+                call_sizes.append(n)
+                ids = [
+                    int(m)
+                    for m in messages[0]["content"].split("[id=")[1:]
+                    for m in [m.split("]")[0]]
+                ]
+                condensed = [
+                    {
+                        "path": "psychology/traits/ocean/openness",
+                        "text": f"Merged from {len(ids)} claims",
+                        "source_ids": ids,
+                    }
+                ]
+                return GenerateResult(text=json.dumps(condensed), model_name=MOCK_MODEL)
+
+        backend = BatchTrackingBackend()
+        condenser = ClaimCondenser(backend, ledger)
+        condenser._apply_condensation(claims, segments=2)
+
+        assert call_sizes == [3, 2]
 
 
 # ============================================================================
@@ -1414,7 +1502,7 @@ class TestClaimFormatting:
     def test_format_section_excludes_below_threshold(self):
         ledger = self._make_ledger()
         backend = MockBackend()
-        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen = SoulDocumentGenerator(backend, ledger)
         output = gen._format_section_claims("identity")
         assert "**Claim (support: +2):** Uno is an AI" in output
         assert "Uno was created by Everett Ducklair" not in output
@@ -1429,14 +1517,14 @@ class TestClaimFormatting:
         )
         ledger.contradict_claim(claim_id=c.id, scene_id="s5", justification="R5")
         backend = MockBackend()
-        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen = SoulDocumentGenerator(backend, ledger)
         output = gen._format_section_claims("identity")
         assert "Uno is called X" not in output
 
     def test_vignettes_use_threshold(self):
         ledger = self._make_ledger()
         backend = MockBackend()
-        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen = SoulDocumentGenerator(backend, ledger)
         output = gen._format_vignette_claims()
         assert "Uno is an AI" in output
         assert "Uno was created by Everett Ducklair" not in output
@@ -1500,7 +1588,7 @@ class TestValuesFormatting:
     def test_format_values_includes_value_claims(self):
         ledger = self._make_ledger_with_values_and_relationships()
         backend = MockBackend()
-        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen = SoulDocumentGenerator(backend, ledger)
         output = gen._format_values_claims()
         assert "protecting Paperinik" in output
         assert "following protocol" in output
@@ -1508,7 +1596,7 @@ class TestValuesFormatting:
     def test_format_values_includes_relationship_context(self):
         ledger = self._make_ledger_with_values_and_relationships()
         backend = MockBackend()
-        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen = SoulDocumentGenerator(backend, ledger)
         output = gen._format_values_claims()
         assert "Relationship Context" in output
         assert "trusted partner" in output
@@ -1516,7 +1604,7 @@ class TestValuesFormatting:
     def test_format_values_excludes_below_threshold(self):
         ledger = self._make_ledger_with_values_and_relationships()
         backend = MockBackend()
-        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen = SoulDocumentGenerator(backend, ledger)
         output = gen._format_values_claims()
         assert "operational secrecy" not in output
 
@@ -1531,7 +1619,7 @@ class TestValuesFormatting:
         )
         ledger.support_claim(claim_id=c.id, scene_id="s2", justification="R2")
         backend = MockBackend()
-        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen = SoulDocumentGenerator(backend, ledger)
         output = gen._format_values_claims()
         assert output == ""
 
@@ -1552,7 +1640,7 @@ class TestGenerateSplitOutput:
         )
         ledger.support_claim(claim_id=c.id, scene_id="s2", justification="R2")
         backend = MockBackend("## Generated Section Content")
-        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen = SoulDocumentGenerator(backend, ledger)
         success, document, section_map = gen.generate(
             sections_dir=tmp_path / "sections"
         )
@@ -1566,7 +1654,7 @@ class TestGenerateSplitOutput:
     def test_generate_empty_ledger(self, tmp_path: Path):
         ledger = ClaimLedger()
         backend = MockBackend()
-        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen = SoulDocumentGenerator(backend, ledger)
         success, result, section_map = gen.generate(sections_dir=tmp_path / "sections")
         assert not success
         assert section_map == {}
@@ -1581,7 +1669,7 @@ class TestGenerateSplitOutput:
         )
         ledger.support_claim(claim_id=c.id, scene_id="s2", justification="R2")
         backend = MockBackend("## Generated Section Content")
-        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen = SoulDocumentGenerator(backend, ledger)
         success, document, _ = gen.generate(sections_dir=tmp_path / "sections")
         assert success
         assert "<!-- section:general:identity -->" in document
@@ -1601,7 +1689,7 @@ class TestGenerateSplitOutput:
         )
         ledger.support_claim(claim_id=c.id, scene_id="s2", justification="R2")
         backend = MockBackend("## Fresh Content")
-        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen = SoulDocumentGenerator(backend, ledger)
         success, document, section_map = gen.generate(sections_dir=sections_dir)
         assert success
         assert section_map["identity"] == "## Cached Identity"
@@ -1618,7 +1706,7 @@ class TestGenerateSplitOutput:
         )
         ledger.support_claim(claim_id=c.id, scene_id="s2", justification="R2")
         backend = MockBackend("## Generated Content")
-        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen = SoulDocumentGenerator(backend, ledger)
         gen.generate(sections_dir=sections_dir)
         assert (sections_dir / "section_identity.md").exists()
         assert (
@@ -1762,7 +1850,7 @@ class TestClaimGeneralizer:
     def test_eligible_claims(self):
         ledger = self._make_ledger()
         backend = MockBackend()
-        gen = ClaimGeneralizer(backend, ledger, threshold=2)
+        gen = ClaimGeneralizer(backend, ledger)
         eligible = gen._eligible_claims()
         assert len(eligible) == 3
         paths = {c.path for c in eligible}
@@ -1789,7 +1877,7 @@ class TestClaimGeneralizer:
         ledger._next_id += 1
 
         backend = MockBackend()
-        gen = ClaimGeneralizer(backend, ledger, threshold=2)
+        gen = ClaimGeneralizer(backend, ledger)
         eligible = gen._eligible_claims()
         assert all(not c.path.startswith("relationships/archetype/") for c in eligible)
 
@@ -1828,7 +1916,7 @@ class TestClaimGeneralizer:
             ]
         )
         backend = MockBackend(response)
-        gen = ClaimGeneralizer(backend, ledger, threshold=2)
+        gen = ClaimGeneralizer(backend, ledger)
         added, failed = gen.generalize()
 
         assert added == 4
@@ -1846,7 +1934,7 @@ class TestClaimGeneralizer:
     def test_generalize_api_failure(self):
         ledger = self._make_ledger()
         backend = MockBackend(None)
-        gen = ClaimGeneralizer(backend, ledger, threshold=2)
+        gen = ClaimGeneralizer(backend, ledger)
         added, failed = gen.generalize()
 
         assert added == 0
@@ -1855,7 +1943,7 @@ class TestClaimGeneralizer:
     def test_generalize_invalid_json(self):
         ledger = self._make_ledger()
         backend = MockBackend("not valid json")
-        gen = ClaimGeneralizer(backend, ledger, threshold=2)
+        gen = ClaimGeneralizer(backend, ledger)
         added, failed = gen.generalize()
 
         assert added == 0
@@ -1864,7 +1952,7 @@ class TestClaimGeneralizer:
     def test_generalize_no_eligible_claims(self):
         ledger = ClaimLedger()
         backend = MockBackend()
-        gen = ClaimGeneralizer(backend, ledger, threshold=2)
+        gen = ClaimGeneralizer(backend, ledger)
         added, failed = gen.generalize()
 
         assert added == 0
