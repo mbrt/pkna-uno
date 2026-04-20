@@ -53,6 +53,7 @@ Output goes to `output/sft/smoke_test/`.
 
 ## Results
 
+* Uno's [soul document](results/uno_soul_document.md) (condensed for datagen)
 * Uno's [full soul document](results/uno_soul_document_full.md)
 * [Ledger](results/ledger_raw.json) with structured observations on Uno's
   behavior (unfiltered)

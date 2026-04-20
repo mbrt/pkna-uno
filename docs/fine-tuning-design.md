@@ -170,8 +170,9 @@ accordingly, informed by his character profile.
   emotionally annotated comic scenes (panels, dialogue, annotations).
 - [x] **Wiki corpus** -- `results/wiki/`: fandom + Wikipedia articles on PKNA
   characters, technology, locations.
-- [x] **Character profile** -- `results/uno_soul_document_full.md` (1,150-line
-  full profile), `results/ledger_filtered.json` (696 pre-filtered claims from
+- [x] **Character profile** -- `results/uno_soul_document.md` (condensed
+  profile for datagen), `results/uno_soul_document_full.md` (full 1,150-line
+  version), `results/ledger_filtered.json` (696 pre-filtered claims from
   365 scenes), `results/final_ledger.json`, `results/refined_ledger.json`.
 
 ### Dataset Generation Agent (dataset-generation-agent.md)
