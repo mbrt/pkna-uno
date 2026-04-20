@@ -14,6 +14,8 @@
 # Usage:
 #   ./scripts/run_datagen_pipeline.sh              # full pipeline
 #   ./scripts/run_datagen_pipeline.sh --skip-gen   # skip prompt generation (reuse existing)
+#   ./scripts/run_datagen_pipeline.sh --mini       # integration test with 5 items per stage
+#   ./scripts/run_datagen_pipeline.sh --mini 3     # integration test with 3 items per stage
 
 set -euo pipefail
 
@@ -28,13 +30,30 @@ SCORED="output/datagen/traces_scored.jsonl"
 FILTERED="output/datagen/traces_filtered.jsonl"
 DATASET="output/sft/dataset"
 
+EVAL_PROMPTS="output/evals/prompts"
+EVAL_TRACES="output/evals/traces"
+EVAL_SCORED="output/evals/scored"
+
 SKIP_GEN=false
-for arg in "$@"; do
-    case "$arg" in
-        --skip-gen) SKIP_GEN=true ;;
-        *) echo "Unknown argument: $arg" >&2; exit 1 ;;
+MINI=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --skip-gen) SKIP_GEN=true; shift ;;
+        --mini)
+            MINI=5
+            if [ $# -gt 1 ] && [[ "$2" =~ ^[0-9]+$ ]]; then
+                MINI="$2"; shift
+            fi
+            shift ;;
+        *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
+
+MAX_ITEMS_FLAG=()
+if [ "$MINI" -gt 0 ]; then
+    MAX_ITEMS_FLAG=(--max-items "$MINI")
+fi
 
 banner() {
     echo ""
@@ -47,7 +66,7 @@ banner() {
 # ------------------------------------------------------------------
 # Stage 0: Generate memory corpus
 # ------------------------------------------------------------------
-if [ "$SKIP_GEN" = true ]; then
+if [ "$SKIP_GEN" = true ] || [ "$MINI" -gt 0 ]; then
     banner "Stage 0: Generate memory corpus [SKIPPED]"
 else
     banner "Stage 0: Generate memory corpus (seed banks + LLM)"
@@ -62,6 +81,11 @@ fi
 # ------------------------------------------------------------------
 if [ "$SKIP_GEN" = true ]; then
     banner "Stage 1: Generate prompts [SKIPPED]"
+elif [ "$MINI" -gt 0 ]; then
+    banner "Stage 1: Generate prompts (manual only, max=$MINI)"
+    uv run python datagen/generate_prompts.py \
+        --output "$PROMPTS" \
+        "${MAX_ITEMS_FLAG[@]}"
 else
     banner "Stage 1: Generate prompts (manual + scene + LLM-generated)"
     uv run python datagen/generate_prompts.py \
@@ -85,7 +109,8 @@ uv run python datagen/run_datagen.py \
     --output "$TRACES" \
     --corpus "$CORPUS" \
     --backend "$BACKEND" \
-    --model "$MODEL"
+    --model "$MODEL" \
+    "${MAX_ITEMS_FLAG[@]}"
 
 # ------------------------------------------------------------------
 # Stage 3: Quality filtering
@@ -96,7 +121,8 @@ uv run python datagen/filter_traces.py \
     --scored-output "$SCORED" \
     --filtered-output "$FILTERED" \
     --backend "$BACKEND" \
-    --model "$MODEL"
+    --model "$MODEL" \
+    "${MAX_ITEMS_FLAG[@]}"
 
 # ------------------------------------------------------------------
 # Stage 4: Assemble HF Dataset
@@ -107,6 +133,33 @@ uv run python training/assemble_sft.py \
     --output "$DATASET" \
     --model "$SFT_MODEL"
 
+# ------------------------------------------------------------------
+# Stage 5: Eval inference (mini mode only)
+# ------------------------------------------------------------------
+if [ "$MINI" -gt 0 ]; then
+    banner "Stage 5: Eval inference (backend=$BACKEND, model=$MODEL)"
+    uv run python evals/generate_eval_prompts.py \
+        --output-dir "$EVAL_PROMPTS" \
+        --suites personality,tool_use
+    uv run python evals/run_eval_inference.py \
+        --prompts-dir "$EVAL_PROMPTS" \
+        --output-dir "$EVAL_TRACES" \
+        --backend "$BACKEND" \
+        --model "$MODEL" \
+        "${MAX_ITEMS_FLAG[@]}"
+
+    # ------------------------------------------------------------------
+    # Stage 6: Eval scoring (mini mode only)
+    # ------------------------------------------------------------------
+    banner "Stage 6: Eval scoring"
+    uv run python evals/score_eval_traces.py \
+        --traces-dir "$EVAL_TRACES" \
+        --prompts-dir "$EVAL_PROMPTS" \
+        --output-dir "$EVAL_SCORED" \
+        --backend "$BACKEND" \
+        --model "$MODEL"
+fi
+
 banner "Done"
 echo "  Corpus:   $CORPUS"
 echo "  Prompts:  $PROMPTS"
@@ -114,3 +167,8 @@ echo "  Traces:   $TRACES"
 echo "  Scored:   $SCORED"
 echo "  Filtered: $FILTERED"
 echo "  Dataset:  $DATASET"
+if [ "$MINI" -gt 0 ]; then
+    echo "  Eval prompts: $EVAL_PROMPTS"
+    echo "  Eval traces:  $EVAL_TRACES"
+    echo "  Eval scored:  $EVAL_SCORED"
+fi

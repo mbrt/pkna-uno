@@ -244,6 +244,7 @@ def run_eval(
     backend: LLMBackend,
     model_name: str,
     output_dir: Path,
+    max_items: int = 0,
 ) -> int:
     """Run inference for all prompts, writing traces to per-suite JSONL files.
 
@@ -258,6 +259,9 @@ def run_eval(
         completed_by_suite[suite] = load_completed_ids(output_path)
 
     pending = [p for p in prompts if p.id not in completed_by_suite.get(p.suite, set())]
+
+    if max_items > 0:
+        pending = pending[:max_items]
 
     if not pending:
         log.info("All prompts already processed. Nothing to do.")
@@ -330,6 +334,12 @@ def main() -> None:
         default=None,
         help="Comma-separated list of suites to run (default: all)",
     )
+    parser.add_argument(
+        "--max-items",
+        type=int,
+        default=0,
+        help="Process at most N prompts (0 = unlimited)",
+    )
     args = parser.parse_args()
 
     suite_filter = args.suites.split(",") if args.suites else None
@@ -348,7 +358,9 @@ def main() -> None:
     backend = create_backend(args.backend, args.model)
     model_name = args.model or args.backend
 
-    written = run_eval(prompts, backend, model_name, args.output_dir)
+    written = run_eval(
+        prompts, backend, model_name, args.output_dir, max_items=args.max_items
+    )
 
     console.print(
         f"\n[bold green]Done.[/bold green] {written} traces written to {args.output_dir}"

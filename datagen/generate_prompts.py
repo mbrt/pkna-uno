@@ -1569,6 +1569,12 @@ def main() -> None:
         default=42,
         help="Random seed for reproducibility",
     )
+    parser.add_argument(
+        "--max-items",
+        type=int,
+        default=0,
+        help="Limit output to N prompts (0 = unlimited)",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -1594,6 +1600,9 @@ def main() -> None:
         generated = generate_llm_prompts(backend, cache_path=cache_path)
         log.info(f"LLM-generated prompts: {len(generated)}")
         all_prompts.extend(generated)
+
+    if args.max_items > 0:
+        all_prompts = all_prompts[: args.max_items]
 
     # Check for duplicate IDs
     ids = [p.id for p in all_prompts]

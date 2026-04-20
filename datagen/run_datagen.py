@@ -281,6 +281,7 @@ def run_datagen(
     simulator_backend: LLMBackend | None = None,
     corpus: list[MemoryCorpusEntry] | None = None,
     seed: int = 42,
+    max_items: int = 0,
 ) -> int:
     """Run trace generation for all prompts.
 
@@ -308,6 +309,9 @@ def run_datagen(
     if not pending:
         log.info("All prompts already processed. Nothing to do.")
         return 0
+
+    if max_items > 0:
+        pending = pending[:max_items]
 
     # Group identical system prompts together so Gemini's implicit caching
     # can reuse the cached prefix across consecutive requests.
@@ -436,6 +440,12 @@ def main() -> None:
         default=42,
         help="Random seed for reproducible memory sampling",
     )
+    parser.add_argument(
+        "--max-items",
+        type=int,
+        default=0,
+        help="Process at most N prompts (0 = unlimited)",
+    )
     args = parser.parse_args()
 
     console.print("[bold cyan]SFT Trace Generator[/bold cyan]\n")
@@ -464,6 +474,7 @@ def main() -> None:
         character_profile=character_profile,
         corpus=corpus if corpus else None,
         seed=args.seed,
+        max_items=args.max_items,
     )
 
     console.print(

@@ -269,6 +269,7 @@ def filter_traces(
     filtered_path: Path,
     backend: LLMBackend,
     system_prompt: str = "",
+    max_items: int = 0,
 ) -> tuple[int, int]:
     """Score and filter traces.
 
@@ -284,6 +285,9 @@ def filter_traces(
 
     already_scored = load_scored_ids(scored_path)
     pending = [t for t in traces if t.id not in already_scored]
+
+    if max_items > 0:
+        pending = pending[:max_items]
 
     if not pending:
         log.info("All traces already scored.")
@@ -372,6 +376,12 @@ def main() -> None:
         default=None,
         help="Model name for the judge",
     )
+    parser.add_argument(
+        "--max-items",
+        type=int,
+        default=0,
+        help="Score at most N traces (0 = unlimited)",
+    )
     args = parser.parse_args()
 
     console.print("[bold cyan]Trace Quality Filter[/bold cyan]\n")
@@ -384,7 +394,12 @@ def main() -> None:
     log.info(f"Using LLM judge: {args.backend}")
 
     total, passed = filter_traces(
-        args.input, args.scored_output, args.filtered_output, backend, system_prompt
+        args.input,
+        args.scored_output,
+        args.filtered_output,
+        backend,
+        system_prompt,
+        max_items=args.max_items,
     )
 
     if total > 0:
