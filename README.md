@@ -53,10 +53,11 @@ Output goes to `output/sft/smoke_test/`.
 
 ## Results
 
-* Uno's [soul document](results/uno_soul_document.md)
-* [Ledger](results/final_ledger.json) with structured observations on Uno's
-  behavior
-* [Refined ledger](results/refined_ledger.json) to compensate for contradictions
+* Uno's [full soul document](results/uno_soul_document_full.md)
+* [Ledger](results/ledger_raw.json) with structured observations on Uno's
+  behavior (unfiltered)
+* [Refined ledger](results/ledger_filtered.json) with consolidated observations
+  and removed low-support claims
 * [Rephrased wiki](results/wiki) with factual information on the fictional
   universe of the comic, rephrased _as if it was narrated within it_
 

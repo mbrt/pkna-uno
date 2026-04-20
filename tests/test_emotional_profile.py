@@ -23,6 +23,7 @@ from extract.build_emotional_profile import (
     format_claims_detail,
     infer_claim_scope,
     is_valid_claim_path,
+    run_claim_filtering,
 )
 from pkna.extract.scenes import AnnotatedDialogue, Panel, Scene, format_scene_view
 from pkna.llm.backends import GenerateResult, LLMBackend
@@ -1475,6 +1476,60 @@ class TestClaimCondenser:
 
 
 # ============================================================================
+# Claim Filtering
+# ============================================================================
+
+
+class TestClaimFiltering:
+    def test_removes_below_threshold_claims(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("extract.build_emotional_profile.OUTPUT_DIR", tmp_path)
+        ledger = ClaimLedger()
+        # Above threshold (support=2, threshold=2)
+        c1 = ledger.add_claim(
+            path="identity/bio",
+            text="Uno is an AI",
+            scene_id="s1",
+            justification="R1",
+        )
+        ledger.support_claim(claim_id=c1.id, scene_id="s2", justification="R2")
+        # Below threshold (support=1, threshold=2)
+        ledger.add_claim(
+            path="identity/origin",
+            text="Uno was created by Everett Ducklair",
+            scene_id="s3",
+            justification="R3",
+        )
+
+        filtered = run_claim_filtering(ledger)
+
+        assert filtered.claim_count() == 1
+        assert filtered.get_claim(c1.id) is not None
+        assert (tmp_path / "filtered_ledger.json").exists()
+
+    def test_skips_if_file_exists(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("extract.build_emotional_profile.OUTPUT_DIR", tmp_path)
+        ledger = ClaimLedger()
+        c1 = ledger.add_claim(
+            path="identity/bio",
+            text="Uno is an AI",
+            scene_id="s1",
+            justification="R1",
+        )
+        ledger.support_claim(claim_id=c1.id, scene_id="s2", justification="R2")
+
+        # Pre-save a filtered ledger with no claims
+        empty_ledger = ClaimLedger()
+        import json
+
+        (tmp_path / "filtered_ledger.json").write_text(
+            json.dumps(empty_ledger.to_json())
+        )
+
+        result = run_claim_filtering(ledger)
+        assert result.claim_count() == 0
+
+
+# ============================================================================
 # SoulDocumentGenerator claim formatting
 # ============================================================================
 
@@ -1499,35 +1554,21 @@ class TestClaimFormatting:
         )
         return ledger
 
-    def test_format_section_excludes_below_threshold(self):
+    def test_format_section_includes_all_claims(self):
         ledger = self._make_ledger()
         backend = MockBackend()
         gen = SoulDocumentGenerator(backend, ledger)
         output = gen._format_section_claims("identity")
         assert "**Claim (support: +2):** Uno is an AI" in output
-        assert "Uno was created by Everett Ducklair" not in output
+        assert "Uno was created by Everett Ducklair" in output
 
-    def test_format_section_excludes_zero_support(self):
-        ledger = self._make_ledger()
-        c = ledger.add_claim(
-            path="identity/names",
-            text="Uno is called X",
-            scene_id="s4",
-            justification="R4",
-        )
-        ledger.contradict_claim(claim_id=c.id, scene_id="s5", justification="R5")
-        backend = MockBackend()
-        gen = SoulDocumentGenerator(backend, ledger)
-        output = gen._format_section_claims("identity")
-        assert "Uno is called X" not in output
-
-    def test_vignettes_use_threshold(self):
+    def test_vignettes_include_all_claims(self):
         ledger = self._make_ledger()
         backend = MockBackend()
         gen = SoulDocumentGenerator(backend, ledger)
         output = gen._format_vignette_claims()
         assert "Uno is an AI" in output
-        assert "Uno was created by Everett Ducklair" not in output
+        assert "Uno was created by Everett Ducklair" in output
 
 
 # ============================================================================
@@ -1601,12 +1642,12 @@ class TestValuesFormatting:
         assert "Relationship Context" in output
         assert "trusted partner" in output
 
-    def test_format_values_excludes_below_threshold(self):
+    def test_format_values_includes_all_value_claims(self):
         ledger = self._make_ledger_with_values_and_relationships()
         backend = MockBackend()
         gen = SoulDocumentGenerator(backend, ledger)
         output = gen._format_values_claims()
-        assert "operational secrecy" not in output
+        assert "operational secrecy" in output
 
     def test_format_values_empty_when_no_value_claims(self):
         ledger = ClaimLedger()

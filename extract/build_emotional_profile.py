@@ -1919,33 +1919,28 @@ class SoulDocumentGenerator:
     def _get_relationship_context(
         self, *, exclude_prefix: str | None = None
     ) -> list[Claim]:
-        """Get above-threshold relationship claims, optionally excluding a prefix."""
-        t = threshold_for_section("relationships")
+        """Get relationship claims, optionally excluding a prefix."""
         return [
             c
             for c in self._ledger.get_claims_by_section("relationships").get(
                 "relationships", []
             )
-            if c.support_count >= t
-            and (exclude_prefix is None or not c.path.startswith(exclude_prefix))
+            if exclude_prefix is None or not c.path.startswith(exclude_prefix)
         ]
 
     def _format_section_claims(self, section: str) -> str:
         claims_by_section = self._ledger.get_claims_by_section(section=section)
-        t = threshold_for_section(section)
-        claims = [c for c in claims_by_section.get(section, []) if c.support_count >= t]
+        claims = claims_by_section.get(section, [])
         if not claims:
             return ""
         return self._format_claim_group(claims, include_quotes=True)
 
     def _format_values_claims(self) -> str:
         """Format values claims alongside relationship claims for generalization."""
-        t = threshold_for_section("values")
         value_claims = [
             claim
             for claims in self._ledger.get_claims_by_path("psychology/values").values()
             for claim in claims
-            if claim.support_count >= t
         ]
         if not value_claims:
             return ""
@@ -1997,9 +1992,8 @@ class SoulDocumentGenerator:
     def _format_vignette_claims(self) -> str:
         """Format top claims across all sections for vignette generation."""
         all_claims: list[Claim] = []
-        for section, claims in self._ledger.get_claims_by_section().items():
-            t = threshold_for_section(section)
-            all_claims.extend(c for c in claims if c.support_count >= t)
+        for claims in self._ledger.get_claims_by_section().values():
+            all_claims.extend(claims)
 
         all_claims.sort(key=lambda c: c.support_count, reverse=True)
         top_claims = all_claims[:50]
@@ -2353,6 +2347,39 @@ def run_claim_condensation(backend: LLMBackend, ledger: ClaimLedger) -> ClaimLed
     return ledger
 
 
+def run_claim_filtering(ledger: ClaimLedger) -> ClaimLedger:
+    filtered_ledger_path = OUTPUT_DIR / "filtered_ledger.json"
+
+    if filtered_ledger_path.exists():
+        log.info(
+            f"Filtered ledger already exists at {path_str(filtered_ledger_path)}, skipping"
+        )
+        with open(filtered_ledger_path, encoding="utf-8") as f:
+            data = json.load(f)
+        return ClaimLedger.from_json(data)
+
+    filtered = ClaimLedger.from_json(ledger.to_json())
+
+    to_remove: list[int] = []
+    for claim_id, claim in list(filtered._claims.items()):
+        if claim.support_count < threshold_for_section(claim.section):
+            to_remove.append(claim_id)
+
+    for claim_id in to_remove:
+        filtered.remove_claim(claim_id)
+
+    console.print(
+        f"\n[bold cyan]Filtering low-support claims...[/bold cyan]\n"
+        f"Kept {filtered.claim_count()} claims, removed {len(to_remove)}"
+    )
+
+    with open(filtered_ledger_path, "w", encoding="utf-8") as f:
+        json.dump(filtered.to_json(), f, ensure_ascii=False, indent=2)
+    log.info(f"Saved filtered ledger to {path_str(filtered_ledger_path)}")
+
+    return filtered
+
+
 def run_document_generation(backend: LLMBackend, ledger: ClaimLedger) -> None:
     soul_doc_path = OUTPUT_DIR / "uno_soul_document.md"
 
@@ -2376,16 +2403,7 @@ def run_document_generation(backend: LLMBackend, ledger: ClaimLedger) -> None:
         console.print(f"Output: {path_str(soul_doc_path)}")
         console.print(f"Sections: {path_str(SECTIONS_DIR)}/")
         console.print(f"Size: {tokens:,} tokens (~{words:,} words)")
-        thresholds_str = ", ".join(f"{s}={t}" for s, t in SECTION_THRESHOLDS.items())
-        console.print(f"Thresholds: {thresholds_str}")
-
-        validated = sum(
-            1
-            for section, claims in ledger.get_claims_by_section().items()
-            for c in claims
-            if c.support_count >= threshold_for_section(section)
-        )
-        console.print(f"Claims: {validated} validated / {ledger.claim_count()} total")
+        console.print(f"Claims: {ledger.claim_count()}")
     else:
         console.print(
             f"\n[bold red]Soul document generation failed:[/bold red] {result}"
@@ -2431,6 +2449,7 @@ def main() -> None:
     ledger = run_claim_synthesis(backend, ledger)
     ledger = run_claim_generalization(backend, ledger)
     ledger = run_claim_condensation(backend, ledger)
+    ledger = run_claim_filtering(ledger)
     run_document_generation(backend, ledger)
 
     console.print(f"\n[bold]Output directory:[/bold] {path_str(OUTPUT_DIR)}")
