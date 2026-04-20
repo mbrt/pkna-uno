@@ -49,6 +49,7 @@ BASE_DIR = Path(__file__).parent.parent
 INPUT_DIR = BASE_DIR / "output" / "extract-emotional" / "v2"
 OUTPUT_DIR = BASE_DIR / "output" / "character-profile" / "uno" / VERSION_TAG
 CHECKPOINTS_DIR = OUTPUT_DIR / "checkpoints"
+SECTIONS_DIR = OUTPUT_DIR / "sections"
 
 # Global progress bar
 PROGRESS = Progress(
@@ -79,7 +80,7 @@ SECTION_SCOPES: dict[str, str] = {
     "values": "general",
     "communication": "general",
     "motivations": "general",
-    "capabilities": "general",
+    "capabilities": "in_universe",
     "behavior": "general",
     "relationships_generalized": "general",
     "relationships": "in_universe",
@@ -2020,15 +2021,26 @@ class SoulDocumentGenerator:
         self._ledger.accumulate_usage(result)
         return True, result.text
 
-    def generate(self) -> tuple[bool, str, dict[str, str]]:
+    def generate(
+        self, sections_dir: Path = SECTIONS_DIR
+    ) -> tuple[bool, str, dict[str, str]]:
         sections: list[str] = []
         section_map: dict[str, str] = {}
+        sections_dir.mkdir(parents=True, exist_ok=True)
 
         for section in SECTION_ORDER:
-            success, result = self._generate_section(section)
-            if not success:
-                log.error(f"Soul document generation failed at section '{section}'")
-                return False, result, {}
+            section_path = sections_dir / f"section_{section}.md"
+            if section_path.exists():
+                result = section_path.read_text(encoding="utf-8")
+                log.info(f"Section '{section}': loaded from {path_str(section_path)}")
+            else:
+                success, result = self._generate_section(section)
+                if not success:
+                    log.error(f"Soul document generation failed at section '{section}'")
+                    return False, result, {}
+                if result:
+                    section_path.write_text(result, encoding="utf-8")
+
             if result:
                 scope = SECTION_SCOPES.get(section, "general")
                 wrapped = (
@@ -2328,19 +2340,12 @@ def run_document_generation(
         with open(soul_doc_path, "w", encoding="utf-8") as f:
             f.write(result)
 
-        sections_dir = OUTPUT_DIR / "sections"
-        sections_dir.mkdir(parents=True, exist_ok=True)
-        for section_name, section_content in section_map.items():
-            section_path = sections_dir / f"section_{section_name}.md"
-            with open(section_path, "w", encoding="utf-8") as f:
-                f.write(section_content)
-
         tokens = count_tokens(result)
         words = len(result.split())
 
         console.print("\n[bold green]Soul document generated![/bold green]")
         console.print(f"Output: {path_str(soul_doc_path)}")
-        console.print(f"Sections: {path_str(sections_dir)}/")
+        console.print(f"Sections: {path_str(SECTIONS_DIR)}/")
         console.print(f"Size: {tokens:,} tokens (~{words:,} words)")
         console.print(f"Threshold: support >= {threshold}")
 

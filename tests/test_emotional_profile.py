@@ -1542,7 +1542,7 @@ class TestValuesFormatting:
 
 
 class TestGenerateSplitOutput:
-    def test_generate_returns_section_map(self):
+    def test_generate_returns_section_map(self, tmp_path: Path):
         ledger = ClaimLedger()
         c = ledger.add_claim(
             path="identity/bio",
@@ -1553,7 +1553,9 @@ class TestGenerateSplitOutput:
         ledger.support_claim(claim_id=c.id, scene_id="s2", justification="R2")
         backend = MockBackend("## Generated Section Content")
         gen = SoulDocumentGenerator(backend, ledger, threshold=2)
-        success, document, section_map = gen.generate()
+        success, document, section_map = gen.generate(
+            sections_dir=tmp_path / "sections"
+        )
         assert success
         assert "# Uno - Soul Document" in document
         assert len(section_map) > 0
@@ -1561,15 +1563,15 @@ class TestGenerateSplitOutput:
             assert section_name in SECTION_ORDER
             assert content == "## Generated Section Content"
 
-    def test_generate_empty_ledger(self):
+    def test_generate_empty_ledger(self, tmp_path: Path):
         ledger = ClaimLedger()
         backend = MockBackend()
         gen = SoulDocumentGenerator(backend, ledger, threshold=2)
-        success, result, section_map = gen.generate()
+        success, result, section_map = gen.generate(sections_dir=tmp_path / "sections")
         assert not success
         assert section_map == {}
 
-    def test_generate_wraps_sections_with_markers(self):
+    def test_generate_wraps_sections_with_markers(self, tmp_path: Path):
         ledger = ClaimLedger()
         c = ledger.add_claim(
             path="identity/bio",
@@ -1580,10 +1582,48 @@ class TestGenerateSplitOutput:
         ledger.support_claim(claim_id=c.id, scene_id="s2", justification="R2")
         backend = MockBackend("## Generated Section Content")
         gen = SoulDocumentGenerator(backend, ledger, threshold=2)
-        success, document, _ = gen.generate()
+        success, document, _ = gen.generate(sections_dir=tmp_path / "sections")
         assert success
         assert "<!-- section:general:identity -->" in document
         assert "<!-- /section:identity -->" in document
+
+    def test_generate_resumes_from_saved_sections(self, tmp_path: Path):
+        sections_dir = tmp_path / "sections"
+        sections_dir.mkdir()
+        (sections_dir / "section_identity.md").write_text("## Cached Identity")
+
+        ledger = ClaimLedger()
+        c = ledger.add_claim(
+            path="identity/bio",
+            text="Uno is an AI",
+            scene_id="s1",
+            justification="R1",
+        )
+        ledger.support_claim(claim_id=c.id, scene_id="s2", justification="R2")
+        backend = MockBackend("## Fresh Content")
+        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        success, document, section_map = gen.generate(sections_dir=sections_dir)
+        assert success
+        assert section_map["identity"] == "## Cached Identity"
+
+    def test_generate_saves_sections_to_disk(self, tmp_path: Path):
+        sections_dir = tmp_path / "sections"
+
+        ledger = ClaimLedger()
+        c = ledger.add_claim(
+            path="identity/bio",
+            text="Uno is an AI",
+            scene_id="s1",
+            justification="R1",
+        )
+        ledger.support_claim(claim_id=c.id, scene_id="s2", justification="R2")
+        backend = MockBackend("## Generated Content")
+        gen = SoulDocumentGenerator(backend, ledger, threshold=2)
+        gen.generate(sections_dir=sections_dir)
+        assert (sections_dir / "section_identity.md").exists()
+        assert (
+            sections_dir / "section_identity.md"
+        ).read_text() == "## Generated Content"
 
 
 # ============================================================================
