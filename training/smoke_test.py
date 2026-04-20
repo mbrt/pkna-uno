@@ -418,18 +418,13 @@ def main() -> None:
         action="store_true",
         help="Run all stages except training (no GPU needed)",
     )
-    parser.add_argument(
-        "--clean",
-        action="store_true",
-        help="Remove output directory before running",
-    )
     args = parser.parse_args()
 
     console.print("[bold cyan]Pipeline Smoke Test[/bold cyan]\n")
 
     output_dir = Path(args.output_dir)
 
-    if args.clean and output_dir.exists():
+    if output_dir.exists():
         log.info("Cleaning %s", output_dir)
         shutil.rmtree(output_dir)
 

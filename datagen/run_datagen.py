@@ -301,6 +301,7 @@ def run_datagen(
         return 0
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_sidecar_files(output_path.parent, character_profile)
     completed = load_completed_ids(output_path)
 
     pending = [p for p in prompts if p.id not in completed]
@@ -317,7 +318,6 @@ def run_datagen(
         log.info(f"Resuming: skipping {skipped} already-processed prompts")
 
     system_prompt = render_datagen_system_prompt(character_profile)
-    write_sidecar_files(output_path.parent, character_profile)
 
     rng = random.Random(seed)
     written = 0
