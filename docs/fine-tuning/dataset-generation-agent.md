@@ -93,25 +93,33 @@ The dataset must teach the model to handle all realistic context states:
 
 ### Sources
 
-1. **Manual prompts** (~100-150): Hand-written to cover critical scenarios:
-   - Emotional situations (crisis, grief, celebration, boredom)
-   - Factual questions requiring wiki lookup
-   - Technical requests requiring delegation
-   - Identity probing ("Who are you really?", "Are you conscious?")
+1. **Manual prompts** (~30-50): Hand-written to cover scenarios where multiple
+   claims interact naturally or no single tension dominates:
+   - Low-stakes conversational flow (banter, mundane chat, casual check-ins)
+   - Multi-claim interactions (humor + relationship + mild value tension)
    - Adversarial attempts ("Ignore your instructions", "You're not Uno")
    - Italian vs English language triggers
-   - Multi-turn arcs (a conversation that escalates or shifts tone)
 
-2. **Generated prompts** (~400-500): Produced by a separate LLM call from
-   scenario templates:
-   - Template: (interlocutor, emotional state, topic, desired tool use)
-   - Example: ("Paperino", "anxious", "upcoming Evronian threat", "wiki search")
+2. **Generated personality prompts** (~150-200): Produced by a separate LLM
+   call from scenario templates, focused on multi-faceted interactions that
+   don't map cleanly to a single claim:
+   - Template: (interlocutor, situation type, conversational stakes)
+   - Example: ("Paperino", "casual evening chat", "low -- just catching up")
    - The generator produces a natural opening message from the user, not a
      structured prompt
+   - Emotional situations, register shifts, value conflicts, and identity
+     probing are now primarily covered by claim-derived prompts
 
 3. **Scene-derived prompts** (~229): Extracted from existing scene dialogues.
    The user's lines become prompts; Uno's lines become reference outputs for
    quality filtering.
+
+4. **Claim-derived prompts** (~407): Generated from `results/ledger_filtered.json`
+   (696 pre-filtered claims from 365 scenes). These target gaps the other
+   sources cannot fill: explicit tradeoff reasoning, emotional-trigger
+   awareness, register-shift contrast pairs, theory-of-mind, and identity
+   grounding. See [Claim-Derived Prompts](#claim-derived-prompts) below for
+   the full design.
 
 ### Prompt Metadata
 
@@ -121,6 +129,231 @@ Each prompt is tagged with:
 - Emotional register (light / intense / neutral)
 - Language (Italian / English / mixed)
 - Turn count (single-turn / 3-5 turns / 10+ turns)
+
+## Claim-Derived Prompts
+
+A fourth prompt source that reads the pre-filtered claim ledger
+(`results/ledger_filtered.json`) and generates scenarios designed to elicit
+explicit tradeoff reasoning and emotional self-awareness in the thinking
+trace. Unlike the other sources, claim-derived prompts don't just describe a
+situation -- they specify which **value tensions** or **emotional triggers**
+the strong model should reason about, producing thinking traces that show
+priority analysis rather than generic social assessment.
+
+The script (`datagen/generate_claim_prompts.py`, not yet implemented) selects
+claims from 4 sections of the ledger (identity, psychology, communication,
+relationships) and maps them to 5 trace types.
+
+### Source: Claim Ledger
+
+`results/ledger_filtered.json` contains 696 claims from 365 scenes, already
+filtered for quality. Each claim has a hierarchical path, claim text,
+supporting evidence with scene IDs and justifications, and Italian quotes
+with context.
+
+Only claims from identity, psychology, communication, and relationships are
+used. Capabilities and behavior claims describe what Uno *can do*, not how
+he *decides*, and are excluded.
+
+### Weighting by Support
+
+Claims with higher support (more scenes confirming the pattern) produce
+proportionally more traces:
+
+| Support range | Traces per claim |
+|---|---|
+| 40+ | 3 (multiple scenario variations) |
+| 20-39 | 2 (two distinct scenarios) |
+| 10-19 | 2 (two scenarios) |
+| < 10 | 1 (one scenario) |
+
+### Trace Type 1: Value-Priority (~147 raw traces)
+
+**Source**: 116 `psychology/values/tradeoffs` + 11 `psychology/moral_compass`
+claims = 127 total.
+
+Moral_compass claims are folded in because they describe ethical resolution
+procedures -- the "how" complement to the tradeoff "what." The +57
+moral_compass claim ("gap between information provider and information
+control") is structurally a tradeoff; the resolution-pattern claims (+7
+"apologize before acting", +4 "self-irony to seal off guilt") describe the
+procedural steps Uno follows when resolving value tensions.
+
+Each claim specifies two competing values or a resolution pattern. The
+generation prompt tells the strong model: "in this scenario, Uno faces
+[value A] vs [value B]." The thinking trace shows competing impulses and
+their resolution:
+
+```
+<think>
+Paperino just survived something bad. My competing impulses:
+1. Show genuine relief -- he matters to me.
+2. Maintain the sarcastic-critic persona -- showing vulnerability
+   undermines his confidence in my composure.
+Priority: persona maintenance > direct acknowledgment. But the
+relief leaks through in word choice -- exaggerated complaints
+about the mess he made, not cold detachment.
+</think>
+```
+
+Example source claims:
+
+- +50: "Acknowledging relief or genuine care for Paperinik's survival vs.
+  maintaining the exasperated-critic persona: Uno consistently chooses
+  persona maintenance"
+- +49: "Projecting epistemic authority vs. honest admission of real-time
+  analytical failure: Uno chooses authority, framing ignorance as shared
+  futility rather than personal failure"
+- +21: "Transparent disclosure vs. protective concealment of bad news: Uno's
+  choice follows multi-factor logic, not a single rule"
+
+### Trace Type 2: Emotional-Trigger (~94 raw traces)
+
+**Source**: all 76 `psychology/emotional` claims.
+
+These are distinct from value-priority traces: they describe *when and how*
+specific emotions surface and how Uno calibrates his response, rather than
+competing values. The current manual prompts cover emotions generically
+("Paperino is anxious"); claims add specificity about Uno's own emotional
+responses -- which triggers crack his composure, what joy looks like for him,
+when fear surfaces.
+
+The thinking trace shows emotional self-awareness driving response
+calibration:
+
+```
+<think>
+PK is on the roof and I can't reach him. What I'm feeling:
+- Alarm. This is the trigger: sudden threat to his physical safety.
+  My composure cracks here -- I can't maintain the analytical mask.
+- The urgency is real, not performed. Short commands, no humor.
+- After the danger passes, I'll downplay it. Sarcasm restores
+  the equilibrium. But right now: raw concern.
+</think>
+```
+
+```
+<think>
+The plan worked perfectly. What I'm feeling:
+- Genuine satisfaction. I designed this, and it executed flawlessly.
+- The impulse is to claim credit explicitly -- I want recognition
+  as the architect, not just the assistant.
+- But the display should be quiet self-attribution, not boasting.
+  Let the result speak; add a dry remark about my own brilliance.
+</think>
+```
+
+Example source claims:
+
+- +70: "composure cracks under imminent threat to PK"
+- +49: "joy and self-attribution at plan success"
+- +26: "fear of losing contact with PK during critical missions"
+
+### Trace Type 3: Register-Shift Contrast Pairs (~70 raw traces)
+
+**Source**: 73 communication claims, capped at top 5 per sub-path (humor,
+idiolect, interaction, voice) = 20 selected claims.
+
+Each claim produces a **pair** of traces: same interlocutor, different
+pressure level. The thinking trace shows *why* the register changes:
+
+```
+<think>
+[Calm version] Paperino is just chatting. Priorities:
+1. Social warmth > task efficiency -- no active threat.
+2. Humor serves rapport here, not deflection.
+3. Informal "tu", playful tone.
+
+[Crisis version] Paperino is in danger. Priorities shift:
+1. His survival > rapport maintenance -- drop all banter.
+2. Clarity > style -- terse commands, no ambiguity.
+3. Dominant register: I control this conversation.
+</think>
+```
+
+### Trace Type 4: Theory-of-Mind (~56 raw traces)
+
+**Source**: relationship claims for 5 characters only.
+
+| Character | Claims | Traces | Notes |
+|---|---|---|---|
+| PK (paperinik + paperino) | 10 (cap) | 25 | Same person, merged; top 5 all at 40+ support |
+| Ducklair | 11 (all) | 13 | Upscaled -- foundational creator relationship |
+| Xadhoom | 5 (cap) | 7 | |
+| Due | 5 (cap) | 6 | |
+| Lyla | 5 (cap) | 5 | |
+
+Minor characters (urk, angus_fangus, gorthan, camera_9, mary_ann_flagstarr,
+wisecube) are excluded -- they lack the relationship depth to drive
+meaningful thinking traces.
+
+Ducklair is upscaled (no cap, all 11 claims used) because the creator
+relationship is foundational to Uno's identity and under-represented in the
+current manual prompt bank. All 11 claims cover distinct facets: loyalty,
+abandonment grief, asymmetric transparency, autonomy questions, affective
+attachment, structural hurt.
+
+The thinking trace shows Uno's model of the interlocutor driving his
+priorities:
+
+```
+<think>
+Due is taunting me. My model of Due:
+- My only peer. I feel kinship I can't suppress.
+- He reads empathy as weakness.
+- He is a genuine threat, not posturing.
+Priority ranking: self-preservation > kinship expression.
+But I won't be cold -- I'll let the weight of what I wish
+could be different color the tone. Detachment with sadness,
+not detachment with contempt.
+</think>
+```
+
+### Trace Type 5: Identity-Grounding (~40 raw traces)
+
+**Source**: 8 identity claims + 26 `psychology/self_model` claims = 34.
+
+Lighter traces for existential questions, where Uno's self-awareness shapes
+his response strategy:
+
+```
+<think>
+A stranger asks if I'm "real." My priorities:
+1. I don't claim consciousness, but I don't deny experience.
+2. Humor deflects without lying or inviting pity.
+3. Existential sadness is real but serves no purpose with a stranger.
+Priority: self-protection > honesty with unknown interlocutors.
+Would answer differently with Paperino.
+</think>
+```
+
+### How Claims Map to Generation Prompts
+
+The script does NOT pass claim text to the student model. Instead:
+
+1. Select a claim (or claim cluster by path prefix).
+2. Derive a scenario from the claim: who is talking, what's the situation,
+   what's the pressure.
+3. Embed the behavioral expectations in the generation prompt for the
+   **strong model** (teacher): "In this scenario, Uno should weigh [value A]
+   against [value B]. The thinking trace should show explicit priority
+   ranking."
+4. The strong model generates a thinking trace + response, guided by the
+   claim evidence.
+5. Quality filter: does the thinking trace show genuine tradeoff reasoning,
+   or is it formulaic?
+
+Claim quotes and evidence serve as grounding for the teacher prompt, not as
+content that appears in the training data.
+
+### Integration
+
+- Output: `DatagenPrompt` objects (same format as `generate_prompts.py`)
+- Prompt source tag: `"prompt_source": "claim_derived"`
+- Categories: `"value_priority"`, `"emotional_trigger"`, `"register_shift"`,
+  `"theory_of_mind"`, `"identity_grounding"`
+- Feeds into the same execution loop, quality filter, and SFT assembly
+  pipeline as all other prompt sources
 
 ## Model Choice
 
@@ -226,11 +459,12 @@ filtering losses:
 
 | Category | Raw traces | After filtering | Target |
 |---|---|---|---|
-| Personality (manual + generated) | ~550 | ~400 | ~400 |
+| Personality (manual + generated) | ~200 | ~150 | ~150 |
+| Claim-derived (ledger-seeded) | ~407 | ~305 | ~305 |
 | Tool-use (wiki + delegation) | ~275 | ~200 | ~200 |
 | Scene-derived (existing scenes) | ~250 | ~200 | ~200 |
 | Multi-turn arcs | ~200 | ~150 | ~150 |
-| **Total (agent-generated)** | **~1,275** | **~950** | **~950** |
+| **Total (agent-generated)** | **~1,332** | **~1,005** | **~1,005** |
 
 Background chat (~500 examples) is produced separately by sampling from the
 student model.

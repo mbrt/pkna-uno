@@ -170,8 +170,9 @@ accordingly, informed by his character profile.
   emotionally annotated comic scenes (panels, dialogue, annotations).
 - [x] **Wiki corpus** -- `results/wiki/`: fandom + Wikipedia articles on PKNA
   characters, technology, locations.
-- [x] **Character profile** -- `results/uno_soul_document.md`,
-  `results/final_ledger.json`, `results/refined_ledger.json`.
+- [x] **Character profile** -- `results/uno_soul_document_full.md` (1,150-line
+  full profile), `results/ledger_filtered.json` (696 pre-filtered claims from
+  365 scenes), `results/final_ledger.json`, `results/refined_ledger.json`.
 
 ### Dataset Generation Agent (dataset-generation-agent.md)
 
@@ -186,6 +187,14 @@ accordingly, informed by his character profile.
   register shift, memory, multi-turn, casual); scene-derived prompt extraction
   from `output/extract-emotional/v2/` (365 scenes available); LLM-generated
   prompts from 40 scenario templates (opt-in via `--include-generated`).
+- [ ] **Claim-derived prompts** -- `datagen/generate_claim_prompts.py` (not
+  implemented): reads `results/ledger_filtered.json` and produces ~407 prompts
+  across 5 categories (value-priority from 127 tradeoff + moral_compass claims,
+  emotional-trigger from 76 emotional claims, register-shift contrast pairs
+  from 20 communication claims, theory-of-mind from 36 relationship claims
+  for 5 characters, identity-grounding from 34 identity/self-model claims).
+  Claims with higher support produce proportionally more traces. See
+  [SFT Dataset](fine-tuning/sft-dataset.md).
 - [x] **Execution loop** -- `datagen/run_datagen.py`: runs strong model through
   prompts, records thinking + tool calls + responses as `DatagenTrace` JSONL.
   Supports single-turn and multi-turn (via user simulator). Uses

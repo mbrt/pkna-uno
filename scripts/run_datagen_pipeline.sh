@@ -24,6 +24,7 @@ MODEL="${DATAGEN_MODEL:-gemini-3-flash-preview}"
 SFT_MODEL="${SFT_MODEL:-Qwen/Qwen3.5-4B}"
 
 CORPUS="output/datagen/memory_corpus.jsonl"
+LEDGER="results/ledger_filtered.json"
 PROMPTS="output/datagen/prompts.jsonl"
 TRACES="output/datagen/traces.jsonl"
 SCORED="output/datagen/traces_scored.jsonl"
@@ -82,14 +83,16 @@ fi
 if [ "$SKIP_GEN" = true ]; then
     banner "Stage 1: Generate prompts [SKIPPED]"
 elif [ "$MINI" -gt 0 ]; then
-    banner "Stage 1: Generate prompts (manual only, max=$MINI)"
+    banner "Stage 1: Generate prompts (manual + claims, max=$MINI)"
     uv run python datagen/generate_prompts.py \
         --output "$PROMPTS" \
+        --ledger "$LEDGER" \
         "${MAX_ITEMS_FLAG[@]}"
 else
-    banner "Stage 1: Generate prompts (manual + scene + LLM-generated)"
+    banner "Stage 1: Generate prompts (manual + scene + claims + LLM-generated)"
     uv run python datagen/generate_prompts.py \
         --output "$PROMPTS" \
+        --ledger "$LEDGER" \
         --include-generated \
         --backend "$BACKEND" \
         --model "$MODEL"

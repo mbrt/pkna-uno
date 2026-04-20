@@ -188,11 +188,21 @@ def _make_eval_backend(n_calls: int) -> SequentialBackend:
 # ============================================================================
 
 
+LEDGER_PATH = Path("results/ledger_filtered.json")
+
+
 def run_stage_prompts(output_dir: Path) -> Path:
+    from datagen.generate_claim_prompts import generate_claim_prompts
     from datagen.generate_prompts import generate_manual_prompts, write_prompts
 
     prompts_path = output_dir / "prompts.jsonl"
     prompts = generate_manual_prompts()[:MAX_PROMPTS]
+
+    if LEDGER_PATH.exists():
+        claim_prompts = generate_claim_prompts(LEDGER_PATH)[:MAX_PROMPTS]
+        prompts.extend(claim_prompts)
+        log.info("Added %d claim-derived prompts", len(claim_prompts))
+
     write_prompts(prompts_path, prompts)
     log.info("Wrote %d prompts to %s", len(prompts), prompts_path)
     return prompts_path
