@@ -84,30 +84,63 @@ def render_context_preamble(
 render_datagen_context_preamble = render_context_preamble
 
 
+TRACE_GUIDANCE_OPEN = "<trace_guidance>"
+TRACE_GUIDANCE_CLOSE = "</trace_guidance>"
+
+
 def prepend_context_to_messages(
     messages: list[dict[str, Any]],
     user_summary: str,
     memory_context: str,
+    trace_guidance: str = "",
 ) -> list[dict[str, Any]]:
     """Prepend per-prompt context (interlocutor, memories) to the first user message.
 
-    When user_summary and memory_context are both empty the messages are
-    returned unchanged.  Otherwise a ``[Context]`` / ``[Message]`` wrapper
-    is added to the first user-role message.
+    When user_summary and memory_context are both empty (and no trace_guidance)
+    the messages are returned unchanged.  Otherwise a ``<context>`` /
+    ``<message>`` wrapper is added to the first user-role message.
+
+    The optional ``trace_guidance`` is teacher-only scaffolding: it tells the
+    strong model what kind of reasoning to produce.  It is wrapped in
+    ``<trace_guidance>`` XML tags between ``<context>`` and ``<message>``, and
+    must be stripped before SFT assembly (see ``strip_trace_guidance``).
     """
     preamble = render_context_preamble(user_summary, memory_context)
-    if not preamble:
+    if not preamble and not trace_guidance:
         return messages
+
+    parts: list[str] = []
+    if preamble:
+        parts.append(f"<context>\n{preamble}\n</context>")
+    if trace_guidance:
+        parts.append(f"{TRACE_GUIDANCE_OPEN}\n{trace_guidance}\n{TRACE_GUIDANCE_CLOSE}")
+    combined = "\n\n".join(parts)
 
     result = list(messages)
     for i, m in enumerate(result):
         if m["role"] == "user":
             result[i] = {
                 "role": "user",
-                "content": f"[Context]\n{preamble}\n\n[Message]\n{m['content']}",
+                "content": f"{combined}\n\n<message>\n{m['content']}\n</message>",
             }
             break
     return result
+
+
+def strip_trace_guidance(content: str) -> str:
+    """Remove the ``<trace_guidance>`` block from a user message.
+
+    Used during SFT assembly to strip teacher-only scaffolding before
+    the message becomes training data.
+    """
+    import re
+
+    return re.sub(
+        r"\n*<trace_guidance>.*?</trace_guidance>",
+        "",
+        content,
+        flags=re.DOTALL,
+    )
 
 
 # ============================================================================

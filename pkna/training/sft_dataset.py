@@ -16,6 +16,7 @@ No GPU or model dependencies -- this is pure data transformation.
 from typing import Any
 
 from pkna.datagen.types import DatagenTrace
+from pkna.inference.system_prompts import strip_trace_guidance
 
 
 def _convert_tool_calls(
@@ -39,7 +40,8 @@ def _convert_message(msg: dict[str, Any]) -> dict[str, Any]:
     role = msg.get("role", "")
 
     if role == "user":
-        return {"role": "user", "content": msg.get("content", "")}
+        content = strip_trace_guidance(msg.get("content", ""))
+        return {"role": "user", "content": content}
 
     if role == "assistant":
         result: dict[str, Any] = {"role": "assistant"}

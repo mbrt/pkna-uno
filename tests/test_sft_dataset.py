@@ -1,6 +1,7 @@
 """Unit tests for SFT dataset conversion logic."""
 
 from pkna.datagen.types import DatagenTrace
+from pkna.inference.system_prompts import TRACE_GUIDANCE_CLOSE, TRACE_GUIDANCE_OPEN
 from pkna.training.sft_dataset import (
     _convert_message,
     _convert_tool_calls,
@@ -234,3 +235,37 @@ class TestTraceToMessages:
         tool_msg = messages[1]
         assert tool_msg == {"role": "tool", "content": "result text"}
         assert "name" not in tool_msg
+
+
+class TestTraceGuidanceStripping:
+    def test_user_message_with_guidance_stripped(self):
+        content = (
+            "<context>\nInterlocutor: Paperino\n</context>\n\n"
+            f"{TRACE_GUIDANCE_OPEN}\nShow tradeoff analysis.\n"
+            f"{TRACE_GUIDANCE_CLOSE}\n\n"
+            "<message>\nCiao, Uno!\n</message>"
+        )
+        msg = {"role": "user", "content": content}
+        result = _convert_message(msg)
+        assert TRACE_GUIDANCE_OPEN not in result["content"]
+        assert "Show tradeoff analysis" not in result["content"]
+        assert "Ciao, Uno!" in result["content"]
+
+    def test_user_message_without_guidance_unchanged(self):
+        content = "<context>\nInterlocutor: Paperino\n</context>\n\n<message>\nCiao!\n</message>"
+        msg = {"role": "user", "content": content}
+        result = _convert_message(msg)
+        assert result["content"] == content
+
+    def test_plain_user_message_unchanged(self):
+        msg = {"role": "user", "content": "Hello, Uno!"}
+        result = _convert_message(msg)
+        assert result["content"] == "Hello, Uno!"
+
+    def test_assistant_message_not_affected(self):
+        msg = {
+            "role": "assistant",
+            "content": f"Some text with {TRACE_GUIDANCE_OPEN} in it.",
+        }
+        result = _convert_message(msg)
+        assert TRACE_GUIDANCE_OPEN in result["content"]

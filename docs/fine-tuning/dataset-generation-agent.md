@@ -140,9 +140,15 @@ situation -- they specify which **value tensions** or **emotional triggers**
 the strong model should reason about, producing thinking traces that show
 priority analysis rather than generic social assessment.
 
-The script (`datagen/generate_claim_prompts.py`, not yet implemented) selects
-claims from 4 sections of the ledger (identity, psychology, communication,
-relationships) and maps them to 5 trace types.
+The script (`datagen/generate_claim_prompts.py`) selects claims from 4
+sections of the ledger (identity, psychology, communication, relationships)
+and maps them to 5 trace types. `generate_claim_messages()` fills in the
+empty user messages by calling the LLM with structured output
+(`ClaimScenario`), which returns a natural user message, optional seed
+memories (1-3 entries providing emotional backstory), and optional
+multi-turn configuration for claims that benefit from conversational
+build-up (internal states, gradual revelations). Memory profiles are
+matched to the selected interlocutor rather than defaulting to empty.
 
 ### Source: Claim Ledger
 

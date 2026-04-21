@@ -22,7 +22,10 @@ from typing import NamedTuple
 
 from rich.progress import Progress
 
-from datagen.generate_claim_prompts import generate_claim_prompts
+from datagen.generate_claim_prompts import (
+    generate_claim_messages,
+    generate_claim_prompts,
+)
 from pkna.datagen.constants import (
     MEMORY_PROFILE_CASUAL_NEW,
     MEMORY_PROFILE_CASUAL_RETURNING,
@@ -1469,17 +1472,29 @@ def main() -> None:
     log.info(f"Scene-derived prompts: {len(scene)}")
     all_prompts.extend(scene)
 
+    # Create backend lazily when needed by claim-derived or LLM-generated prompts
+    backend: LLMBackend | None = None
+
+    def get_backend() -> LLMBackend:
+        nonlocal backend
+        if backend is None:
+            backend = create_backend(args.backend, args.model)
+        return backend
+
     # Claim-derived prompts
     if args.ledger:
-        claim_prompts = generate_claim_prompts(args.ledger, seed=args.seed)
+        structural = generate_claim_prompts(args.ledger, seed=args.seed)
+        cache_path = args.output.parent / "claim_prompts_cache.jsonl"
+        claim_prompts = generate_claim_messages(
+            structural, get_backend(), cache_path=cache_path
+        )
         log.info(f"Claim-derived prompts: {len(claim_prompts)}")
         all_prompts.extend(claim_prompts)
 
     # LLM-generated prompts
     if args.include_generated:
-        backend = create_backend(args.backend, args.model)
         cache_path = args.output.parent / "generated_prompts_cache.jsonl"
-        generated = generate_llm_prompts(backend, cache_path=cache_path)
+        generated = generate_llm_prompts(get_backend(), cache_path=cache_path)
         log.info(f"LLM-generated prompts: {len(generated)}")
         all_prompts.extend(generated)
 

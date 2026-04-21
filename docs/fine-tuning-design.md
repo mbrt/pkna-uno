@@ -188,14 +188,21 @@ accordingly, informed by his character profile.
   register shift, memory, multi-turn, casual); scene-derived prompt extraction
   from `output/extract-emotional/v2/` (365 scenes available); LLM-generated
   prompts from 40 scenario templates (opt-in via `--include-generated`).
-- [ ] **Claim-derived prompts** -- `datagen/generate_claim_prompts.py` (not
-  implemented): reads `results/ledger_filtered.json` and produces ~407 prompts
-  across 5 categories (value-priority from 127 tradeoff + moral_compass claims,
-  emotional-trigger from 76 emotional claims, register-shift contrast pairs
-  from 20 communication claims, theory-of-mind from 36 relationship claims
-  for 5 characters, identity-grounding from 34 identity/self-model claims).
-  Claims with higher support produce proportionally more traces. See
-  [SFT Dataset](fine-tuning/sft-dataset.md).
+- [x] **Claim-derived prompts** -- `datagen/generate_claim_prompts.py`:
+  reads `results/ledger_filtered.json` and produces ~407 prompts across 5
+  categories (value-priority from tradeoff + moral_compass claims,
+  emotional-trigger from emotional claims, register-shift contrast pairs
+  from communication claims, theory-of-mind from relationship claims for 5
+  characters, identity-grounding from identity/self-model claims). Claims
+  with higher support produce proportionally more traces.
+  `generate_claim_messages()` fills in user messages via structured LLM
+  calls (returning `ClaimScenario` with user message, optional seed
+  memories, and optional multi-turn config) with resume support. Memory
+  profiles are matched to the selected interlocutor. Seed memories are
+  rendered into memory context at datagen time. Trace guidance metadata is
+  injected into the datagen context via `[Trace Guidance]` blocks and
+  stripped at SFT assembly time.
+  See [SFT Dataset](fine-tuning/sft-dataset.md).
 - [x] **Execution loop** -- `datagen/run_datagen.py`: runs strong model through
   prompts, records thinking + tool calls + responses as `DatagenTrace` JSONL.
   Supports single-turn and multi-turn (via user simulator). Uses

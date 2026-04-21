@@ -10,6 +10,11 @@ Produces ``output/datagen/memory_corpus.jsonl`` by:
 Each entry is a ``MemoryCorpusEntry`` (key, value, days_ago, tags,
 archetype, character).
 
+Resumable: generation proceeds as a sequence of steps (seed ingestion,
+then one LLM call per scenario). Each step appends its entries to the
+output file immediately. On re-run, the number of lines already in the
+file is counted and completed steps are skipped.
+
 Usage:
     python datagen/generate_memory_corpus.py \
         --output output/datagen/memory_corpus.jsonl \
@@ -19,6 +24,7 @@ Usage:
 import argparse
 import logging
 from pathlib import Path
+from typing import IO
 
 from pydantic import BaseModel, TypeAdapter
 from rich.progress import Progress
@@ -271,68 +277,102 @@ def _parse_structured(text: str) -> list[RawMemoryEntry]:
         return entries
 
 
-def generate_roleplay_entries(backend: LLMBackend) -> list[MemoryCorpusEntry]:
-    """Generate roleplay memory entries for all characters."""
-    entries: list[MemoryCorpusEntry] = []
-    with Progress(console=console) as progress:
-        task = progress.add_task(
-            "Generating roleplay memories", total=len(ROLEPLAY_SCENARIOS)
-        )
+def _count_lines(path: Path) -> int:
+    """Count non-empty lines in a file."""
+    if not path.exists():
+        return 0
+    with open(path, encoding="utf-8") as f:
+        return sum(1 for line in f if line.strip())
+
+
+def _flush_entries(f: IO[str], entries: list[MemoryCorpusEntry]) -> None:
+    """Write entries to an open file and flush."""
+    for entry in entries:
+        f.write(entry.model_dump_json() + "\n")
+    f.flush()
+
+
+def generate_corpus(
+    output: Path,
+    banks_dir: Path,
+    backend: LLMBackend | None,
+    seed_only: bool = False,
+) -> int:
+    """Generate the memory corpus, resuming from where it left off.
+
+    The generation proceeds as a sequence of steps. Each step produces a
+    batch of entries that is appended to the output file immediately. On
+    resume, the number of existing lines is used to skip already-completed
+    steps.
+
+    Returns the total number of entries in the corpus after generation.
+    """
+    output.parent.mkdir(parents=True, exist_ok=True)
+    existing = _count_lines(output)
+
+    written = existing
+    skipped = 0
+
+    with open(output, "a", encoding="utf-8") as f:
+        seed_entries = ingest_seed_banks(banks_dir)
+        if existing >= len(seed_entries):
+            existing -= len(seed_entries)
+            skipped += 1
+        else:
+            to_write = seed_entries[existing:]
+            _flush_entries(f, to_write)
+            written += len(to_write)
+            existing = 0
+
+        if seed_only or backend is None:
+            return written
+
+        all_scenarios: list[tuple[str, str, list[str], int, str]] = []
         for character, description, tags, count in ROLEPLAY_SCENARIOS:
-            prompt = ROLEPLAY_GENERATION_PROMPT.format(
-                count=count, character=character, description=description
-            )
-            result = backend.generate(
-                system="Generate memory entries as requested.",
-                messages=[{"role": "user", "content": prompt}],
-                response_schema=RawMemoryEntry,
-            )
-            if result is None:
-                log.error(f"Failed to generate {character} memories")
-                progress.advance(task)
-                continue
-            raw = _parse_structured(result.text)
-            parsed = _raw_to_corpus(raw, tags, "roleplay", character.lower())
-            entries.extend(parsed)
-            log.info(f"Generated {len(parsed)} entries for {character}")
-            progress.advance(task)
-    return entries
-
-
-def generate_casual_entries(backend: LLMBackend) -> list[MemoryCorpusEntry]:
-    """Generate casual-user memory entries."""
-    entries: list[MemoryCorpusEntry] = []
-    with Progress(console=console) as progress:
-        task = progress.add_task(
-            "Generating casual memories", total=len(CASUAL_SCENARIOS)
-        )
+            all_scenarios.append((character, description, tags, count, "roleplay"))
         for description, tags, count in CASUAL_SCENARIOS:
-            prompt = CASUAL_GENERATION_PROMPT.format(
-                count=count, description=description
-            )
-            result = backend.generate(
-                system="Generate memory entries as requested.",
-                messages=[{"role": "user", "content": prompt}],
-                response_schema=RawMemoryEntry,
-            )
-            if result is None:
-                log.error(f"Failed to generate casual memories: {tags}")
+            all_scenarios.append(("anonymous", description, tags, count, "casual"))
+
+        with Progress(console=console) as progress:
+            task = progress.add_task("Generating memories", total=len(all_scenarios))
+            for character, description, tags, count, archetype in all_scenarios:
+                if existing > 0:
+                    skip = min(existing, count)
+                    existing -= skip
+                    skipped += 1
+                    progress.advance(task)
+                    continue
+
+                if archetype == "roleplay":
+                    prompt = ROLEPLAY_GENERATION_PROMPT.format(
+                        count=count, character=character, description=description
+                    )
+                else:
+                    prompt = CASUAL_GENERATION_PROMPT.format(
+                        count=count, description=description
+                    )
+
+                result = backend.generate(
+                    system="Generate memory entries as requested.",
+                    messages=[{"role": "user", "content": prompt}],
+                    response_schema=RawMemoryEntry,
+                )
+                if result is None:
+                    log.error(f"Failed to generate {archetype}/{character}")
+                    progress.advance(task)
+                    continue
+
+                raw = _parse_structured(result.text)
+                parsed = _raw_to_corpus(raw, tags, archetype, character.lower())
+                _flush_entries(f, parsed)
+                written += len(parsed)
+                log.info(f"Generated {len(parsed)} entries for {archetype}/{character}")
                 progress.advance(task)
-                continue
-            raw = _parse_structured(result.text)
-            parsed = _raw_to_corpus(raw, tags, "casual", "anonymous")
-            entries.extend(parsed)
-            log.info(f"Generated {len(parsed)} casual entries ({tags})")
-            progress.advance(task)
-    return entries
 
+    if skipped:
+        log.info(f"Resumed: skipped {skipped} already-completed step(s)")
 
-def write_corpus(path: Path, entries: list[MemoryCorpusEntry]) -> None:
-    """Write corpus entries to a JSONL file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        for entry in entries:
-            f.write(entry.model_dump_json() + "\n")
+    return written
 
 
 def main() -> None:
@@ -372,41 +412,13 @@ def main() -> None:
 
     console.print("[bold cyan]Memory Corpus Generator[/bold cyan]\n")
 
-    all_entries: list[MemoryCorpusEntry] = []
+    backend = None if args.seed_only else create_backend(args.backend, args.model)
+    total = generate_corpus(
+        args.output, args.seed_banks_dir, backend, seed_only=args.seed_only
+    )
 
-    # Ingest seed banks
-    seed_entries = ingest_seed_banks(args.seed_banks_dir)
-    all_entries.extend(seed_entries)
-    log.info(f"Seed bank entries: {len(seed_entries)}")
-
-    if not args.seed_only:
-        backend = create_backend(args.backend, args.model)
-
-        roleplay_entries = generate_roleplay_entries(backend)
-        all_entries.extend(roleplay_entries)
-        log.info(f"Roleplay entries: {len(roleplay_entries)}")
-
-        casual_entries = generate_casual_entries(backend)
-        all_entries.extend(casual_entries)
-        log.info(f"Casual entries: {len(casual_entries)}")
-
-    write_corpus(args.output, all_entries)
-
-    # Summary
-    by_archetype: dict[str, int] = {}
-    by_character: dict[str, int] = {}
-    for e in all_entries:
-        by_archetype[e.archetype] = by_archetype.get(e.archetype, 0) + 1
-        by_character[e.character] = by_character.get(e.character, 0) + 1
-
-    console.print(f"\n[bold green]Done.[/bold green] {len(all_entries)} entries total.")
-    console.print("\nBy archetype:")
-    for arch, count in sorted(by_archetype.items()):
-        console.print(f"  {arch}: {count}")
-    console.print("\nBy character:")
-    for char, count in sorted(by_character.items()):
-        console.print(f"  {char}: {count}")
-    console.print(f"\nOutput: {args.output}")
+    console.print(f"\n[bold green]Done.[/bold green] {total} entries total.")
+    console.print(f"Output: {args.output}")
 
 
 if __name__ == "__main__":

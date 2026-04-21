@@ -4,9 +4,11 @@ from pathlib import Path
 
 from datagen.generate_memory_corpus import (
     RawMemoryEntry,
+    _count_lines,
+    _flush_entries,
     _raw_to_corpus,
+    generate_corpus,
     ingest_seed_banks,
-    write_corpus,
 )
 from pkna.datagen.memory import load_memory_corpus
 from pkna.datagen.types import MemoryCorpusEntry
@@ -69,7 +71,7 @@ class TestRawToCorpus:
         assert corpus == []
 
 
-class TestWriteCorpus:
+class TestFlushEntries:
     def test_write_and_load_roundtrip(self, tmp_path: Path):
         entries = [
             MemoryCorpusEntry(
@@ -90,8 +92,54 @@ class TestWriteCorpus:
             ),
         ]
         path = tmp_path / "out.jsonl"
-        write_corpus(path, entries)
+        with open(path, "w") as f:
+            _flush_entries(f, entries)
         loaded = load_memory_corpus(path)
         assert len(loaded) == 2
         assert loaded[0].key == "k1"
         assert loaded[1].archetype == "casual"
+
+
+class TestGenerateCorpusResume:
+    def test_seed_only_skips_existing(self, tmp_path: Path):
+        output = tmp_path / "corpus.jsonl"
+        banks_dir = Path("data/memory_banks")
+
+        # First run: writes seed entries
+        total1 = generate_corpus(output, banks_dir, backend=None, seed_only=True)
+        assert total1 > 0
+
+        # Second run: skips everything, no new lines
+        total2 = generate_corpus(output, banks_dir, backend=None, seed_only=True)
+        assert total2 == total1
+        assert _count_lines(output) == total1
+
+    def test_partial_seed_resumes(self, tmp_path: Path):
+        output = tmp_path / "corpus.jsonl"
+        banks_dir = Path("data/memory_banks")
+
+        # Write 3 lines to simulate a partial run
+        output.write_text(
+            '{"key":"a","value":"v","tags":[],"archetype":"x","character":"y"}\n' * 3
+        )
+
+        total = generate_corpus(output, banks_dir, backend=None, seed_only=True)
+        # Should have written remaining seed entries after the 3 existing
+        seed_count = len(ingest_seed_banks(banks_dir))
+        assert total == seed_count
+        assert _count_lines(output) == seed_count
+
+
+class TestCountLines:
+    def test_nonexistent_file(self, tmp_path: Path):
+        assert _count_lines(tmp_path / "nope.jsonl") == 0
+
+    def test_empty_file(self, tmp_path: Path):
+        path = tmp_path / "empty.jsonl"
+        path.write_text("")
+        assert _count_lines(path) == 0
+
+    def test_counts_nonempty_lines(self, tmp_path: Path):
+        path = tmp_path / "corpus.jsonl"
+        path.write_text('{"key":"a"}\n\n{"key":"b"}\n')
+        assert _count_lines(path) == 2

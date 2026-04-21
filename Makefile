@@ -17,7 +17,7 @@ lint:
 # Run all tests (format, lint, then pytest)
 test: lint
 	@echo "==> Running pytest..."
-	uv run pytest
+	uv run pytest -x -q
 
 # Clean Python cache files
 clean:

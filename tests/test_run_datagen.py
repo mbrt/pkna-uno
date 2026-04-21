@@ -5,6 +5,7 @@ from typing import Any
 
 from datagen.run_datagen import (
     _get_directive,
+    _render_seed_memories,
     _visible_messages,
     load_completed_ids,
     run_datagen,
@@ -434,3 +435,24 @@ class TestRunDatagen:
         backend = FakeBackend(None)
         written = run_datagen(prompts_path, output_path, backend)
         assert written == 0
+
+
+class TestRenderSeedMemories:
+    def test_empty_metadata(self):
+        assert _render_seed_memories({}) == ""
+
+    def test_empty_list(self):
+        assert _render_seed_memories({"seed_memories": []}) == ""
+
+    def test_renders_entries(self):
+        meta: dict[str, Any] = {
+            "seed_memories": [
+                {"key": "recent scare", "value": "PK nearly fell", "days_ago": 2},
+                {"key": "argument", "value": "Heated exchange", "days_ago": 7},
+            ],
+        }
+        result = _render_seed_memories(meta)
+        assert "Recent interactions:" in result
+        assert "recent scare" in result
+        assert "PK nearly fell" in result
+        assert "1 week ago" in result

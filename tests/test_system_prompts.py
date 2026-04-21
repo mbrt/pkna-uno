@@ -3,10 +3,13 @@
 from pkna.eval.types import SUITES
 from pkna.inference.system_prompts import (
     SUITE_TEMPLATE_MAP,
+    TRACE_GUIDANCE_CLOSE,
+    TRACE_GUIDANCE_OPEN,
     prepend_context_to_messages,
     render_context_preamble,
     render_datagen_system_prompt,
     render_system_prompt,
+    strip_trace_guidance,
 )
 
 
@@ -128,6 +131,113 @@ class TestRenderDatagenSystemPrompt:
         a = render_datagen_system_prompt(SAMPLE_PROFILE)
         b = render_datagen_system_prompt(SAMPLE_PROFILE)
         assert a == b
+
+
+class TestPrependContextWithTraceGuidance:
+    def test_adds_trace_guidance_block(self):
+        msgs = [{"role": "user", "content": "Hello"}]
+        result = prepend_context_to_messages(
+            msgs, "Paperino", "", trace_guidance="Show tradeoff analysis."
+        )
+        content = result[0]["content"]
+        assert TRACE_GUIDANCE_OPEN in content
+        assert TRACE_GUIDANCE_CLOSE in content
+        assert "Show tradeoff analysis." in content
+        assert "<message>\nHello\n</message>" in content
+
+    def test_guidance_between_context_and_message(self):
+        msgs = [{"role": "user", "content": "Hello"}]
+        result = prepend_context_to_messages(
+            msgs, "Paperino", "memories", trace_guidance="Do tradeoff."
+        )
+        content = result[0]["content"]
+        ctx_pos = content.index("<context>")
+        guidance_pos = content.index(TRACE_GUIDANCE_OPEN)
+        msg_pos = content.index("<message>")
+        assert ctx_pos < guidance_pos < msg_pos
+
+    def test_guidance_only_no_context(self):
+        msgs = [{"role": "user", "content": "Hello"}]
+        result = prepend_context_to_messages(
+            msgs, "", "", trace_guidance="Identity grounding."
+        )
+        content = result[0]["content"]
+        assert "<context>" not in content
+        assert TRACE_GUIDANCE_OPEN in content
+        assert "<message>\nHello\n</message>" in content
+
+    def test_no_guidance_no_change(self):
+        msgs = [{"role": "user", "content": "Hello"}]
+        result = prepend_context_to_messages(msgs, "", "", trace_guidance="")
+        assert result == msgs
+
+
+class TestPrependContextXmlStructure:
+    def test_context_wrapped_in_xml(self):
+        msgs = [{"role": "user", "content": "Hi"}]
+        result = prepend_context_to_messages(msgs, "Paperino", "some memories")
+        content = result[0]["content"]
+        assert "<context>\n" in content
+        assert "\n</context>" in content
+        assert "Interlocutor: Paperino" in content
+
+    def test_message_wrapped_in_xml(self):
+        msgs = [{"role": "user", "content": "Hi"}]
+        result = prepend_context_to_messages(msgs, "Paperino", "")
+        content = result[0]["content"]
+        assert "<message>\nHi\n</message>" in content
+
+    def test_no_context_no_wrapper(self):
+        msgs = [{"role": "user", "content": "Hi"}]
+        result = prepend_context_to_messages(msgs, "", "")
+        assert result == msgs
+
+
+class TestStripTraceGuidance:
+    def test_strips_guidance_block(self):
+        content = (
+            "<context>\nInterlocutor: Paperino\n</context>\n\n"
+            f"{TRACE_GUIDANCE_OPEN}\nShow tradeoff analysis.\n"
+            f"{TRACE_GUIDANCE_CLOSE}\n\n"
+            "<message>\nCiao!\n</message>"
+        )
+        result = strip_trace_guidance(content)
+        assert TRACE_GUIDANCE_OPEN not in result
+        assert "Show tradeoff analysis" not in result
+        assert "<context>" in result
+        assert "<message>\nCiao!\n</message>" in result
+
+    def test_no_guidance_returns_unchanged(self):
+        content = "<context>\nInterlocutor: Paperino\n</context>\n\n<message>\nCiao!\n</message>"
+        assert strip_trace_guidance(content) == content
+
+    def test_plain_message_unchanged(self):
+        assert strip_trace_guidance("Hello, Uno!") == "Hello, Uno!"
+
+    def test_multiline_guidance_stripped(self):
+        content = (
+            "<context>\nInterlocutor: X\n</context>\n\n"
+            f"{TRACE_GUIDANCE_OPEN}\nLine one.\nLine two.\nLine three.\n"
+            f"{TRACE_GUIDANCE_CLOSE}\n\n"
+            "<message>\nHi\n</message>"
+        )
+        result = strip_trace_guidance(content)
+        assert "Line one" not in result
+        assert "Line three" not in result
+        assert "<message>\nHi\n</message>" in result
+
+    def test_guidance_containing_brackets(self):
+        """Guidance with [bracketed] text inside doesn't break stripping."""
+        content = (
+            "<context>\nInterlocutor: X\n</context>\n\n"
+            f"{TRACE_GUIDANCE_OPEN}\n"
+            "Analyze the [emotional state] and [values].\n"
+            f"{TRACE_GUIDANCE_CLOSE}\n\n"
+            "<message>\nHi\n</message>"
+        )
+        result = strip_trace_guidance(content)
+        assert "emotional state" not in result
+        assert "<message>\nHi\n</message>" in result
 
 
 class TestSuiteTemplateMap:

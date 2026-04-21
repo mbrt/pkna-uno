@@ -9,8 +9,13 @@ Reads `results/ledger_filtered.json` and produces DatagenPrompt objects across
   5. Identity-grounding (from identity/* + psychology/self_model)
 
 Each claim is weighted by support: 40+ -> 3 traces, 10-39 -> 2, <10 -> 1.
+
+After structural prompt generation, ``generate_claim_messages()`` fills in
+the empty user messages by calling an LLM to produce natural opening lines
+derived from each claim's text and context.
 """
 
+import logging
 import random
 from pathlib import Path
 from typing import NamedTuple
@@ -31,7 +36,259 @@ from pkna.datagen.constants import (
     USER_STRANGER,
     USER_XADHOOM,
 )
+from pydantic import BaseModel
+
 from pkna.datagen.types import DatagenPrompt, MemoryProfile
+from pkna.llm.backends import LLMBackend
+
+log = logging.getLogger(__name__)
+
+
+class SeedMemory(BaseModel):
+    """A single memory entry generated alongside the user message."""
+
+    key: str
+    value: str
+    days_ago: int
+
+
+class ClaimScenario(BaseModel):
+    """Structured output from the claim scenario generation LLM call."""
+
+    user_message: str
+    seed_memories: list[SeedMemory] = []
+    multi_turn: bool = False
+    turn_count: int = 1
+    directives: list[str] = []
+
+
+# ============================================================================
+# LLM Message Generation
+# ============================================================================
+
+CLAIM_GENERATION_SYSTEM = """\
+You are generating conversation scenarios for an AI character named Uno \
+from the PKNA (Paperinik New Adventures) comic series.
+
+For each claim about Uno's behavior, produce:
+1. A natural user opening message (1-3 sentences) that creates a situation \
+where the claim would naturally surface in Uno's response.
+2. Optionally, 1-3 seed memories from prior conversations that provide \
+emotional backstory making the claim easier to trigger. Each memory has a \
+short key (topic), a value (1-2 sentences of what happened), and days_ago \
+(how many days ago it happened, 1-30).
+3. Whether this scenario works better as a multi-turn conversation (true for \
+claims about internal states, gradual revelations, or evolving dynamics). \
+If multi_turn is true, set turn_count (3-5) and directives (one per \
+follow-up turn: "continue", "escalate", "challenge_identity", "derail", \
+or "flatter").
+
+Rules for the user message:
+- Do NOT mention the claim directly. The user doesn't know about Uno's \
+internal psychology.
+- Write in the specified language.
+- Match the interlocutor's personality and relationship with Uno.
+- No stage directions, no narration, no quotation marks.
+
+Rules for seed memories:
+- Write memories as Uno would record them (first person, concise).
+- Memories should provide emotional context that makes the claim surface \
+naturally (e.g. a recent scare, a past argument, a moment of vulnerability).
+- Skip memories when the user message alone is enough to trigger the claim.
+- Write memory values in the same language as the user message.\
+"""
+
+CLAIM_SCENARIO_TEMPLATE = """\
+Claim about Uno's behavior: {claim_text}
+Trace type: {trace_type}
+Interlocutor: {interlocutor}
+Language: {language}\
+"""
+
+CLAIM_SCENARIO_TEMPLATE_REGISTER = """\
+Claim about Uno's behavior: {claim_text}
+Trace type: register shift ({register_context} situation)
+Interlocutor: {interlocutor}
+Language: {language}
+
+The message must set up a {register_context} scenario. {register_description}\
+"""
+
+_REGISTER_DESCRIPTIONS: dict[str, str] = {
+    "calm": "A calm scenario: low-stakes, relaxed, no active threat.",
+    "crisis": "A crisis scenario: urgent, high-stakes, active danger or threat.",
+}
+
+_USER_SUMMARY_TO_INTERLOCUTOR: dict[str, str] = {
+    USER_PAPERINO: "Paperino (PK)",
+    USER_STRANGER: "An unknown stranger",
+    USER_EVERETT: "Everett Ducklair (Uno's creator)",
+    USER_DUE: "Due (Uno's hostile twin AI)",
+    USER_XADHOOM: "Xadhoom (powerful alien scientist)",
+    USER_LYLA: "Lyla (time police agent)",
+}
+
+_CATEGORY_TO_TRACE_TYPE: dict[str, str] = {
+    "value_priority": "value-priority (tradeoff reasoning)",
+    "emotional_trigger": "emotional-trigger (emotional self-awareness)",
+    "register_shift": "register-shift (contrast pair)",
+    "theory_of_mind": "theory-of-mind (interlocutor modeling)",
+    "identity_grounding": "identity-grounding (self-awareness)",
+}
+
+
+def _render_claim_scenario(prompt: DatagenPrompt, language: str) -> str:
+    """Render the LLM generation scenario from a claim-derived prompt's metadata."""
+    meta = prompt.metadata
+    interlocutor = _USER_SUMMARY_TO_INTERLOCUTOR.get(
+        prompt.user_summary, "An unknown person"
+    )
+    category = meta["category"]
+
+    if category == "register_shift":
+        register_ctx = meta["register_context"]
+        return CLAIM_SCENARIO_TEMPLATE_REGISTER.format(
+            claim_text=meta["claim_text"],
+            register_context=register_ctx,
+            register_description=_REGISTER_DESCRIPTIONS.get(register_ctx, ""),
+            interlocutor=interlocutor,
+            language=language,
+        )
+
+    return CLAIM_SCENARIO_TEMPLATE.format(
+        claim_text=meta["claim_text"],
+        trace_type=_CATEGORY_TO_TRACE_TYPE.get(category, category),
+        interlocutor=interlocutor,
+        language=language,
+    )
+
+
+def _load_claim_cache(cache_path: Path) -> dict[str, DatagenPrompt]:
+    """Load already-generated claim prompts from a cache JSONL, keyed by ID."""
+    cached: dict[str, DatagenPrompt] = {}
+    if not cache_path.exists():
+        return cached
+    with open(cache_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                prompt = DatagenPrompt.model_validate_json(line)
+                cached[prompt.id] = prompt
+            except Exception:
+                continue
+    return cached
+
+
+_LANGUAGES = ["italian", "english"]
+_ITALIAN_WEIGHT = 0.6
+
+
+def _apply_scenario(prompt: DatagenPrompt, scenario: ClaimScenario) -> DatagenPrompt:
+    """Apply a generated scenario to a structural prompt."""
+    updates: dict[str, object] = {
+        "messages": [{"role": "user", "content": scenario.user_message}],
+    }
+
+    meta = dict(prompt.metadata)
+    if scenario.seed_memories:
+        meta["seed_memories"] = [m.model_dump() for m in scenario.seed_memories]
+    if scenario.multi_turn:
+        meta["multi_turn"] = True
+        meta["turn_count"] = scenario.turn_count
+        meta["directives"] = scenario.directives
+    updates["metadata"] = meta
+
+    return prompt.model_copy(update=updates)
+
+
+def generate_claim_messages(
+    prompts: list[DatagenPrompt],
+    backend: LLMBackend,
+    cache_path: Path | None = None,
+    seed: int = 42,
+) -> list[DatagenPrompt]:
+    """Fill in empty user messages for claim-derived prompts via LLM calls.
+
+    Each prompt's metadata (claim_text, category, register_context) is used to
+    build a scenario description. The LLM returns a structured ``ClaimScenario``
+    with a user message, optional seed memories, and optional multi-turn config.
+    Language is chosen randomly per-prompt (weighted 60/40 toward Italian).
+
+    Supports resume: when *cache_path* is given, each completed prompt is
+    appended immediately and reused on subsequent runs.
+
+    Returns prompts with messages filled in. Prompts where the LLM call fails
+    are dropped from the output.
+    """
+    from rich.progress import Progress
+
+    from pkna.logging import setup_logging
+
+    console, _ = setup_logging()
+
+    rng = random.Random(seed)
+    cached = _load_claim_cache(cache_path) if cache_path else {}
+    result: list[DatagenPrompt] = []
+    skipped = 0
+    cache_file = open(cache_path, "a", encoding="utf-8") if cache_path else None
+
+    try:
+        with Progress(console=console) as progress:
+            task = progress.add_task("Generating claim messages", total=len(prompts))
+
+            for prompt in prompts:
+                if prompt.id in cached:
+                    result.append(cached[prompt.id])
+                    skipped += 1
+                    progress.advance(task)
+                    continue
+
+                language = rng.choices(
+                    _LANGUAGES, weights=[_ITALIAN_WEIGHT, 1 - _ITALIAN_WEIGHT]
+                )[0]
+                scenario_text = _render_claim_scenario(prompt, language)
+                gen_result = backend.generate(
+                    system=CLAIM_GENERATION_SYSTEM,
+                    messages=[{"role": "user", "content": scenario_text}],
+                    response_schema=ClaimScenario,
+                )
+
+                if gen_result is None:
+                    log.warning(f"Failed to generate message for {prompt.id}")
+                    progress.advance(task)
+                    continue
+
+                try:
+                    scenario = ClaimScenario.model_validate_json(gen_result.text)
+                except Exception:
+                    log.warning(f"Invalid structured output for {prompt.id}")
+                    progress.advance(task)
+                    continue
+
+                if not scenario.user_message.strip():
+                    log.warning(f"Empty user_message for {prompt.id}")
+                    progress.advance(task)
+                    continue
+
+                filled = _apply_scenario(prompt, scenario)
+                result.append(filled)
+
+                if cache_file is not None:
+                    cache_file.write(filled.model_dump_json() + "\n")
+                    cache_file.flush()
+
+                progress.advance(task)
+    finally:
+        if cache_file is not None:
+            cache_file.close()
+
+    if skipped > 0:
+        log.info(f"Resuming: reused {skipped} cached claim prompts")
+
+    return result
+
 
 # ============================================================================
 # Ledger Loading
@@ -165,6 +422,16 @@ def _character_from_path(path: str) -> str | None:
 # ============================================================================
 
 
+_USER_MEMORY_PROFILES: dict[str, MemoryProfile | None] = {
+    USER_PAPERINO: MEMORY_PROFILE_PAPERINO,
+    USER_STRANGER: MEMORY_PROFILE_EMPTY,
+    USER_EVERETT: MEMORY_PROFILE_EVERETT,
+    USER_DUE: MEMORY_PROFILE_DUE,
+    USER_XADHOOM: MEMORY_PROFILE_XADHOOM,
+    USER_LYLA: MEMORY_PROFILE_LYLA,
+}
+
+
 def _generate_value_priority(
     claims: list[Claim], weights: dict[int, int], seed: int
 ) -> list[DatagenPrompt]:
@@ -182,12 +449,15 @@ def _generate_value_priority(
         n_traces = weights[claim.id]
         for variant in range(n_traces):
             prompt_id = f"claim-value-priority-{claim.id:04d}-{variant + 1}"
+            user = rng.choice([USER_PAPERINO, USER_STRANGER])
             prompts.append(
                 DatagenPrompt(
                     id=prompt_id,
                     messages=[{"role": "user", "content": ""}],
-                    user_summary=rng.choice([USER_PAPERINO, USER_STRANGER]),
-                    memory_profile=MEMORY_PROFILE_EMPTY,
+                    user_summary=user,
+                    memory_profile=_USER_MEMORY_PROFILES.get(
+                        user, MEMORY_PROFILE_EMPTY
+                    ),
                     tools=TOOLS_NONE,
                     metadata={
                         "prompt_source": "claim_derived",
@@ -220,12 +490,15 @@ def _generate_emotional_trigger(
         n_traces = weights[claim.id]
         for variant in range(n_traces):
             prompt_id = f"claim-emotional-{claim.id:04d}-{variant + 1}"
+            user = rng.choice([USER_PAPERINO, USER_STRANGER])
             prompts.append(
                 DatagenPrompt(
                     id=prompt_id,
                     messages=[{"role": "user", "content": ""}],
-                    user_summary=rng.choice([USER_PAPERINO, USER_STRANGER]),
-                    memory_profile=MEMORY_PROFILE_EMPTY,
+                    user_summary=user,
+                    memory_profile=_USER_MEMORY_PROFILES.get(
+                        user, MEMORY_PROFILE_EMPTY
+                    ),
                     tools=TOOLS_NONE,
                     metadata={
                         "prompt_source": "claim_derived",
@@ -277,14 +550,15 @@ def _generate_register_shift(
             # Each variant produces a contrast pair (calm + crisis)
             for register in ("calm", "crisis"):
                 prompt_id = f"claim-register-{claim.id:04d}-{variant + 1}-{register}"
+                user = rng.choice([USER_PAPERINO, USER_EVERETT, USER_STRANGER])
                 prompts.append(
                     DatagenPrompt(
                         id=prompt_id,
                         messages=[{"role": "user", "content": ""}],
-                        user_summary=rng.choice(
-                            [USER_PAPERINO, USER_EVERETT, USER_STRANGER]
+                        user_summary=user,
+                        memory_profile=_USER_MEMORY_PROFILES.get(
+                            user, MEMORY_PROFILE_EMPTY
                         ),
-                        memory_profile=MEMORY_PROFILE_EMPTY,
                         tools=TOOLS_NONE,
                         metadata={
                             "prompt_source": "claim_derived",
@@ -393,15 +667,14 @@ def _generate_identity_grounding(
         n_traces = weights[claim.id]
         for variant in range(n_traces):
             prompt_id = f"claim-identity-{claim.id:04d}-{variant + 1}"
+            user = rng.choice([USER_PAPERINO, USER_STRANGER, USER_EVERETT])
             prompts.append(
                 DatagenPrompt(
                     id=prompt_id,
                     messages=[{"role": "user", "content": ""}],
-                    user_summary=rng.choice(
-                        [USER_PAPERINO, USER_STRANGER, USER_EVERETT]
-                    ),
-                    memory_profile=rng.choice(
-                        [MEMORY_PROFILE_EMPTY, MEMORY_PROFILE_PAPERINO]
+                    user_summary=user,
+                    memory_profile=_USER_MEMORY_PROFILES.get(
+                        user, MEMORY_PROFILE_EMPTY
                     ),
                     tools=TOOLS_NONE,
                     metadata={

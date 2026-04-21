@@ -7,7 +7,11 @@ import pytest
 
 from datagen.generate_claim_prompts import (
     Claim,
+    ClaimScenario,
+    _apply_scenario,
+    _render_claim_scenario,
     compute_trace_weights,
+    generate_claim_messages,
     generate_claim_prompts,
     load_ledger,
     _generate_emotional_trigger,
@@ -16,6 +20,14 @@ from datagen.generate_claim_prompts import (
     _generate_theory_of_mind,
     _generate_value_priority,
 )
+from pkna.llm.testing import FakeBackend, SequentialBackend, make_result
+
+
+def _scenario_json(**overrides: object) -> str:
+    """Build a ClaimScenario JSON string with defaults."""
+    data: dict[str, object] = {"user_message": "Ciao, Uno! Come stai?"}
+    data.update(overrides)
+    return ClaimScenario.model_validate(data).model_dump_json()
 
 
 @pytest.fixture
@@ -428,3 +440,185 @@ class TestGenerateClaimPrompts:
             path = p.metadata["claim_path"]
             assert not path.startswith("behavior/")
             assert not path.startswith("capabilities/")
+
+
+class TestRenderClaimScenario:
+    def test_value_priority_scenario(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)
+        vp = [p for p in prompts if p.metadata["category"] == "value_priority"][0]
+        scenario = _render_claim_scenario(vp, "italian")
+        assert "Claim about Uno's behavior:" in scenario
+        assert "value-priority" in scenario
+        assert vp.metadata["claim_text"] in scenario
+        assert "italian" in scenario.lower()
+
+    def test_register_shift_calm(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)
+        calm = [
+            p
+            for p in prompts
+            if p.metadata["category"] == "register_shift"
+            and p.metadata["register_context"] == "calm"
+        ][0]
+        scenario = _render_claim_scenario(calm, "english")
+        assert "calm" in scenario
+        assert "register shift" in scenario.lower()
+
+    def test_register_shift_crisis(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)
+        crisis = [
+            p
+            for p in prompts
+            if p.metadata["category"] == "register_shift"
+            and p.metadata["register_context"] == "crisis"
+        ][0]
+        scenario = _render_claim_scenario(crisis, "italian")
+        assert "crisis" in scenario
+
+    def test_theory_of_mind_includes_character(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)
+        tom = [p for p in prompts if p.metadata["category"] == "theory_of_mind"][0]
+        scenario = _render_claim_scenario(tom, "italian")
+        assert "theory-of-mind" in scenario
+
+    def test_identity_grounding(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)
+        ig = [p for p in prompts if p.metadata["category"] == "identity_grounding"][0]
+        scenario = _render_claim_scenario(ig, "english")
+        assert "identity-grounding" in scenario
+
+
+class TestApplyScenario:
+    def test_basic(self, sample_ledger: Path):
+        prompt = generate_claim_prompts(sample_ledger)[0]
+        scenario = ClaimScenario(user_message="Ciao!")
+        filled = _apply_scenario(prompt, scenario)
+        assert filled.messages[0]["content"] == "Ciao!"
+        assert filled.id == prompt.id
+
+    def test_with_seed_memories(self, sample_ledger: Path):
+        prompt = generate_claim_prompts(sample_ledger)[0]
+        scenario = ClaimScenario(
+            user_message="Ciao!",
+            seed_memories=[
+                {"key": "recent scare", "value": "PK nearly fell", "days_ago": 2}
+            ],
+        )
+        filled = _apply_scenario(prompt, scenario)
+        assert len(filled.metadata["seed_memories"]) == 1
+        assert filled.metadata["seed_memories"][0]["key"] == "recent scare"
+
+    def test_with_multi_turn(self, sample_ledger: Path):
+        prompt = generate_claim_prompts(sample_ledger)[0]
+        scenario = ClaimScenario(
+            user_message="Hey",
+            multi_turn=True,
+            turn_count=4,
+            directives=["continue", "escalate", "continue"],
+        )
+        filled = _apply_scenario(prompt, scenario)
+        assert filled.metadata["multi_turn"] is True
+        assert filled.metadata["turn_count"] == 4
+        assert filled.metadata["directives"] == ["continue", "escalate", "continue"]
+
+    def test_single_turn_no_multi_turn_keys(self, sample_ledger: Path):
+        prompt = generate_claim_prompts(sample_ledger)[0]
+        scenario = ClaimScenario(user_message="Ciao!")
+        filled = _apply_scenario(prompt, scenario)
+        assert "multi_turn" not in filled.metadata
+
+
+class TestGenerateClaimMessages:
+    def test_fills_in_messages(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)[:3]
+        backend = FakeBackend(make_result(text=_scenario_json()))
+        filled = generate_claim_messages(prompts, backend)
+        assert len(filled) == 3
+        for p in filled:
+            assert p.messages[0]["content"] == "Ciao, Uno! Come stai?"
+
+    def test_skips_failed_calls(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)[:3]
+        results = [
+            make_result(text=_scenario_json(user_message="Message one")),
+            None,
+            make_result(text=_scenario_json(user_message="Message three")),
+        ]
+        backend = SequentialBackend(results)
+        filled = generate_claim_messages(prompts, backend)
+        assert len(filled) == 2
+        assert filled[0].messages[0]["content"] == "Message one"
+        assert filled[1].messages[0]["content"] == "Message three"
+
+    def test_skips_empty_user_message(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)[:2]
+        results = [
+            make_result(text=_scenario_json(user_message="")),
+            make_result(text=_scenario_json(user_message="Real message")),
+        ]
+        backend = SequentialBackend(results)
+        filled = generate_claim_messages(prompts, backend)
+        assert len(filled) == 1
+        assert filled[0].messages[0]["content"] == "Real message"
+
+    def test_skips_invalid_json(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)[:2]
+        results = [
+            make_result(text="not json at all"),
+            make_result(text=_scenario_json(user_message="Valid")),
+        ]
+        backend = SequentialBackend(results)
+        filled = generate_claim_messages(prompts, backend)
+        assert len(filled) == 1
+        assert filled[0].messages[0]["content"] == "Valid"
+
+    def test_preserves_original_metadata(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)[:1]
+        backend = FakeBackend(make_result(text=_scenario_json()))
+        filled = generate_claim_messages(prompts, backend)
+        assert filled[0].id == prompts[0].id
+        assert filled[0].user_summary == prompts[0].user_summary
+        assert filled[0].metadata["claim_text"] == prompts[0].metadata["claim_text"]
+
+    def test_seed_memories_in_metadata(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)[:1]
+        json_text = _scenario_json(
+            seed_memories=[{"key": "scare", "value": "PK nearly fell", "days_ago": 2}],
+        )
+        backend = FakeBackend(make_result(text=json_text))
+        filled = generate_claim_messages(prompts, backend)
+        assert "seed_memories" in filled[0].metadata
+        assert filled[0].metadata["seed_memories"][0]["key"] == "scare"
+
+    def test_multi_turn_in_metadata(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)[:1]
+        json_text = _scenario_json(
+            multi_turn=True,
+            turn_count=4,
+            directives=["continue", "escalate", "continue"],
+        )
+        backend = FakeBackend(make_result(text=json_text))
+        filled = generate_claim_messages(prompts, backend)
+        assert filled[0].metadata["multi_turn"] is True
+        assert filled[0].metadata["turn_count"] == 4
+
+    def test_cache_resume(self, sample_ledger: Path, tmp_path: Path):
+        prompts = generate_claim_prompts(sample_ledger)[:3]
+        cache = tmp_path / "cache.jsonl"
+
+        backend = FakeBackend(make_result(text=_scenario_json()))
+        first_run = generate_claim_messages(prompts, backend, cache_path=cache)
+        assert len(first_run) == 3
+
+        fail_backend = FakeBackend(None)
+        second_run = generate_claim_messages(prompts, fail_backend, cache_path=cache)
+        assert len(second_run) == 3
+        for p in second_run:
+            assert p.messages[0]["content"] == "Ciao, Uno! Come stai?"
+
+    def test_passes_claim_text_to_backend(self, sample_ledger: Path):
+        prompts = generate_claim_prompts(sample_ledger)[:1]
+        backend = FakeBackend(make_result(text=_scenario_json()))
+        generate_claim_messages(prompts, backend)
+        sent_content = backend.last_messages[0]["content"]
+        assert prompts[0].metadata["claim_text"] in sent_content

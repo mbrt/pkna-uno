@@ -70,6 +70,20 @@ def load_completed_ids(output_path: Path) -> set[str]:
     return completed
 
 
+def _render_seed_memories(metadata: dict[str, Any]) -> str:
+    """Render LLM-generated seed memories from claim-derived prompt metadata."""
+    from pkna.inference.memory import relative_time
+
+    seed_memories: list[dict[str, Any]] = metadata.get("seed_memories", [])
+    if not seed_memories:
+        return ""
+    lines = ["Recent interactions:"]
+    for m in seed_memories:
+        days = m.get("days_ago", 0)
+        lines.append(f"- [{relative_time(days)}] {m['key']}: {m['value']}")
+    return "\n".join(lines)
+
+
 def _visible_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Extract user/assistant messages for the user simulator."""
     return [
@@ -348,8 +362,20 @@ def run_datagen(
                 memory_context = ""
                 bank = None
 
+            seed_memory_text = _render_seed_memories(prompt.metadata)
+            if seed_memory_text:
+                memory_context = (
+                    f"{memory_context}\n{seed_memory_text}"
+                    if memory_context
+                    else seed_memory_text
+                )
+
+            trace_guidance = str(prompt.metadata.get("trace_guidance", ""))
             messages = prepend_context_to_messages(
-                prompt.messages, prompt.user_summary, memory_context
+                prompt.messages,
+                prompt.user_summary,
+                memory_context,
+                trace_guidance=trace_guidance,
             )
 
             tool_callables = make_eval_tools(
