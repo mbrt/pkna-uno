@@ -314,8 +314,9 @@ class GeminiBackend(LLMBackend):
                 return None
 
             usage = self._extract_usage(response)
-            for k in cumulative_usage:
-                cumulative_usage[k] += usage.get(k, 0)
+            for k, v in usage.items():
+                if isinstance(v, int):
+                    cumulative_usage[k] = cumulative_usage.get(k, 0) + v
 
             thinking, text = self._extract_parts(response)
             if thinking:
