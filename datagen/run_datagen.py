@@ -41,6 +41,11 @@ from pkna.logging import setup_logging
 
 console, log = setup_logging()
 
+# Cap per-call output tokens to keep visible responses short (2-4 sentences).
+# Thinking, tool calls, and response all count, but each API call in the
+# tool loop gets its own budget, so 2048 is generous per turn.
+DATAGEN_MAX_OUTPUT_TOKENS = 2048
+
 
 # ============================================================================
 # Helpers
@@ -465,7 +470,9 @@ def main() -> None:
     else:
         log.info(f"No corpus file at {corpus_path}, running without memory")
 
-    backend = create_backend(args.backend, args.model)
+    backend = create_backend(
+        args.backend, args.model, max_tokens=DATAGEN_MAX_OUTPUT_TOKENS
+    )
 
     written = run_datagen(
         prompts_path=args.prompts,
