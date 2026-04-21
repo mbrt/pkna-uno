@@ -355,7 +355,7 @@ def generate_corpus(
                 result = backend.generate(
                     system="Generate memory entries as requested.",
                     messages=[{"role": "user", "content": prompt}],
-                    response_schema=RawMemoryEntry,
+                    response_schema=list[RawMemoryEntry],
                 )
                 if result is None:
                     log.error(f"Failed to generate {archetype}/{character}")

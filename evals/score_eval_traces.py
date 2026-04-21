@@ -172,30 +172,14 @@ def format_trace_for_judge(
 
 
 def parse_structured_response[T: BaseModel](text: str, schema: type[T]) -> T | None:
-    """Parse a structured JSON response from the judge model.
-
-    The backend wraps response_schema in list[], so the response is a
-    JSON array. We take the first element and validate it.
-    """
+    """Parse a structured JSON response from the judge model."""
     text = text.strip()
     if text.startswith("```"):
         lines = text.split("\n")
         lines = [ln for ln in lines if not ln.strip().startswith("```")]
         text = "\n".join(lines).strip()
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        log.warning("Failed to parse judge response: %s", text[:200])
-        return None
-
-    if isinstance(data, list):
-        if not data:
-            log.warning("Empty array in judge response")
-            return None
-        data = data[0]
-
-    try:
-        return schema.model_validate(data)
+        return schema.model_validate_json(text)
     except Exception as e:
         log.warning("Failed to validate judge response: %s", e)
         return None

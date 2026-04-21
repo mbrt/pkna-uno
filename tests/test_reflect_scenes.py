@@ -4,8 +4,6 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
-from pydantic import BaseModel
-
 from pkna.extract.scenes import AnnotatedDialogue, Panel, Scene
 from pkna.llm.backends import GenerateResult, LLMBackend
 from extract.reflect_scenes import (
@@ -37,7 +35,7 @@ class MockBackend(LLMBackend):
         system: str,
         messages: list[dict[str, str]],
         tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
+        response_schema: type | None = None,
     ) -> GenerateResult | None:
         self.last_system = system
         self.last_messages = messages
@@ -314,7 +312,7 @@ class TestSceneReflector:
             "tradeoffs": [],
         }
         base.update(overrides)
-        return json.dumps([base])
+        return json.dumps(base)
 
     def test_successful_reflection(self):
         response = self._make_reflection_json()

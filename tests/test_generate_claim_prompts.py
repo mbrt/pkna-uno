@@ -8,6 +8,7 @@ import pytest
 from datagen.generate_claim_prompts import (
     Claim,
     ClaimScenario,
+    SeedMemory,
     _apply_scenario,
     _render_claim_scenario,
     compute_trace_weights,
@@ -501,7 +502,7 @@ class TestApplyScenario:
         scenario = ClaimScenario(
             user_message="Ciao!",
             seed_memories=[
-                {"key": "recent scare", "value": "PK nearly fell", "days_ago": 2}
+                SeedMemory(key="recent scare", value="PK nearly fell", days_ago=2)
             ],
         )
         filled = _apply_scenario(prompt, scenario)

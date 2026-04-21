@@ -27,7 +27,6 @@ from extract.build_emotional_profile import (
 )
 from pkna.extract.scenes import AnnotatedDialogue, Panel, Scene, format_scene_view
 from pkna.llm.backends import GenerateResult, LLMBackend
-from pydantic import BaseModel
 
 MOCK_MODEL = "test-model"
 
@@ -54,7 +53,7 @@ class MockBackend(LLMBackend):
         system: str,
         messages: list[dict[str, str]],
         tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
+        response_schema: type | None = None,
     ) -> GenerateResult | None:
         if self._call_count < len(self._responses):
             text = self._responses[self._call_count]
@@ -1385,7 +1384,7 @@ class TestClaimCondenser:
                 system: str,
                 messages: list[dict[str, str]],
                 tools: list[Callable[..., str]] | None = None,
-                response_schema: type[BaseModel] | None = None,
+                response_schema: type | None = None,
             ) -> GenerateResult | None:
                 self._call_count += 1
                 if self._call_count == 1:
@@ -1450,7 +1449,7 @@ class TestClaimCondenser:
                 system: str,
                 messages: list[dict[str, str]],
                 tools: list[Callable[..., str]] | None = None,
-                response_schema: type[BaseModel] | None = None,
+                response_schema: type | None = None,
             ) -> GenerateResult | None:
                 n = messages[0]["content"].count("[id=")
                 call_sizes.append(n)

@@ -107,8 +107,7 @@ def _make_scored(
 
 
 def _judge_result(data: dict[str, Any]) -> GenerateResult:
-    """Simulate structured output: backend wraps response_schema in list[]."""
-    return GenerateResult(text=json.dumps([data]), model_name="judge")
+    return GenerateResult(text=json.dumps(data), model_name="judge")
 
 
 # ============================================================================
@@ -246,24 +245,14 @@ class TestParseStructuredResponse:
         assert result.score == 4
         assert result.justification == "Good"
 
-    def test_array_wrapping(self):
-        result = parse_structured_response(
-            '[{"score": 3, "justification": "OK"}]', RubricScore
-        )
-        assert result is not None
-        assert result.score == 3
-
     def test_markdown_fence(self):
-        text = '```json\n[{"score": 3, "justification": "OK"}]\n```'
+        text = '```json\n{"score": 3, "justification": "OK"}\n```'
         result = parse_structured_response(text, RubricScore)
         assert result is not None
         assert result.score == 3
 
     def test_invalid_json(self):
         assert parse_structured_response("not json", RubricScore) is None
-
-    def test_empty_array(self):
-        assert parse_structured_response("[]", RubricScore) is None
 
     def test_validation_failure(self):
         assert (
@@ -281,7 +270,7 @@ class TestParseStructuredResponse:
             "efficiency": 3.0,
             "justification": "Solid",
         }
-        result = parse_structured_response(json.dumps([data]), SocialReasoningScore)
+        result = parse_structured_response(json.dumps(data), SocialReasoningScore)
         assert result is not None
         assert result.grounding == 4.0
         assert result.efficiency == 3.0

@@ -438,11 +438,7 @@ class SceneReflector:
         }
 
         try:
-            items = json.loads(text)
-            if isinstance(items, list) and items:
-                reflection = SceneReflection.model_validate(items[0])
-            else:
-                reflection = SceneReflection.model_validate(items)
+            reflection = SceneReflection.model_validate_json(text)
             return ReflectionResult(reflection, meta)
         except (json.JSONDecodeError, ValueError) as e:
             log.warning(f"Failed to parse reflection for {scene.scene_id}: {e}")

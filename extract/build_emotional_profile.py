@@ -1637,7 +1637,7 @@ class ClaimGeneralizer:
         result = self._backend.generate(
             system=self._system,
             messages=messages,
-            response_schema=ArchetypeGroup,
+            response_schema=list[ArchetypeGroup],
         )
         if result is None:
             log.warning("Generalization API call failed")
@@ -1759,7 +1759,7 @@ class ClaimCondenser:
         result = self._backend.generate(
             system=self._system,
             messages=messages,
-            response_schema=CondensedClaim,
+            response_schema=list[CondensedClaim],
         )
         if result is None:
             log.warning("Failed to condense claim group")

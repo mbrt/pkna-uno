@@ -35,7 +35,7 @@ from google.genai.types import (
     Part,
     ThinkingConfig,
 )
-from pydantic import BaseModel, TypeAdapter
+from pydantic import TypeAdapter
 
 load_dotenv()
 
@@ -105,7 +105,7 @@ class LLMBackend(ABC):
         system: str,
         messages: list[dict[str, str]],
         tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
+        response_schema: type | None = None,
     ) -> GenerateResult | None:
         """Generate a response from the LLM.
 
@@ -115,7 +115,8 @@ class LLMBackend(ABC):
             tools: Python callables the model may invoke. The backend runs the
                 tool-call loop internally and returns the final text.
             response_schema: If set, constrain output to JSON matching this
-                Pydantic model's schema.
+                schema. Pass a Pydantic model for a single object, or
+                ``list[Model]`` for an array.
         """
         ...
 
@@ -220,7 +221,7 @@ class GeminiBackend(LLMBackend):
         system: str,
         messages: list[dict[str, str]],
         tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
+        response_schema: type | None = None,
     ) -> GenerateResult | None:
         config_kwargs: dict[str, Any] = {
             "system_instruction": system,
@@ -236,7 +237,7 @@ class GeminiBackend(LLMBackend):
             )
         if response_schema:
             config_kwargs["response_mime_type"] = "application/json"
-            config_kwargs["response_schema"] = list[response_schema]
+            config_kwargs["response_schema"] = response_schema
 
         config = GenerateContentConfig(**config_kwargs)
         conversation = self._to_gemini_contents(messages)
@@ -590,7 +591,7 @@ class AnthropicBackend(LLMBackend):
         system: str,
         messages: list[dict[str, str]],
         tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
+        response_schema: type | None = None,
     ) -> GenerateResult | None:
         if tools:
             return self._generate_with_tools(system, messages, tools)
@@ -675,9 +676,9 @@ class AnthropicBackend(LLMBackend):
         self,
         system: str,
         messages: list[dict[str, str]],
-        schema: type[BaseModel],
+        schema: type,
     ) -> GenerateResult | None:
-        json_schema = TypeAdapter(list[schema]).json_schema()  # ty: ignore[invalid-type-form]
+        json_schema = TypeAdapter(schema).json_schema()
         _add_additional_properties_false(json_schema)
         api_messages = _to_anthropic_messages(messages)
         _move_cache_breakpoint(api_messages)

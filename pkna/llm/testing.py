@@ -7,8 +7,6 @@ Provides FakeBackend (fixed single response) and SequentialBackend
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from pydantic import BaseModel
-
 from pkna.llm.backends import GenerateResult, LLMBackend
 
 
@@ -28,7 +26,7 @@ class FakeBackend(LLMBackend):
         system: str,
         messages: list[dict[str, str]],
         tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
+        response_schema: type | None = None,
     ) -> GenerateResult | None:
         self.last_system = system
         self.last_messages = messages
@@ -51,7 +49,7 @@ class SequentialBackend(LLMBackend):
         system: str,
         messages: list[dict[str, str]],
         tools: list[Callable[..., str]] | None = None,
-        response_schema: type[BaseModel] | None = None,
+        response_schema: type | None = None,
     ) -> GenerateResult | None:
         idx = self._call_count
         self._call_count += 1
