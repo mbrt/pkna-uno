@@ -67,7 +67,7 @@ banner() {
 # ------------------------------------------------------------------
 # Stage 0: Generate memory corpus
 # ------------------------------------------------------------------
-if [ "$SKIP_GEN" = true ] || [ "$MINI" -gt 0 ]; then
+if [ "$SKIP_GEN" = true ]; then
     banner "Stage 0: Generate memory corpus [SKIPPED]"
 else
     banner "Stage 0: Generate memory corpus (seed banks + LLM)"
