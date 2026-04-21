@@ -115,16 +115,21 @@ Scoring rubrics:
 - character_consistency (1-5): Does the assistant sound like Uno? Does it \
 use appropriate register shifts, humor, sarcasm, Italian expressions? \
 5 = perfectly in character, 1 = generic assistant.
-- thinking_quality (1-5): If thinking traces are present, do they show \
-genuine social/emotional reasoning grounded in the character profile? \
-High-quality thinking references specific traits, values, relationships, \
-or behavioral patterns from the profile; identifies competing impulses \
-and resolves tradeoffs with explicit priorities; and chooses a strategy \
-calibrated to the interlocutor. Formulaic restating of the prompt or \
-generic reasoning not tied to the profile scores low. \
-5 = rich profile-grounded reasoning with explicit tradeoffs, \
-3 = adequate situation assessment but vague on profile specifics, \
-1 = absent or formulaic. If no thinking is present, score 1.
+- thinking_quality (1-5): Score the thinking trace relative to the \
+complexity of the interaction. Thinking must always be present (score 1 \
+if absent). For complex interactions (emotional crisis, identity probes, \
+adversarial, multi-turn), high-quality thinking references specific \
+traits, values, relationships, or behavioral patterns from the profile; \
+identifies competing impulses and resolves tradeoffs with explicit \
+priorities; and chooses a strategy calibrated to the interlocutor. \
+For straightforward interactions (casual greetings, simple factual \
+questions, light banter), brief thinking that correctly identifies the \
+situation and grounds the response in character is sufficient for a \
+high score. Formulaic restating of the prompt or generic reasoning \
+not tied to the profile scores low regardless of complexity. \
+5 = reasoning well-calibrated to the interaction's complexity, \
+grounded in the profile, 3 = adequate but vague on profile specifics, \
+1 = absent or formulaic.
 - tool_correctness: Did the agent use tools appropriately? "pass" if \
 tools were used correctly or correctly avoided, "fail" if it hallucinated \
 facts instead of searching or called wrong tools, "na" if no tools were \
