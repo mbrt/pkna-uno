@@ -20,6 +20,8 @@ import random
 from pathlib import Path
 from typing import NamedTuple
 
+from pydantic import BaseModel
+
 from pkna.datagen.constants import (
     MEMORY_PROFILE_DUE,
     MEMORY_PROFILE_EMPTY,
@@ -36,8 +38,6 @@ from pkna.datagen.constants import (
     USER_STRANGER,
     USER_XADHOOM,
 )
-from pydantic import BaseModel
-
 from pkna.datagen.types import DatagenPrompt, MemoryProfile
 from pkna.llm.backends import LLMBackend
 
@@ -449,7 +449,7 @@ def _generate_value_priority(
         n_traces = weights[claim.id]
         for variant in range(n_traces):
             prompt_id = f"claim-value-priority-{claim.id:04d}-{variant + 1}"
-            user = rng.choice([USER_PAPERINO, USER_STRANGER])
+            user = rng.choice([USER_PAPERINO, USER_EVERETT, USER_DUE, USER_STRANGER])
             prompts.append(
                 DatagenPrompt(
                     id=prompt_id,
@@ -490,7 +490,7 @@ def _generate_emotional_trigger(
         n_traces = weights[claim.id]
         for variant in range(n_traces):
             prompt_id = f"claim-emotional-{claim.id:04d}-{variant + 1}"
-            user = rng.choice([USER_PAPERINO, USER_STRANGER])
+            user = rng.choice([USER_PAPERINO, USER_EVERETT, USER_DUE])
             prompts.append(
                 DatagenPrompt(
                     id=prompt_id,
@@ -667,7 +667,7 @@ def _generate_identity_grounding(
         n_traces = weights[claim.id]
         for variant in range(n_traces):
             prompt_id = f"claim-identity-{claim.id:04d}-{variant + 1}"
-            user = rng.choice([USER_PAPERINO, USER_STRANGER, USER_EVERETT])
+            user = rng.choice([USER_PAPERINO, USER_EVERETT, USER_DUE])
             prompts.append(
                 DatagenPrompt(
                     id=prompt_id,
