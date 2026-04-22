@@ -31,8 +31,11 @@ from google.genai.types import (
     Content,
     ContentListUnionDict,
     GenerateContentConfig,
+    HarmBlockThreshold,
+    HarmCategory,
     HttpOptions,
     Part,
+    SafetySetting,
     ThinkingConfig,
 )
 from pydantic import TypeAdapter
@@ -158,9 +161,16 @@ class GeminiBackend(LLMBackend):
     @staticmethod
     def _extract_parts(response: Any) -> tuple[str | None, str]:
         """Extract thinking summary and visible text from a Gemini response."""
+        candidates = response.candidates
+        if not candidates:
+            return None, ""
+        content = candidates[0].content
+        if not content or not content.parts:
+            return None, ""
+
         thinking_parts: list[str] = []
         text_parts: list[str] = []
-        for part in response.candidates[0].content.parts:
+        for part in content.parts:
             if not part.text:
                 continue
             if part.thought:
@@ -229,6 +239,16 @@ class GeminiBackend(LLMBackend):
             "temperature": 0.7,
             "top_p": 0.95,
             "thinking_config": ThinkingConfig(include_thoughts=True),
+            "safety_settings": [
+                SafetySetting(category=c, threshold=HarmBlockThreshold.BLOCK_NONE)
+                for c in [
+                    HarmCategory.HARM_CATEGORY_HARASSMENT,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+                ]
+            ],
         }
         if tools:
             config_kwargs["tools"] = tools
@@ -248,6 +268,8 @@ class GeminiBackend(LLMBackend):
 
     @staticmethod
     def _check_truncated(response: Any) -> None:
+        if not response.candidates:
+            return
         finish = response.candidates[0].finish_reason
         if finish is not None and finish.name == "MAX_TOKENS":
             raise OutputTruncatedError(
@@ -273,6 +295,9 @@ class GeminiBackend(LLMBackend):
         self._check_truncated(response)
 
         thinking, text = self._extract_parts(response)
+        if not text and not thinking:
+            log.warning("Gemini returned empty response (no text or thinking)")
+            return None
         msg: dict[str, Any] = {"role": "assistant", "content": text}
         if thinking:
             msg["thinking"] = thinking
@@ -326,6 +351,9 @@ class GeminiBackend(LLMBackend):
             fn_calls = response.function_calls
             if not fn_calls:
                 self._check_truncated(response)
+                if not text and not thinking:
+                    log.warning("Gemini returned empty response (no text or thinking)")
+                    return None
                 msg: dict[str, Any] = {"role": "assistant", "content": text}
                 if thinking:
                     msg["thinking"] = thinking

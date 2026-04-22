@@ -1,5 +1,7 @@
 """Unit tests for llm_backends helpers."""
 
+from types import SimpleNamespace
+
 from pydantic import BaseModel, TypeAdapter
 
 from pkna.llm.backends import (
@@ -7,6 +9,21 @@ from pkna.llm.backends import (
     GeminiBackend,
     _add_additional_properties_false,
 )
+
+
+def _fake_response(parts=None, *, has_content=True, has_candidates=True):
+    """Build a minimal fake Gemini response for _extract_parts tests."""
+    if not has_candidates:
+        return SimpleNamespace(candidates=None)
+    if not has_content:
+        return SimpleNamespace(candidates=[SimpleNamespace(content=None)])
+    return SimpleNamespace(
+        candidates=[SimpleNamespace(content=SimpleNamespace(parts=parts))]
+    )
+
+
+def _fake_part(text, *, thought=False):
+    return SimpleNamespace(text=text, thought=thought)
 
 
 class TestGenerateResult:
@@ -169,3 +186,47 @@ class TestToGeminiContents:
         assert contents[2].parts is not None
         fr = contents[2].parts[0].function_response
         assert fr is not None and fr.name == "search_knowledge"
+
+
+class TestExtractParts:
+    def test_normal_text(self):
+        resp = _fake_response([_fake_part("hello")])
+        thinking, text = GeminiBackend._extract_parts(resp)
+        assert thinking is None
+        assert text == "hello"
+
+    def test_thinking_and_text(self):
+        resp = _fake_response([_fake_part("hmm", thought=True), _fake_part("answer")])
+        thinking, text = GeminiBackend._extract_parts(resp)
+        assert thinking == "hmm"
+        assert text == "answer"
+
+    def test_none_candidates(self):
+        resp = _fake_response(has_candidates=False)
+        thinking, text = GeminiBackend._extract_parts(resp)
+        assert thinking is None
+        assert text == ""
+
+    def test_empty_candidates(self):
+        resp = SimpleNamespace(candidates=[])
+        thinking, text = GeminiBackend._extract_parts(resp)
+        assert thinking is None
+        assert text == ""
+
+    def test_none_content(self):
+        resp = _fake_response(has_content=False)
+        thinking, text = GeminiBackend._extract_parts(resp)
+        assert thinking is None
+        assert text == ""
+
+    def test_none_parts(self):
+        resp = _fake_response(parts=None)
+        thinking, text = GeminiBackend._extract_parts(resp)
+        assert thinking is None
+        assert text == ""
+
+    def test_empty_parts(self):
+        resp = _fake_response(parts=[])
+        thinking, text = GeminiBackend._extract_parts(resp)
+        assert thinking is None
+        assert text == ""
