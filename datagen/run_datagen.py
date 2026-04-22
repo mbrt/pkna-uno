@@ -36,15 +36,15 @@ from pkna.inference.system_prompts import (
     render_datagen_system_prompt,
 )
 from pkna.inference.tools import make_eval_tools
-from pkna.llm.backends import LLMBackend, create_backend
+from pkna.llm.backends import LLMBackend, OutputTruncatedError, create_backend
 from pkna.logging import setup_logging
 
 console, log = setup_logging()
 
 # Cap per-call output tokens to keep visible responses short (2-4 sentences).
 # Thinking, tool calls, and response all count, but each API call in the
-# tool loop gets its own budget, so 2048 is generous per turn.
-DATAGEN_MAX_OUTPUT_TOKENS = 2048
+# tool loop gets its own budget, so 4096 is generous per turn.
+DATAGEN_MAX_OUTPUT_TOKENS = 4096
 
 
 # ============================================================================
@@ -383,17 +383,21 @@ def run_datagen(
             )
             tools_or_none = tool_callables if tool_callables else None
 
-            result = run_single_prompt(
-                prompt_id=prompt.id,
-                system_prompt=system_prompt,
-                user_summary=prompt.user_summary,
-                memory_context=memory_context,
-                messages=messages,
-                metadata=prompt.metadata,
-                backend=backend,
-                tools=tools_or_none,
-                simulator_backend=simulator_backend,
-            )
+            try:
+                result = run_single_prompt(
+                    prompt_id=prompt.id,
+                    system_prompt=system_prompt,
+                    user_summary=prompt.user_summary,
+                    memory_context=memory_context,
+                    messages=messages,
+                    metadata=prompt.metadata,
+                    backend=backend,
+                    tools=tools_or_none,
+                    simulator_backend=simulator_backend,
+                )
+            except OutputTruncatedError:
+                log.warning(f"Skipping {prompt.id}: output hit max token limit")
+                result = None
 
             if result is not None:
                 f.write(result.trace.model_dump_json() + "\n")
