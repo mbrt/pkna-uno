@@ -64,6 +64,16 @@ class DatagenTrace(BaseModel):
 ToolCorrectnessResult = Literal["pass", "fail", "na"]
 
 
+class JudgeResponse(BaseModel):
+    """Raw structured output from the LLM judge."""
+
+    character_consistency: float
+    thinking_quality: float
+    tool_correctness: ToolCorrectnessResult
+    language_consistent: bool
+    justification: str
+
+
 class QualityScore(BaseModel):
     """Judge output for a single trace."""
 

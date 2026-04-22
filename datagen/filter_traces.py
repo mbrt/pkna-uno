@@ -24,16 +24,15 @@ Usage:
 import argparse
 import json
 from pathlib import Path
-from typing import Any
 
 from rich.progress import Progress
 
 from datagen.run_datagen import load_system_prompt
 from pkna.datagen.types import (
     DatagenTrace,
+    JudgeResponse,
     QualityScore,
     ScoredTrace,
-    ToolCorrectnessResult,
 )
 from pkna.llm.backends import LLMBackend, create_backend
 from pkna.logging import setup_logging
@@ -101,15 +100,7 @@ conversation traces where an AI character named Uno (from the PKNA comic \
 series) responds to users.
 
 You will be given a conversation trace and must score it on multiple \
-dimensions. Output valid JSON matching this schema:
-
-{
-  "character_consistency": <float 1-5>,
-  "thinking_quality": <float 1-5>,
-  "tool_correctness": "<pass|fail|na>",
-  "language_consistent": <bool>,
-  "justification": "<1-2 sentences>"
-}
+dimensions.
 
 Scoring rubrics:
 - character_consistency (1-5): Does the assistant sound like Uno? Does it \
@@ -183,20 +174,6 @@ def _format_trace_for_judge(trace: DatagenTrace, system_prompt: str = "") -> str
     return "\n".join(parts)
 
 
-def _parse_judge_response(text: str) -> dict[str, Any] | None:
-    """Parse JSON from the judge model response, tolerating markdown fences."""
-    text = text.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        lines = [ln for ln in lines if not ln.strip().startswith("```")]
-        text = "\n".join(lines).strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        log.warning(f"Failed to parse judge response: {text[:200]}")
-        return None
-
-
 def score_trace(
     trace: DatagenTrace,
     backend: LLMBackend,
@@ -207,47 +184,37 @@ def score_trace(
     result = backend.generate(
         system=JUDGE_SYSTEM,
         messages=[{"role": "user", "content": formatted}],
+        response_schema=JudgeResponse,
     )
     if result is None:
         log.error(f"Judge failed for trace {trace.id}")
         return None
 
-    parsed = _parse_judge_response(result.text)
-    if parsed is None:
-        return None
-
     try:
-        char_score = float(parsed.get("character_consistency", 0))
-        think_score = float(parsed.get("thinking_quality", 0))
-        lang_ok = bool(parsed.get("language_consistent", False))
-        tool_result_raw = parsed.get("tool_correctness", "na")
-        tool_result: ToolCorrectnessResult = (
-            tool_result_raw if tool_result_raw in ("pass", "fail", "na") else "na"
-        )
-        justification = str(parsed.get("justification", ""))
-    except (ValueError, TypeError) as e:
-        log.warning(f"Invalid judge scores for {trace.id}: {e}")
+        judge = JudgeResponse.model_validate_json(result.text)
+    except ValueError as e:
+        log.warning(f"Invalid judge response for {trace.id}: {e}")
         return None
 
     length_ok = check_response_length(trace)
 
     overall = (
-        char_score >= 3.0
-        and think_score >= 3.0
-        and lang_ok
-        and tool_result != "fail"
+        judge.character_consistency >= 3.0
+        and judge.thinking_quality >= 3.0
+        and judge.language_consistent
+        and judge.tool_correctness != "fail"
         and length_ok
     )
 
     return QualityScore(
         trace_id=trace.id,
-        character_consistency=char_score,
-        thinking_quality=think_score,
-        tool_correctness=tool_result,
-        language_consistent=lang_ok,
+        character_consistency=judge.character_consistency,
+        thinking_quality=judge.thinking_quality,
+        tool_correctness=judge.tool_correctness,
+        language_consistent=judge.language_consistent,
         response_length_ok=length_ok,
         overall_pass=overall,
-        justification=justification,
+        justification=judge.justification,
     )
 
 

@@ -6,7 +6,6 @@ from pathlib import Path
 from datagen.filter_traces import (
     _estimate_tokens,
     _format_trace_for_judge,
-    _parse_judge_response,
     check_response_length,
     filter_traces,
     score_trace,
@@ -100,23 +99,6 @@ class TestCheckResponseLength:
             ]
         )
         assert check_response_length(trace) is False
-
-
-class TestParseJudgeResponse:
-    def test_valid_json(self):
-        text = _good_judge_response()
-        result = _parse_judge_response(text)
-        assert result is not None
-        assert result["character_consistency"] == 4.5
-
-    def test_json_in_markdown_fence(self):
-        text = f"```json\n{_good_judge_response()}\n```"
-        result = _parse_judge_response(text)
-        assert result is not None
-        assert result["character_consistency"] == 4.5
-
-    def test_invalid_json(self):
-        assert _parse_judge_response("not json at all") is None
 
 
 class TestFormatTraceForJudge:
