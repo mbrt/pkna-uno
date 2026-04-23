@@ -13,11 +13,13 @@ Stages:
     3. Quality filtering  (fake backend)
     4. Assemble HF Dataset (tokenizer only)
     5. SFT training       (GPU required)
-    6. Eval inference      (fake backend)
-    7. Eval scoring        (fake backend)
+    6. Distillation prompts (no LLM, no GPU)
+    7. Distillation training (GPU required)
+    8. Eval inference      (fake backend)
+    9. Eval scoring        (fake backend)
 
 Usage:
-    # Stages 1-5 (current default, GPU needed for stage 5):
+    # Stages 1-7 (current default, GPU needed for stages 5+7):
     python training/smoke_test.py
 
     # All stages including eval:
@@ -32,6 +34,8 @@ Usage:
     python training/smoke_test.py --stage filter
     python training/smoke_test.py --stage assemble
     python training/smoke_test.py --stage train
+    python training/smoke_test.py --stage distill-prompts
+    python training/smoke_test.py --stage distill
     python training/smoke_test.py --stage eval
 """
 
@@ -114,21 +118,19 @@ def _canned_judge_response() -> GenerateResult:
 
 
 def _canned_eval_judge(score: float = 4.0) -> GenerateResult:
-    """Structured judge response for eval scoring (wrapped in list)."""
-    data = [{"score": score, "justification": "Solid performance."}]
+    """Structured judge response for eval scoring."""
+    data = {"score": score, "justification": "Solid performance."}
     return GenerateResult(text=json.dumps(data), model_name="fake")
 
 
 def _canned_social_judge() -> GenerateResult:
-    data = [
-        {
-            "grounding": 4.0,
-            "strategy": 4.0,
-            "consistency": 4.0,
-            "efficiency": 4.0,
-            "justification": "Good reasoning.",
-        }
-    ]
+    data = {
+        "grounding": 4.0,
+        "strategy": 4.0,
+        "consistency": 4.0,
+        "efficiency": 4.0,
+        "justification": "Good reasoning.",
+    }
     return GenerateResult(text=json.dumps(data), model_name="fake")
 
 
@@ -301,7 +303,69 @@ def run_stage_train(output_dir: Path, model_name: str, max_steps: int) -> Path:
 
 
 # ============================================================================
-# Stage 6: Eval inference
+# Stage 6: Distillation prompts
+# ============================================================================
+
+
+DISTILL_N_PROMPTS = 10
+
+
+def run_stage_distill_prompts(output_dir: Path) -> Path:
+    from datasets import Dataset
+
+    from distillation.generate_prompts import sample_prompts
+
+    # Build a tiny fake dataset that looks like tulu-3-sft-mixture
+    rows_messages = []
+    rows_sources = []
+    for i in range(30):
+        msgs = [
+            {"role": "user", "content": f"Distill question {i}"},
+            {"role": "assistant", "content": f"Distill answer {i}"},
+        ]
+        rows_messages.append(msgs)
+        rows_sources.append(f"source_{i % 3}")
+
+    fake_tulu = Dataset.from_dict({"messages": rows_messages, "source": rows_sources})
+
+    prompts_path = output_dir / "distillation_prompts"
+    result = sample_prompts(n_prompts=DISTILL_N_PROMPTS, seed=42, dataset=fake_tulu)
+    result.save_to_disk(str(prompts_path))
+    log.info("Sampled %d distillation prompts -> %s", len(result), prompts_path)
+    return prompts_path
+
+
+# ============================================================================
+# Stage 7: Distillation training
+# ============================================================================
+
+
+def run_stage_distill(output_dir: Path, model_name: str, max_steps: int) -> Path:
+    from training.run_distillation import run_distillation
+
+    prompts_path = output_dir / "distillation_prompts"
+    adapter_path = output_dir / "lora_adapter"
+    distill_adapter_path = output_dir / "distill_adapter"
+
+    run_distillation(
+        dataset_path=str(prompts_path),
+        adapter_path=str(adapter_path),
+        output_path=str(distill_adapter_path),
+        model_name=model_name,
+        max_length=512,
+        max_completion_length=128,
+        learning_rate=1e-4,
+        batch_size=1,
+        gradient_accumulation_steps=1,
+        max_steps=max_steps,
+        logging_steps=1,
+        export_gguf=None,
+    )
+    return distill_adapter_path
+
+
+# ============================================================================
+# Stage 8: Eval inference
 # ============================================================================
 
 
@@ -386,7 +450,9 @@ STAGES = {
     "filter": "Stage 3: Quality filtering",
     "assemble": "Stage 4: Assemble HF Dataset",
     "train": "Stage 5: SFT Training",
-    "eval": "Stages 6-7: Eval inference + scoring",
+    "distill-prompts": "Stage 6: Distillation prompts",
+    "distill": "Stage 7: Distillation training",
+    "eval": "Stages 8-9: Eval inference + scoring",
 }
 
 
@@ -442,13 +508,31 @@ def main() -> None:
     if args.stage:
         stages = [args.stage]
     elif args.no_training:
-        stages = ["prompts", "datagen", "filter", "assemble", "eval"]
+        stages = ["prompts", "datagen", "filter", "assemble", "distill-prompts", "eval"]
     elif args.all:
-        stages = ["prompts", "datagen", "filter", "assemble", "train", "eval"]
+        stages = [
+            "prompts",
+            "datagen",
+            "filter",
+            "assemble",
+            "train",
+            "distill-prompts",
+            "distill",
+            "eval",
+        ]
     else:
-        stages = ["prompts", "datagen", "filter", "assemble", "train"]
+        stages = [
+            "prompts",
+            "datagen",
+            "filter",
+            "assemble",
+            "train",
+            "distill-prompts",
+            "distill",
+        ]
 
-    if "train" in stages:
+    gpu_stages = {"train", "distill"}
+    if gpu_stages & set(stages):
         from training import ensure_unsloth
 
         ensure_unsloth()
@@ -466,6 +550,10 @@ def main() -> None:
             run_stage_assemble(output_dir, args.model)
         elif stage == "train":
             run_stage_train(output_dir, args.model, args.max_steps)
+        elif stage == "distill-prompts":
+            run_stage_distill_prompts(output_dir)
+        elif stage == "distill":
+            run_stage_distill(output_dir, args.model, args.max_steps)
         elif stage == "eval":
             run_stage_eval_infer(output_dir)
             run_stage_eval_score(output_dir)

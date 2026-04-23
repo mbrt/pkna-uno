@@ -216,8 +216,9 @@ accordingly, informed by his character profile.
   heuristic) plus LLM-as-judge scoring (character consistency 1-5, thinking
   quality 1-5, tool correctness pass/fail/na). Outputs scored traces and
   filtered (passing only) traces. Resume support for incremental scoring.
-- [ ] **Background chat** -- Tulu3 subset sampling with lightweight thinking
-  traces is not implemented.
+- [x] **Background chat** -- `distillation/generate_prompts.py`: stratified
+  sampling from Tulu3 for distillation prompts (see On-Policy Distillation
+  section below).
 
 ### SFT Training (training-strategy.md)
 
@@ -241,10 +242,17 @@ accordingly, informed by his character profile.
 
 ### On-Policy Distillation (training-strategy.md)
 
-- [ ] **Distillation loop** -- student sampling, teacher logprob computation,
-  reverse KL training is not implemented.
-- [ ] **Distillation prompt set** -- the ~600 prompts for distillation
-  (character interviews, scenarios, tool-use, general chat) are not produced.
+- [x] **Distillation prompt set** -- `distillation/generate_prompts.py`:
+  samples 600 prompts from `allenai/tulu-3-sft-mixture` with stratified
+  random sampling across source subsets. Each example is converted to
+  prompt-only format (system + first user turn, assistant turns stripped).
+  Tests in `tests/test_distillation_prompts.py`.
+- [x] **Distillation loop** -- `training/run_distillation.py`: uses TRL's
+  `DistillationTrainer` (experimental) with reverse KL (`beta=1.0`), fully
+  on-policy generation (`lmbda=1.0`), and self-distillation (base model as
+  teacher). Loads the SFT LoRA adapter via Unsloth. MLflow tracking, GGUF
+  export via `--export-gguf`. Smoke-tested in `training/smoke_test.py`
+  (stages 6-7).
 
 ### Deployment (training-strategy.md)
 

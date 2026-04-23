@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Run the full SFT datagen pipeline: generate prompts, run trace generation
-# with a real LLM, quality-filter the traces, and assemble the HF dataset.
+# Run the full datagen pipeline: generate prompts, run trace generation with
+# a real LLM, quality-filter the traces, assemble the SFT dataset, and sample
+# distillation prompts from Tulu3.
 #
 # Every stage is resumable -- re-running after an interruption skips
 # already-processed items.
@@ -30,6 +31,7 @@ TRACES="output/datagen/traces.jsonl"
 SCORED="output/datagen/traces_scored.jsonl"
 FILTERED="output/datagen/traces_filtered.jsonl"
 DATASET="output/sft/dataset"
+DISTILL_PROMPTS="output/distillation/prompts"
 
 EVAL_PROMPTS="output/evals/prompts"
 EVAL_TRACES="output/evals/traces"
@@ -137,10 +139,24 @@ uv run python training/assemble_sft.py \
     --model "$SFT_MODEL"
 
 # ------------------------------------------------------------------
-# Stage 5: Eval inference (mini mode only)
+# Stage 5: Generate distillation prompts (Tulu3 sampling, no LLM)
 # ------------------------------------------------------------------
 if [ "$MINI" -gt 0 ]; then
-    banner "Stage 5: Eval inference (backend=$BACKEND, model=$MODEL)"
+    banner "Stage 5: Generate distillation prompts (n=$MINI)"
+    uv run python distillation/generate_prompts.py \
+        --output "$DISTILL_PROMPTS" \
+        --n-prompts "$MINI"
+else
+    banner "Stage 5: Generate distillation prompts (n=600)"
+    uv run python distillation/generate_prompts.py \
+        --output "$DISTILL_PROMPTS"
+fi
+
+# ------------------------------------------------------------------
+# Stage 6: Eval inference (mini mode only)
+# ------------------------------------------------------------------
+if [ "$MINI" -gt 0 ]; then
+    banner "Stage 6: Eval inference (backend=$BACKEND, model=$MODEL)"
     uv run python evals/generate_eval_prompts.py \
         --output-dir "$EVAL_PROMPTS" \
         --suites personality,tool_use
@@ -152,9 +168,9 @@ if [ "$MINI" -gt 0 ]; then
         "${MAX_ITEMS_FLAG[@]}"
 
     # ------------------------------------------------------------------
-    # Stage 6: Eval scoring (mini mode only)
+    # Stage 7: Eval scoring (mini mode only)
     # ------------------------------------------------------------------
-    banner "Stage 6: Eval scoring"
+    banner "Stage 7: Eval scoring"
     uv run python evals/score_eval_traces.py \
         --traces-dir "$EVAL_TRACES" \
         --prompts-dir "$EVAL_PROMPTS" \
@@ -164,14 +180,15 @@ if [ "$MINI" -gt 0 ]; then
 fi
 
 banner "Done"
-echo "  Corpus:   $CORPUS"
-echo "  Prompts:  $PROMPTS"
-echo "  Traces:   $TRACES"
-echo "  Scored:   $SCORED"
-echo "  Filtered: $FILTERED"
-echo "  Dataset:  $DATASET"
+echo "  Corpus:            $CORPUS"
+echo "  Prompts:           $PROMPTS"
+echo "  Traces:            $TRACES"
+echo "  Scored:            $SCORED"
+echo "  Filtered:          $FILTERED"
+echo "  SFT dataset:       $DATASET"
+echo "  Distill prompts:   $DISTILL_PROMPTS"
 if [ "$MINI" -gt 0 ]; then
-    echo "  Eval prompts: $EVAL_PROMPTS"
-    echo "  Eval traces:  $EVAL_TRACES"
-    echo "  Eval scored:  $EVAL_SCORED"
+    echo "  Eval prompts:      $EVAL_PROMPTS"
+    echo "  Eval traces:       $EVAL_TRACES"
+    echo "  Eval scored:       $EVAL_SCORED"
 fi

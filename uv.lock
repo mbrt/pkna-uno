@@ -4,8 +4,10 @@ requires-python = "==3.13.*"
 
 [manifest]
 overrides = [
+    { name = "datasets", specifier = ">=4.3.0" },
     { name = "torchao", specifier = "==0.16.0" },
     { name = "transformers", specifier = ">=5.2.0,<=5.5.0" },
+    { name = "trl", specifier = ">=1.1.0" },
 ]
 
 [[package]]
@@ -3543,7 +3545,7 @@ requires-dist = [
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "torch", specifier = ">=2.10.0" },
     { name = "transformers", specifier = ">=5.2.0,<=5.5.0" },
-    { name = "trl", specifier = ">=0.24.0" },
+    { name = "trl", specifier = ">=1.1.0" },
     { name = "unsloth", specifier = ">=2026.4.5" },
     { name = "vllm", marker = "extra == 'experimental'", specifier = ">=0.17" },
 ]
@@ -5102,16 +5104,18 @@ wheels = [
 
 [[package]]
 name = "trl"
-version = "0.24.0"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "accelerate" },
     { name = "datasets" },
+    { name = "jinja2" },
+    { name = "packaging" },
     { name = "transformers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e8/2e/30ece0055eee5763126e2d52f6e04aec294bcae34b46d9ca16c53c4b5852/trl-0.24.0.tar.gz", hash = "sha256:eee495223725d3da0596be2607581969db89ba0f7c00b075802addc31e61eac9", size = 368447, upload-time = "2025-10-16T00:10:37.65Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/d6/2d3d876917d43537afea7b502abb318ae071295e4accac222741b548399e/trl-1.2.0.tar.gz", hash = "sha256:f5038b21295d2559992a087ea8d9ca10f74cde23e6760861def209811ab45d00", size = 583112, upload-time = "2026-04-17T01:04:17.706Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/87/5f/c647fedde9d59ae35ee189cc49e419da5ac1d9ad9933cb69401a7eac4705/trl-0.24.0-py3-none-any.whl", hash = "sha256:a9145b7d4a4a33778de117bda48530f0cf5b2ac25acc07db80ad04836f490dfc", size = 423143, upload-time = "2025-10-16T00:10:35.809Z" },
+    { url = "https://files.pythonhosted.org/packages/02/82/bad1a22ff4b21d8080f7a64d8313c1ac0e791b455b98f2efca1ef3e14b8f/trl-1.2.0-py3-none-any.whl", hash = "sha256:f6ddfa162ac92d25973070d9e3f6cff71b32c52edc34539e4294722f9dc0a6d6", size = 697449, upload-time = "2026-04-17T01:04:16.007Z" },
 ]
 
 [[package]]
