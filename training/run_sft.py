@@ -5,6 +5,11 @@
 Uses Unsloth + LoRA to fine-tune a Qwen3.5 model on the assembled SFT
 dataset. Hyperparameters follow docs/fine-tuning/training-strategy.md.
 
+The dataset is expected to contain a ``messages`` column in standard chat
+format (reasoning_content + OpenAI tool_calls). This script applies the
+model's chat template at training time, making the dataset
+tokenizer-independent.
+
 Requires a GPU with sufficient VRAM (see training-strategy.md for estimates).
 
 Usage:
@@ -29,9 +34,13 @@ from unsloth.chat_templates import train_on_responses_only
 
 import argparse
 from pathlib import Path
+from typing import Any, cast
 
+import numpy as np
 from datasets import Dataset, load_from_disk
 from mlflow import log_params, set_experiment, set_tracking_uri, start_run
+from rich.table import Table
+from transformers import PreTrainedTokenizerBase
 from trl import SFTConfig, SFTTrainer
 
 from pkna.logging import setup_logging
@@ -49,6 +58,65 @@ LORA_DROPOUT = 0
 # The system prompt precedes any assistant turn and is masked by default.
 INSTRUCTION_PART = "<|im_start|>user\n"
 RESPONSE_PART = "<|im_start|>assistant\n"
+
+
+def render_and_filter(
+    dataset: Dataset,
+    tokenizer: PreTrainedTokenizerBase,
+    max_seq_length: int,
+) -> Dataset:
+    """Apply chat template to messages and filter by token length.
+
+    Takes a dataset with a ``messages`` column and returns a dataset with a
+    ``text`` column, dropping examples that exceed ``max_seq_length`` tokens.
+    """
+    texts: list[str] = []
+    token_lengths: list[int] = []
+    skipped = 0
+
+    for row in dataset:
+        text = cast(
+            str,
+            tokenizer.apply_chat_template(
+                cast(list[dict[str, Any]], row["messages"]),
+                tokenize=False,
+                add_generation_prompt=False,
+                enable_thinking=True,
+            ),
+        )
+        n_tokens = len(tokenizer.encode(text))
+
+        if n_tokens > max_seq_length:
+            skipped += 1
+            continue
+
+        texts.append(text)
+        token_lengths.append(n_tokens)
+
+    if skipped > 0:
+        log.info("Skipped %d examples exceeding %d tokens", skipped, max_seq_length)
+
+    _print_stats(token_lengths)
+    return Dataset.from_dict({"text": texts})
+
+
+def _print_stats(token_lengths: list[int]) -> None:
+    if not token_lengths:
+        console.print("[yellow]No examples to report stats on.[/yellow]")
+        return
+
+    arr = np.array(token_lengths)
+    table = Table(title="Token Length Statistics")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green", justify="right")
+    table.add_row("Count", str(len(arr)))
+    table.add_row("Min", str(int(arr.min())))
+    table.add_row("Max", str(int(arr.max())))
+    table.add_row("Mean", f"{arr.mean():.0f}")
+    table.add_row("Median", f"{np.median(arr):.0f}")
+    table.add_row("P95", f"{np.percentile(arr, 95):.0f}")
+    table.add_row("P99", f"{np.percentile(arr, 99):.0f}")
+    console.print(table)
 
 
 def run_sft(
@@ -95,7 +163,10 @@ def run_sft(
     loaded = load_from_disk(dataset_path)
     if not isinstance(loaded, Dataset):
         raise TypeError(f"Expected a Dataset, got {type(loaded).__name__}")
-    dataset: Dataset = loaded
+
+    log.info("Rendering chat template and filtering by token length")
+    dataset = render_and_filter(loaded, tokenizer, max_seq_length)
+    log.info("Training on %d examples", len(dataset))
 
     training_args = SFTConfig(
         max_seq_length=max_seq_length,  # ty: ignore[unknown-argument]  # added by unsloth

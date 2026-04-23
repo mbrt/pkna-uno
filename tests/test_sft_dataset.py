@@ -27,7 +27,13 @@ class TestConvertToolCalls:
         raw = [{"name": "search_wiki", "arguments": {"keywords": "Xadhoom"}}]
         result = _convert_tool_calls(raw)
         assert result == [
-            {"function": {"name": "search_wiki", "arguments": {"keywords": "Xadhoom"}}}
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_wiki",
+                    "arguments": {"keywords": "Xadhoom"},
+                },
+            }
         ]
 
     def test_multiple_calls(self):
@@ -39,16 +45,21 @@ class TestConvertToolCalls:
         assert len(result) == 2
         assert result[0]["function"]["name"] == "search_wiki"
         assert result[1]["function"]["name"] == "delegate"
+        assert all(tc["type"] == "function" for tc in result)
 
     def test_empty_arguments(self):
         raw = [{"name": "recall", "arguments": {}}]
         result = _convert_tool_calls(raw)
-        assert result == [{"function": {"name": "recall", "arguments": {}}}]
+        assert result == [
+            {"type": "function", "function": {"name": "recall", "arguments": {}}}
+        ]
 
     def test_missing_fields_default(self):
         raw = [{}]
         result = _convert_tool_calls(raw)
-        assert result == [{"function": {"name": "", "arguments": {}}}]
+        assert result == [
+            {"type": "function", "function": {"name": "", "arguments": {}}}
+        ]
 
 
 class TestConvertMessage:
@@ -92,6 +103,7 @@ class TestConvertMessage:
         assert result["role"] == "assistant"
         assert result["content"] == ""
         assert len(result["tool_calls"]) == 1
+        assert result["tool_calls"][0]["type"] == "function"
         assert result["tool_calls"][0]["function"]["name"] == "search_wiki"
 
     def test_assistant_with_thinking_and_tool_calls(self):
@@ -189,6 +201,7 @@ class TestTraceToMessages:
 
         assert messages[2]["role"] == "assistant"
         assert messages[2]["reasoning_content"] == "Factual question. Search the wiki."
+        assert messages[2]["tool_calls"][0]["type"] == "function"
         assert messages[2]["tool_calls"][0]["function"]["name"] == "search_wiki"
 
         assert messages[3]["role"] == "tool"
@@ -220,7 +233,7 @@ class TestTraceToMessages:
 
     def test_tool_name_not_in_output(self):
         """The 'name' field on tool messages is datagen metadata, not part of
-        the Qwen3.5 chat format (tool identity comes from the preceding
+        the standard chat format (tool identity comes from the preceding
         tool_call)."""
         trace = _make_trace(
             messages=[

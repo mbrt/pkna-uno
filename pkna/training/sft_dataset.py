@@ -1,14 +1,14 @@
-"""Convert DatagenTrace objects into Qwen3.5 chat message format for SFT.
+"""Convert DatagenTrace objects into standard chat message format for SFT.
 
 Transforms the internal trace representation (with 'thinking', 'tool_calls',
-etc.) into the message format expected by Qwen3.5's tokenizer.apply_chat_template()
-with thinking mode enabled.
+etc.) into a tokenizer-independent message format using widely adopted
+conventions:
 
-Key mappings:
-- system_prompt (passed explicitly) -> {"role": "system", "content": ...}
-- assistant 'thinking' field -> 'reasoning_content' (Qwen3.5's field name)
-- assistant 'tool_calls' -> {"function": {"name": ..., "arguments": ...}}
-- tool results -> {"role": "tool", "content": ...}
+- reasoning_content: de facto standard for thinking models (Qwen3, DeepSeek)
+- OpenAI-style tool_calls: {"type": "function", "function": {"name", "arguments"}}
+
+The output can be passed directly to tokenizer.apply_chat_template() on any
+model that supports these conventions, with no additional conversion step.
 
 No GPU or model dependencies -- this is pure data transformation.
 """
@@ -22,21 +22,23 @@ from pkna.inference.system_prompts import strip_trace_guidance
 def _convert_tool_calls(
     raw_calls: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Convert internal tool_call dicts to Qwen3.5 format.
+    """Convert internal tool_call dicts to OpenAI tool_calls format.
 
     Input:  {"name": "search_wiki", "arguments": {"keywords": "Xadhoom"}}
-    Output: {"function": {"name": "search_wiki", "arguments": {"keywords": "Xadhoom"}}}
+    Output: {"type": "function", "function": {"name": "search_wiki", "arguments": {"keywords": "Xadhoom"}}}
     """
     converted = []
     for tc in raw_calls:
         name = tc.get("name", "")
         arguments = tc.get("arguments", {})
-        converted.append({"function": {"name": name, "arguments": arguments}})
+        converted.append(
+            {"type": "function", "function": {"name": name, "arguments": arguments}}
+        )
     return converted
 
 
 def _convert_message(msg: dict[str, Any]) -> dict[str, Any]:
-    """Convert a single trace message to Qwen3.5 chat format."""
+    """Convert a single trace message to standard chat format."""
     role = msg.get("role", "")
 
     if role == "user":
@@ -65,10 +67,11 @@ def _convert_message(msg: dict[str, Any]) -> dict[str, Any]:
 
 
 def trace_to_messages(trace: DatagenTrace, system_prompt: str) -> list[dict[str, Any]]:
-    """Convert a DatagenTrace to Qwen3.5 chat messages.
+    """Convert a DatagenTrace to standard chat messages for SFT.
 
-    Returns a list of message dicts suitable for passing to
-    tokenizer.apply_chat_template(messages, enable_thinking=True).
+    Returns a list of message dicts in the standard format (reasoning_content
+    + OpenAI tool_calls), suitable for passing directly to
+    tokenizer.apply_chat_template().
 
     Args:
         trace: The recorded conversation trace.

@@ -258,7 +258,7 @@ def run_stage_filter(output_dir: Path) -> Path:
 # ============================================================================
 
 
-def run_stage_assemble(output_dir: Path, model_name: str) -> Path:
+def run_stage_assemble(output_dir: Path) -> Path:
     from pkna.inference.system_prompts import MINIMAL_TEMPLATE
     from training.assemble_sft import assemble_dataset
 
@@ -267,8 +267,6 @@ def run_stage_assemble(output_dir: Path, model_name: str) -> Path:
     assemble_dataset(
         input_path=filtered_path,
         output_path=dataset_path,
-        model_name=model_name,
-        max_seq_length=2048,
         system_prompt=MINIMAL_TEMPLATE,
     )
     return dataset_path
@@ -547,7 +545,7 @@ def main() -> None:
         elif stage == "filter":
             run_stage_filter(output_dir)
         elif stage == "assemble":
-            run_stage_assemble(output_dir, args.model)
+            run_stage_assemble(output_dir)
         elif stage == "train":
             run_stage_train(output_dir, args.model, args.max_steps)
         elif stage == "distill-prompts":

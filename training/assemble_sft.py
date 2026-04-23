@@ -2,28 +2,26 @@
 
 """Assemble SFT dataset from filtered traces.
 
-Reads quality-filtered DatagenTrace JSONL, converts each trace to the
-Qwen3.5 chat message format, renders via the tokenizer's chat template,
-and saves as a HuggingFace Dataset ready for SFTTrainer.
+Reads quality-filtered DatagenTrace JSONL, converts each trace to standard
+chat messages (reasoning_content + OpenAI tool_calls), and saves as a
+HuggingFace Dataset.
 
-Runs on CPU -- no GPU required.
+The output is tokenizer-independent: each row has a ``messages`` column
+containing a list of message dicts that can be passed directly to any
+tokenizer's apply_chat_template(). Token-length filtering happens at
+training time, not here.
 
 Usage:
     python training/assemble_sft.py \
         --input output/datagen/traces_filtered.jsonl \
-        --output output/sft/dataset \
-        --model Qwen/Qwen3.5-4B \
-        --max-seq-length 8192
+        --output output/sft/dataset
 """
 
 import argparse
 from pathlib import Path
-from typing import cast
+from typing import Any
 
-import numpy as np
 from datasets import Dataset
-from rich.table import Table
-from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from datagen.filter_traces import load_traces
 from pkna.inference.system_prompts import MINIMAL_TEMPLATE
@@ -36,83 +34,31 @@ console, log = setup_logging()
 def assemble_dataset(
     input_path: Path,
     output_path: Path,
-    model_name: str,
-    max_seq_length: int,
     system_prompt: str,
 ) -> Dataset:
-    """Load traces, convert to chat format, tokenize, and save.
+    """Load traces, convert to standard chat messages, and save.
 
     Returns the assembled Dataset.
     """
     traces = load_traces(input_path)
     if not traces:
         log.warning("No traces found in %s", input_path)
-        return Dataset.from_dict({"text": []})
+        return Dataset.from_dict({"messages": []})
 
     log.info("Loaded %d filtered traces", len(traces))
 
-    log.info("Loading tokenizer for %s", model_name)
-    tokenizer = cast(
-        PreTrainedTokenizerBase,
-        AutoTokenizer.from_pretrained(model_name, trust_remote_code=True),
-    )
-
-    texts: list[str] = []
-    token_lengths: list[int] = []
-    skipped = 0
-
+    all_messages: list[list[dict[str, Any]]] = []
     for trace in traces:
         messages = trace_to_messages(trace, system_prompt)
-        text = cast(
-            str,
-            tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=False,
-                enable_thinking=True,
-            ),
-        )
-        n_tokens = len(tokenizer.encode(text))
+        all_messages.append(messages)
 
-        if n_tokens > max_seq_length:
-            skipped += 1
-            continue
-
-        texts.append(text)
-        token_lengths.append(n_tokens)
-
-    if skipped > 0:
-        log.info("Skipped %d examples exceeding %d tokens", skipped, max_seq_length)
-
-    dataset = Dataset.from_dict({"text": texts})
+    dataset = Dataset.from_dict({"messages": all_messages})
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset.save_to_disk(str(output_path))
     log.info("Saved dataset with %d examples to %s", len(dataset), output_path)
 
-    _print_stats(token_lengths)
-
     return dataset
-
-
-def _print_stats(token_lengths: list[int]) -> None:
-    """Print token length statistics."""
-    if not token_lengths:
-        console.print("[yellow]No examples to report stats on.[/yellow]")
-        return
-
-    arr = np.array(token_lengths)
-    table = Table(title="Token Length Statistics")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="green", justify="right")
-    table.add_row("Count", str(len(arr)))
-    table.add_row("Min", str(int(arr.min())))
-    table.add_row("Max", str(int(arr.max())))
-    table.add_row("Mean", f"{arr.mean():.0f}")
-    table.add_row("Median", f"{np.median(arr):.0f}")
-    table.add_row("P95", f"{np.percentile(arr, 95):.0f}")
-    table.add_row("P99", f"{np.percentile(arr, 99):.0f}")
-    console.print(table)
 
 
 def main() -> None:
@@ -131,18 +77,6 @@ def main() -> None:
         default=Path("output/sft/dataset"),
         help="Output directory for the HuggingFace Dataset",
     )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default="Qwen/Qwen3.5-4B",
-        help="Model name for tokenizer (used for chat template + token counting)",
-    )
-    parser.add_argument(
-        "--max-seq-length",
-        type=int,
-        default=8192,
-        help="Maximum sequence length in tokens; longer examples are dropped",
-    )
     args = parser.parse_args()
 
     console.print("[bold cyan]SFT Dataset Assembly[/bold cyan]\n")
@@ -151,8 +85,6 @@ def main() -> None:
     assemble_dataset(
         input_path=args.input,
         output_path=args.output,
-        model_name=args.model,
-        max_seq_length=args.max_seq_length,
         system_prompt=MINIMAL_TEMPLATE,
     )
 

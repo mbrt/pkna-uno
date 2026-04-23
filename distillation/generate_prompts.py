@@ -13,7 +13,7 @@ lmbda=1.0 (fully on-policy): the student generates its own completions.
 Usage:
     python distillation/generate_prompts.py \
         --output output/distillation/prompts \
-        --n-prompts 600 \
+        --max-items 600 \
         --seed 42
 """
 
@@ -143,7 +143,7 @@ def main() -> None:
         help="Output directory for HuggingFace Dataset",
     )
     parser.add_argument(
-        "--n-prompts",
+        "--max-items",
         type=int,
         default=DEFAULT_N_PROMPTS,
         help="Number of prompts to sample (default: %(default)s)",
@@ -162,7 +162,7 @@ def main() -> None:
     full_dataset = cast(Dataset, load_dataset(TULU3_DATASET, split="train"))
 
     result = sample_prompts(
-        n_prompts=args.n_prompts,
+        n_prompts=args.max_items,
         seed=args.seed,
         dataset=full_dataset,
     )

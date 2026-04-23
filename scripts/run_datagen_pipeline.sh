@@ -10,7 +10,6 @@
 # Environment variables:
 #   DATAGEN_MODEL   LLM model for datagen + filtering (default: gemini-3-flash)
 #   DATAGEN_BACKEND LLM backend name (default: gemini)
-#   SFT_MODEL       Tokenizer model for dataset assembly (default: Qwen/Qwen3.5-4B)
 #
 # Usage:
 #   ./scripts/run_datagen_pipeline.sh              # full pipeline
@@ -22,7 +21,6 @@ set -euo pipefail
 
 BACKEND="${DATAGEN_BACKEND:-gemini}"
 MODEL="${DATAGEN_MODEL:-gemini-3-flash-preview}"
-SFT_MODEL="${SFT_MODEL:-Qwen/Qwen3.5-4B}"
 
 CORPUS="output/datagen/memory_corpus.jsonl"
 LEDGER="results/ledger_filtered.json"
@@ -132,52 +130,18 @@ uv run python datagen/filter_traces.py \
 # ------------------------------------------------------------------
 # Stage 4: Assemble HF Dataset
 # ------------------------------------------------------------------
-banner "Stage 4: Assemble SFT dataset (tokenizer=$SFT_MODEL)"
+banner "Stage 4: Assemble SFT dataset"
 uv run python training/assemble_sft.py \
     --input "$FILTERED" \
-    --output "$DATASET" \
-    --model "$SFT_MODEL"
+    --output "$DATASET"
 
 # ------------------------------------------------------------------
 # Stage 5: Generate distillation prompts (Tulu3 sampling, no LLM)
 # ------------------------------------------------------------------
-if [ "$MINI" -gt 0 ]; then
-    banner "Stage 5: Generate distillation prompts (n=$MINI)"
-    uv run python distillation/generate_prompts.py \
-        --output "$DISTILL_PROMPTS" \
-        --n-prompts "$MINI"
-else
-    banner "Stage 5: Generate distillation prompts (n=600)"
-    uv run python distillation/generate_prompts.py \
-        --output "$DISTILL_PROMPTS"
-fi
-
-# ------------------------------------------------------------------
-# Stage 6: Eval inference (mini mode only)
-# ------------------------------------------------------------------
-if [ "$MINI" -gt 0 ]; then
-    banner "Stage 6: Eval inference (backend=$BACKEND, model=$MODEL)"
-    uv run python evals/generate_eval_prompts.py \
-        --output-dir "$EVAL_PROMPTS" \
-        --suites personality,tool_use
-    uv run python evals/run_eval_inference.py \
-        --prompts-dir "$EVAL_PROMPTS" \
-        --output-dir "$EVAL_TRACES" \
-        --backend "$BACKEND" \
-        --model "$MODEL" \
-        "${MAX_ITEMS_FLAG[@]}"
-
-    # ------------------------------------------------------------------
-    # Stage 7: Eval scoring (mini mode only)
-    # ------------------------------------------------------------------
-    banner "Stage 7: Eval scoring"
-    uv run python evals/score_eval_traces.py \
-        --traces-dir "$EVAL_TRACES" \
-        --prompts-dir "$EVAL_PROMPTS" \
-        --output-dir "$EVAL_SCORED" \
-        --backend "$BACKEND" \
-        --model "$MODEL"
-fi
+banner "Stage 5: Generate distillation prompts"
+uv run python distillation/generate_prompts.py \
+    --output "$DISTILL_PROMPTS" \
+    "${MAX_ITEMS_FLAG[@]}"
 
 banner "Done"
 echo "  Corpus:            $CORPUS"
