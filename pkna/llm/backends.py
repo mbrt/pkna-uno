@@ -866,4 +866,10 @@ def create_backend(
         return AnthropicBackend(
             model=model or DEFAULT_ANTHROPIC_MODEL, max_tokens=max_tokens
         )
+    if backend_name == "local":
+        from pkna.llm.local_backend import LocalBackend
+
+        if not model:
+            raise ValueError("LocalBackend requires a model path (--model)")
+        return LocalBackend(model_name=model, max_new_tokens=max_tokens)
     raise ValueError(f"Unknown backend: {backend_name}")

@@ -2,12 +2,14 @@
 
 from types import SimpleNamespace
 
+import pytest
 from pydantic import BaseModel, TypeAdapter
 
 from pkna.llm.backends import (
     GenerateResult,
     GeminiBackend,
     _add_additional_properties_false,
+    create_backend,
 )
 
 
@@ -230,3 +232,13 @@ class TestExtractParts:
         thinking, text = GeminiBackend._extract_parts(resp)
         assert thinking is None
         assert text == ""
+
+
+class TestCreateBackend:
+    def test_unknown_backend(self):
+        with pytest.raises(ValueError, match="Unknown backend"):
+            create_backend("nonexistent")
+
+    def test_local_requires_model(self):
+        with pytest.raises(ValueError, match="requires a model path"):
+            create_backend("local")
