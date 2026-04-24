@@ -30,6 +30,8 @@ GIT_REF="main"
 RUN_DISTILL="true"
 STACK_NAME=""
 REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+HF_REPO_PREFIX="mbrt/uno"
+HF_TOKEN_SSM_PATH="/pkna-uno/hf-token"
 
 usage() {
   cat <<EOF
@@ -42,6 +44,8 @@ Options:
   --git-repo URL          Git repository URL
   --git-ref REF           Git branch or tag (default: $GIT_REF)
   --sft-only              Skip distillation (SFT only)
+  --hf-repo-prefix PFX    HuggingFace repo prefix (default: $HF_REPO_PREFIX)
+  --hf-token-ssm-path P   SSM path for HF token (default: $HF_TOKEN_SSM_PATH)
   --stack-name NAME       CloudFormation stack name (auto-generated if omitted)
   --region REGION         AWS region (default: $REGION)
   -h, --help              Show this help
@@ -57,6 +61,8 @@ while [ $# -gt 0 ]; do
     --git-repo) GIT_REPO="$2"; shift 2 ;;
     --git-ref) GIT_REF="$2"; shift 2 ;;
     --sft-only) RUN_DISTILL="false"; shift ;;
+    --hf-repo-prefix) HF_REPO_PREFIX="$2"; shift 2 ;;
+    --hf-token-ssm-path) HF_TOKEN_SSM_PATH="$2"; shift 2 ;;
     --stack-name) STACK_NAME="$2"; shift 2 ;;
     --region) REGION="$2"; shift 2 ;;
     -h|--help) usage ;;
@@ -86,6 +92,7 @@ echo "  Model:          $MODEL"
 echo "  Git ref:        $GIT_REF"
 echo "  Distillation:   $RUN_DISTILL"
 echo "  GGUF export:    ${EXPORT_GGUF:-none}"
+echo "  HF repo prefix: $HF_REPO_PREFIX"
 echo ""
 
 aws cloudformation create-stack \
@@ -99,7 +106,9 @@ aws cloudformation create-stack \
     "ParameterKey=ExportGguf,ParameterValue=$EXPORT_GGUF" \
     "ParameterKey=GitRepo,ParameterValue=$GIT_REPO" \
     "ParameterKey=GitRef,ParameterValue=$GIT_REF" \
-    "ParameterKey=RunDistillation,ParameterValue=$RUN_DISTILL"
+    "ParameterKey=RunDistillation,ParameterValue=$RUN_DISTILL" \
+    "ParameterKey=HfRepoPrefix,ParameterValue=$HF_REPO_PREFIX" \
+    "ParameterKey=HfTokenSsmPath,ParameterValue=$HF_TOKEN_SSM_PATH"
 
 echo ""
 echo "Stack creation initiated. Waiting for instance to launch..."
@@ -144,8 +153,9 @@ echo "  Tail training log (SSM):"
 echo "    aws ssm start-session --target $INSTANCE_ID --region $REGION"
 echo "    # then: tail -f /home/ubuntu/training.log"
 echo ""
+MODEL_KEY=$(echo "$MODEL" | sed 's|.*/||')
 echo "  Download results after completion:"
-echo "    aws s3 sync s3://$BUCKET/ ./training-results/ --region $REGION"
+echo "    aws s3 sync s3://$BUCKET/$MODEL_KEY/ ./training-results/ --region $REGION"
 echo ""
 echo "  Delete stack (bucket is retained):"
 echo "    aws cloudformation delete-stack --stack-name $STACK_NAME --region $REGION"

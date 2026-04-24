@@ -48,6 +48,20 @@ Parameters:
       - "false"
     Description: Whether to run Stage 2 (on-policy distillation) after SFT.
 
+  HfTokenSsmPath:
+    Type: String
+    Default: /pkna-uno/hf-token
+    Description: >-
+      SSM SecureString parameter path containing the HuggingFace token.
+      The token is fetched at runtime, never stored in the template.
+
+  HfRepoPrefix:
+    Type: String
+    Default: mbrt/uno
+    Description: >-
+      HuggingFace Hub repo prefix. Adapters are pushed to
+      {prefix}-sft-adapter and {prefix}-distill-adapter.
+
 Resources:
   ResultsBucket:
     Type: AWS::S3::Bucket
@@ -86,6 +100,12 @@ Resources:
                 Resource:
                   - !GetAtt ResultsBucket.Arn
                   - !Sub "${ResultsBucket.Arn}/*"
+              - Sid: ReadHfToken
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${HfTokenSsmPath}"
               - Sid: SelfTerminate
                 Effect: Allow
                 Action:
@@ -137,6 +157,8 @@ Resources:
           RUN_DISTILL="${RunDistillation}"
           S3_BUCKET="${ResultsBucket}"
           REGION="${AWS::Region}"
+          HF_TOKEN_SSM_PATH="${HfTokenSsmPath}"
+          HF_REPO_PREFIX="${HfRepoPrefix}"
 
           WORK_DIR="/home/ubuntu/training"
           LOG_FILE="/home/ubuntu/training.log"
@@ -146,6 +168,10 @@ Resources:
 
           export TRAIN_MODEL EXPORT_GGUF
 
+          # S3 prefix: derive a short key from the model name
+          # e.g. "unsloth/Qwen3.5-4B" -> "Qwen3.5-4B"
+          MODEL_KEY=$(echo "$TRAIN_MODEL" | sed 's|.*/||')
+
           # ---------------------------------------------------------------
           # Cleanup trap: upload logs and self-terminate on exit
           # ---------------------------------------------------------------
@@ -154,12 +180,12 @@ Resources:
             echo "=== Cleanup (exit_code=$exit_code) ==="
 
             # Upload logs
-            aws s3 cp "$LOG_FILE" "s3://$S3_BUCKET/logs/training.log" --region "$REGION" || true
-            aws s3 cp /var/log/cloud-init-output.log "s3://$S3_BUCKET/logs/cloud-init-output.log" --region "$REGION" || true
+            aws s3 cp "$LOG_FILE" "s3://$S3_BUCKET/$MODEL_KEY/logs/training.log" --region "$REGION" || true
+            aws s3 cp /var/log/cloud-init-output.log "s3://$S3_BUCKET/$MODEL_KEY/logs/cloud-init-output.log" --region "$REGION" || true
 
             # Upload MLflow data
             if [ -d "$MLFLOW_DIR" ]; then
-              aws s3 sync "$MLFLOW_DIR" "s3://$S3_BUCKET/mlflow/" --region "$REGION" || true
+              aws s3 sync "$MLFLOW_DIR" "s3://$S3_BUCKET/$MODEL_KEY/mlflow/" --region "$REGION" || true
             fi
 
             # Self-terminate
@@ -192,6 +218,18 @@ Resources:
 
           echo "=== Installing dependencies ==="
           uv sync
+
+          # ---------------------------------------------------------------
+          # Fetch HuggingFace token from SSM SecureString
+          # ---------------------------------------------------------------
+          echo "=== Fetching HF token from SSM ==="
+          HF_TOKEN=$(aws ssm get-parameter \
+            --name "$HF_TOKEN_SSM_PATH" \
+            --with-decryption \
+            --query Parameter.Value \
+            --output text \
+            --region "$REGION")
+          export HF_TOKEN
 
           # ---------------------------------------------------------------
           # Download datasets from HuggingFace
@@ -249,19 +287,51 @@ Resources:
           # ---------------------------------------------------------------
           # Upload results to S3
           # ---------------------------------------------------------------
-          echo "=== Uploading results to S3 ==="
+          echo "=== Uploading results to S3 (prefix=$MODEL_KEY) ==="
           if [ -d output/sft/lora_adapter ]; then
-            aws s3 sync output/sft/lora_adapter "s3://$S3_BUCKET/sft/lora_adapter/" --region "$REGION"
+            aws s3 sync output/sft/lora_adapter "s3://$S3_BUCKET/$MODEL_KEY/sft/lora_adapter/" --region "$REGION"
           fi
           if [ -d output/distillation/lora_adapter ]; then
-            aws s3 sync output/distillation/lora_adapter "s3://$S3_BUCKET/distillation/lora_adapter/" --region "$REGION"
+            aws s3 sync output/distillation/lora_adapter "s3://$S3_BUCKET/$MODEL_KEY/distillation/lora_adapter/" --region "$REGION"
           fi
           if [ -n "$EXPORT_GGUF" ] && [ -d output/distillation/lora_adapter-gguf ]; then
-            aws s3 sync output/distillation/lora_adapter-gguf "s3://$S3_BUCKET/distillation/lora_adapter-gguf/" --region "$REGION"
+            aws s3 sync output/distillation/lora_adapter-gguf "s3://$S3_BUCKET/$MODEL_KEY/distillation/lora_adapter-gguf/" --region "$REGION"
           fi
 
-          # Stop MLflow server
+          # ---------------------------------------------------------------
+          # Upload adapters to HuggingFace Hub
+          # ---------------------------------------------------------------
+          echo "=== Uploading adapters to HuggingFace Hub ==="
+          HF_REVISION="$GIT_REF"
+          if [ -d output/sft/lora_adapter ]; then
+            uv tool run hf upload \
+              "$HF_REPO_PREFIX-sft-adapter" \
+              output/sft/lora_adapter \
+              --revision "$HF_REVISION" \
+              --commit-message "SFT adapter from $GIT_REF (model=$TRAIN_MODEL)" || true
+          fi
+          if [ -d output/distillation/lora_adapter ]; then
+            uv tool run hf upload \
+              "$HF_REPO_PREFIX-distill-adapter" \
+              output/distillation/lora_adapter \
+              --revision "$HF_REVISION" \
+              --commit-message "Distill adapter from $GIT_REF (model=$TRAIN_MODEL)" || true
+          fi
+          if [ -n "$EXPORT_GGUF" ] && [ -d output/distillation/lora_adapter-gguf ]; then
+            uv tool run hf upload \
+              "$HF_REPO_PREFIX-distill-adapter-gguf" \
+              output/distillation/lora_adapter-gguf \
+              --revision "$HF_REVISION" \
+              --commit-message "GGUF ($EXPORT_GGUF) from $GIT_REF (model=$TRAIN_MODEL)" || true
+          fi
+
+          # Stop MLflow server and upload its data to S3
           kill "$MLFLOW_PID" 2>/dev/null || true
+          sleep 2
+          if [ -d "$MLFLOW_DIR" ]; then
+            echo "=== Uploading MLflow data to S3 ==="
+            aws s3 sync "$MLFLOW_DIR" "s3://$S3_BUCKET/$MODEL_KEY/mlflow/" --region "$REGION"
+          fi
 
           echo "=== Training complete at $(date -u) ==="
 
