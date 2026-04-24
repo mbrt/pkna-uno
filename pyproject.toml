@@ -35,6 +35,7 @@ dependencies = [
     "streamlit>=1.56.0",
     "tiktoken>=0.12.0",
     "torch>=2.10.0",
+    "torchvision>=0.25.0",
     "transformers>=5.2.0,<=5.5.0",
     "trl>=1.1.0",
     "unsloth>=2026.4.5",
@@ -70,11 +71,18 @@ packages = ["pkna"]
 
 [tool.uv.sources]
 # Pre-built CUDA wheels (avoids from-source build which requires nvcc)
-causal-conv1d = { url = "https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.6.1.post4/causal_conv1d-1.6.1%2Bcu12torch2.10cxx11abiTRUE-cp313-cp313-linux_x86_64.whl" }
-flash-attn = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.0/flash_attn-2.8.3%2Bcu128torch2.10-cp313-cp313-linux_x86_64.whl" }
+causal-conv1d = { url = "https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.6.1.post4/causal_conv1d-1.6.1%2Bcu13torch2.10cxx11abiTRUE-cp313-cp313-linux_x86_64.whl" }
+flash-attn = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.0/flash_attn-2.8.3%2Bcu130torch2.10-cp313-cp313-linux_x86_64.whl" }
+torch = [{ index = "pytorch-cu130" }]
+torchvision = [{ index = "pytorch-cu130" }]
 # Qwen3.5 rope.dimension_sections fix landed post-0.3.20; pin to latest main
 # until a new release. See https://github.com/abetlen/llama-cpp-python/issues/2137
 llama-cpp-python = { git = "https://github.com/abetlen/llama-cpp-python.git", branch = "main" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [tool.uv]
 link-mode = "symlink"
