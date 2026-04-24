@@ -16,7 +16,7 @@ Usage:
     python training/run_sft.py \
         --dataset output/sft/dataset \
         --output output/sft/lora_adapter \
-        --model Qwen/Qwen3.5-4B
+        --model unsloth/Qwen3.5-4B
 
     # With GGUF export:
     python training/run_sft.py \
@@ -44,6 +44,7 @@ from transformers import PreTrainedTokenizerBase
 from trl import SFTConfig, SFTTrainer
 
 from pkna.logging import setup_logging
+from training import select_device_map
 
 console, log = setup_logging()
 
@@ -139,13 +140,15 @@ def run_sft(
     export_gguf: str | None,
 ) -> None:
     """Run SFT training."""
-    log.info("Loading model %s", model_name)
+    device_map = select_device_map()
+    log.info("Loading model %s (device_map=%s)", model_name, device_map)
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
         max_seq_length=max_seq_length,
         load_in_4bit=False,
         load_in_16bit=True,
         full_finetuning=False,
+        device_map=device_map,
     )
 
     log.info(
@@ -258,7 +261,7 @@ def main() -> None:
     parser.add_argument(
         "--model",
         type=str,
-        default="Qwen/Qwen3.5-4B",
+        default="unsloth/Qwen3.5-4B",
         help="Base model to fine-tune",
     )
     parser.add_argument(

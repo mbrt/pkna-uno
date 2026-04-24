@@ -14,7 +14,7 @@ Usage:
         --dataset output/distillation/prompts \\
         --adapter output/sft/lora_adapter \\
         --output output/distillation/lora_adapter \\
-        --model Qwen/Qwen3.5-4B
+        --model unsloth/Qwen3.5-4B
 
     # With GGUF export:
     python training/run_distillation.py \\
@@ -42,6 +42,7 @@ from trl.experimental.distillation import (
 )
 
 from pkna.logging import setup_logging
+from training import select_device_map
 
 os.environ.setdefault("TRL_EXPERIMENTAL_SILENCE", "1")
 
@@ -114,13 +115,20 @@ def run_distillation(
 ) -> None:
     """Run on-policy distillation using TRL's DistillationTrainer."""
     # Load student (SFT adapter) via Unsloth for optimized training
-    log.info("Loading student from adapter %s (base: %s)", adapter_path, model_name)
+    device_map = select_device_map()
+    log.info(
+        "Loading student from adapter %s (base: %s, device_map=%s)",
+        adapter_path,
+        model_name,
+        device_map,
+    )
     student, tokenizer = FastLanguageModel.from_pretrained(
         model_name=adapter_path,
         max_seq_length=max_length,
         load_in_4bit=False,
         load_in_16bit=True,
         full_finetuning=False,
+        device_map=device_map,
     )
     # Unsloth returns a Qwen3VLProcessor for Qwen3.5 models, but
     # DistillationTrainer needs a tokenizer with get_vocab(). Extract
@@ -256,7 +264,7 @@ def main() -> None:
     parser.add_argument(
         "--model",
         type=str,
-        default="Qwen/Qwen3.5-4B",
+        default="unsloth/Qwen3.5-4B",
         help="Base model name (teacher for self-distillation)",
     )
     parser.add_argument(

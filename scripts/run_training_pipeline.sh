@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-MODEL="${TRAIN_MODEL:-Qwen/Qwen3.5-4B}"
+MODEL="${TRAIN_MODEL:-unsloth/Qwen3.5-4B}"
 GGUF="${EXPORT_GGUF:-}"
 
 SFT_DATASET="output/sft/dataset"

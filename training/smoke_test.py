@@ -53,7 +53,7 @@ from pkna.logging import setup_logging
 console, log = setup_logging()
 logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 
-DEFAULT_MODEL = "Qwen/Qwen3.5-0.8B"
+DEFAULT_MODEL = "unsloth/Qwen3.5-0.8B"
 DEFAULT_OUTPUT_DIR = "output/sft/smoke_test"
 
 MAX_PROMPTS = 5

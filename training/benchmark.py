@@ -36,6 +36,7 @@ from trl import SFTConfig, SFTTrainer
 from unsloth.chat_templates import train_on_responses_only
 
 from pkna.logging import setup_logging
+from training import select_device_map
 
 console, log = setup_logging()
 logging.getLogger("transformers.trainer").setLevel(logging.WARNING)
@@ -188,13 +189,15 @@ def benchmark_inference(
     max_seq_length: int = 2048,
 ) -> InferenceResult:
     """Benchmark inference throughput with Unsloth."""
-    log.info("Loading %s for inference", model_name)
+    device_map = select_device_map()
+    log.info("Loading %s for inference (device_map=%s)", model_name, device_map)
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
         max_seq_length=max_seq_length,
         load_in_4bit=False,
         load_in_16bit=True,
         full_finetuning=False,
+        device_map=device_map,
     )
     FastLanguageModel.for_inference(model)
 
@@ -314,13 +317,15 @@ def benchmark_training(
     max_seq_length: int = 2048,
 ) -> TrainingResult:
     """Benchmark LoRA training throughput with Unsloth + SFTTrainer."""
-    log.info("Loading %s for training", model_name)
+    device_map = select_device_map()
+    log.info("Loading %s for training (device_map=%s)", model_name, device_map)
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
         max_seq_length=max_seq_length,
         load_in_4bit=False,
         load_in_16bit=True,
         full_finetuning=False,
+        device_map=device_map,
     )
 
     log.info("Applying LoRA (rank=%d, alpha=%d)", LORA_RANK, LORA_ALPHA)
