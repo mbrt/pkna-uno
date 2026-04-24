@@ -74,6 +74,10 @@ def render_and_filter(
     token_lengths: list[int] = []
     skipped = 0
 
+    # Multimodal Processors (e.g. Qwen3VLProcessor) wrap the real tokenizer
+    # and don't expose `encode` directly.
+    encoder = tokenizer.tokenizer if hasattr(tokenizer, "tokenizer") else tokenizer
+
     for row in dataset:
         text = cast(
             str,
@@ -84,7 +88,7 @@ def render_and_filter(
                 enable_thinking=True,
             ),
         )
-        n_tokens = len(tokenizer.encode(text))
+        n_tokens = len(encoder.encode(text))
 
         if n_tokens > max_seq_length:
             skipped += 1
