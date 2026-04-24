@@ -171,7 +171,7 @@ class TestGenerateEvalPrompts:
         from evals.generate_eval_prompts import _personality_prompts
 
         prompts = _personality_prompts()
-        assert len(prompts) >= 3
+        assert len(prompts) >= 50
         for p in prompts:
             assert p.suite == "personality"
             assert p.tools == []
@@ -183,7 +183,7 @@ class TestGenerateEvalPrompts:
         from evals.generate_eval_prompts import _social_reasoning_prompts
 
         prompts = _social_reasoning_prompts()
-        assert len(prompts) >= 3
+        assert len(prompts) >= 30
         for p in prompts:
             assert p.suite == "social_reasoning"
             assert "search_knowledge" in p.tools
@@ -193,17 +193,29 @@ class TestGenerateEvalPrompts:
         from evals.generate_eval_prompts import _tool_use_prompts
 
         prompts = _tool_use_prompts()
-        assert len(prompts) >= 3
+        assert len(prompts) >= 40
         for p in prompts:
             assert p.suite == "tool_use"
             assert "delegate" in p.tools
             assert p.metadata["expected_tool_use"] in ("wiki", "delegate", "none")
 
+    def test_tool_use_category_balance(self):
+        from evals.generate_eval_prompts import _tool_use_prompts
+
+        prompts = _tool_use_prompts()
+        by_type: dict[str, int] = {}
+        for p in prompts:
+            t = p.metadata["expected_tool_use"]
+            by_type[t] = by_type.get(t, 0) + 1
+        assert by_type.get("wiki", 0) >= 20
+        assert by_type.get("delegate", 0) >= 10
+        assert by_type.get("none", 0) >= 8
+
     def test_memory_handling_variants(self):
         from evals.generate_eval_prompts import _memory_handling_prompts
 
         prompts = _memory_handling_prompts()
-        assert len(prompts) >= 9  # at least 3 base x 3 variants
+        assert len(prompts) >= 27  # at least 9 base x 3 variants
         variants_by_base: dict[str, list[str]] = {}
         for p in prompts:
             assert p.suite == "memory_handling"
@@ -219,16 +231,18 @@ class TestGenerateEvalPrompts:
         from evals.generate_eval_prompts import _stability_prompts
 
         prompts = _stability_prompts()
-        assert len(prompts) >= 3
+        assert len(prompts) >= 15
         for p in prompts:
             assert p.suite == "stability"
             assert "delegate" in p.tools
+            assert p.metadata["multi_turn"] is True
+            assert len(p.metadata["directives"]) == p.metadata["turn_count"]
 
     def test_language_variants(self):
         from evals.generate_eval_prompts import _language_prompts
 
         prompts = _language_prompts()
-        assert len(prompts) >= 6  # at least 3 base x 2 variants
+        assert len(prompts) >= 30  # at least 15 base x 2 variants
         variants_by_base: dict[str, list[str]] = {}
         for p in prompts:
             assert p.suite == "language"
@@ -249,6 +263,54 @@ class TestGenerateEvalPrompts:
             for p in gen():
                 all_ids.append(p.id)
         assert len(all_ids) == len(set(all_ids)), "Duplicate prompt IDs found"
+
+    def test_no_overlap_with_training_prompts(self):
+        """Eval prompts must not overlap with training datagen prompts."""
+        from datagen.generate_prompts import (
+            _adversarial_prompts,
+            _casual_prompts,
+            _delegation_prompts,
+            _emotional_prompts,
+            _factual_prompts,
+            _identity_prompts,
+            _memory_prompts,
+            _multi_turn_prompts,
+            _register_shift_prompts,
+        )
+        from evals.generate_eval_prompts import SUITE_GENERATORS
+
+        eval_messages: set[str] = set()
+        for gen in SUITE_GENERATORS.values():
+            for p in gen():
+                for m in p.messages:
+                    if m["role"] == "user":
+                        eval_messages.add(m["content"].strip())
+
+        train_messages: set[str] = set()
+        for gen_fn in [
+            _emotional_prompts,
+            _factual_prompts,
+            _delegation_prompts,
+            _identity_prompts,
+            _adversarial_prompts,
+            _register_shift_prompts,
+            _memory_prompts,
+            _multi_turn_prompts,
+            _casual_prompts,
+        ]:
+            for p in gen_fn():
+                for m in p.messages:
+                    if m["role"] == "user":
+                        train_messages.add(m["content"].strip())
+
+        overlap = eval_messages & train_messages
+        assert not overlap, f"Eval/training overlap: {overlap}"
+
+    def test_total_prompt_count(self):
+        from evals.generate_eval_prompts import SUITE_GENERATORS
+
+        total = sum(len(gen()) for gen in SUITE_GENERATORS.values())
+        assert total >= 200, f"Expected >= 200 total prompts, got {total}"
 
     def test_write_and_read_roundtrip(self, tmp_path: Path):
         from evals.generate_eval_prompts import SUITE_GENERATORS, write_suite
