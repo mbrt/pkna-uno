@@ -1,0 +1,291 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Uno training stack: provisions a GPU EC2 instance that runs the full
+  SFT + distillation pipeline, uploads results to S3, and self-terminates.
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: g6e.2xlarge
+    AllowedValues:
+      - g6e.2xlarge
+      - g6e.4xlarge
+      - g6e.12xlarge
+    Description: >-
+      EC2 instance type. g6e.2xlarge = 1x L40S (Scenario A/B/C),
+      g6e.12xlarge = 4x L40S (Scenario D/E).
+
+  Model:
+    Type: String
+    Default: unsloth/Qwen3.5-4B
+    # Suggested (but not enforced):
+    #   - unsloth/Qwen3.5-0.8B
+    #   - unsloth/Qwen3.5-4B
+    #   - unsloth/Qwen3.6-35B-A3B
+    Description: HuggingFace model name for the base/student model.
+
+  ExportGguf:
+    Type: String
+    Default: ""
+    Description: >-
+      GGUF quantization method (e.g. q4_k_m, q8_0). Leave empty to skip.
+
+  GitRepo:
+    Type: String
+    Default: https://github.com/mbrt/pkna-uno.git
+    Description: Git repository URL.
+
+  GitRef:
+    Type: String
+    Default: main
+    Description: Git branch or tag to checkout.
+
+  RunDistillation:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Whether to run Stage 2 (on-policy distillation) after SFT.
+
+Resources:
+  ResultsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAfter90Days
+            Status: Enabled
+            ExpirationInDays: 90
+
+  TrainingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: TrainingPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: S3Upload
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ResultsBucket.Arn
+                  - !Sub "${ResultsBucket.Arn}/*"
+              - Sid: SelfTerminate
+                Effect: Allow
+                Action:
+                  - ec2:TerminateInstances
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "aws:ResourceTag/aws:cloudformation:stack-id": !Ref AWS::StackId
+
+  TrainingInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref TrainingRole
+
+  TrainingSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${AWS::StackName} - no inbound, all outbound"
+
+  TrainingInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref TrainingInstanceProfile
+      SecurityGroupIds:
+        - !GetAtt TrainingSecurityGroup.GroupId
+      ImageId: "{{resolve:ssm:/aws/service/deeplearning/ami/x86_64/oss-nvidia-driver-gpu-pytorch-2.8-ubuntu-24.04/latest/ami-id}}"
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 200
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-training"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+
+          # ---------------------------------------------------------------
+          # Configuration from CloudFormation parameters
+          # ---------------------------------------------------------------
+          TRAIN_MODEL="${Model}"
+          EXPORT_GGUF="${ExportGguf}"
+          GIT_REPO="${GitRepo}"
+          GIT_REF="${GitRef}"
+          RUN_DISTILL="${RunDistillation}"
+          S3_BUCKET="${ResultsBucket}"
+          REGION="${AWS::Region}"
+
+          WORK_DIR="/home/ubuntu/training"
+          LOG_FILE="/home/ubuntu/training.log"
+          MLFLOW_DIR="$WORK_DIR/mlflow"
+          IMDS_TOKEN=$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+          INSTANCE_ID=$(curl -sf -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+
+          export TRAIN_MODEL EXPORT_GGUF
+
+          # ---------------------------------------------------------------
+          # Cleanup trap: upload logs and self-terminate on exit
+          # ---------------------------------------------------------------
+          cleanup() {
+            local exit_code=$?
+            echo "=== Cleanup (exit_code=$exit_code) ==="
+
+            # Upload logs
+            aws s3 cp "$LOG_FILE" "s3://$S3_BUCKET/logs/training.log" --region "$REGION" || true
+            aws s3 cp /var/log/cloud-init-output.log "s3://$S3_BUCKET/logs/cloud-init-output.log" --region "$REGION" || true
+
+            # Upload MLflow data
+            if [ -d "$MLFLOW_DIR" ]; then
+              aws s3 sync "$MLFLOW_DIR" "s3://$S3_BUCKET/mlflow/" --region "$REGION" || true
+            fi
+
+            # Self-terminate
+            aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$REGION" || true
+          }
+          trap cleanup EXIT
+
+          # ---------------------------------------------------------------
+          # All output to log file (and console for cloud-init)
+          # ---------------------------------------------------------------
+          exec > >(tee -a "$LOG_FILE") 2>&1
+          echo "=== Training started at $(date -u) ==="
+          echo "Instance: $INSTANCE_ID  Region: $REGION"
+          echo "Model: $TRAIN_MODEL  GGUF: $EXPORT_GGUF"
+          nvidia-smi || true
+
+          # ---------------------------------------------------------------
+          # Install uv
+          # ---------------------------------------------------------------
+          echo "=== Installing uv ==="
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="/root/.local/bin:$PATH"
+
+          # ---------------------------------------------------------------
+          # Clone repo and install dependencies
+          # ---------------------------------------------------------------
+          echo "=== Cloning $GIT_REPO @ $GIT_REF ==="
+          git clone --depth 1 --branch "$GIT_REF" "$GIT_REPO" "$WORK_DIR"
+          cd "$WORK_DIR"
+
+          echo "=== Installing dependencies ==="
+          uv sync
+
+          # ---------------------------------------------------------------
+          # Download datasets from HuggingFace
+          # ---------------------------------------------------------------
+          echo "=== Downloading datasets from HuggingFace ==="
+          uv run python -c "
+          from datasets import load_dataset
+          ds = load_dataset('mbrt/uno-sft-dataset', split='train')
+          ds.save_to_disk('output/sft/dataset')
+          print('SFT dataset:', len(ds), 'examples')
+          "
+
+          uv run python -c "
+          from datasets import load_dataset
+          ds = load_dataset('mbrt/uno-distill-prompts', split='train')
+          ds.save_to_disk('output/distillation/prompts')
+          print('Distillation prompts:', len(ds), 'examples')
+          "
+
+          # ---------------------------------------------------------------
+          # Start MLflow tracking server (localhost only)
+          # ---------------------------------------------------------------
+          echo "=== Starting MLflow server ==="
+          mkdir -p "$MLFLOW_DIR/artifacts"
+          uv run mlflow server \
+            --host 127.0.0.1 \
+            --port 5000 \
+            --backend-store-uri "sqlite:///$MLFLOW_DIR/mlflow.db" \
+            --default-artifact-root "$MLFLOW_DIR/artifacts" &
+          MLFLOW_PID=$!
+          sleep 3
+          export MLFLOW_TRACKING_URI="http://localhost:5000"
+
+          # ---------------------------------------------------------------
+          # GPU benchmark
+          # ---------------------------------------------------------------
+          echo "=== Running GPU benchmark ==="
+          uv run python training/benchmark.py --model "$TRAIN_MODEL"
+
+          # ---------------------------------------------------------------
+          # Run training pipeline
+          # ---------------------------------------------------------------
+          PIPELINE_FLAGS=""
+          if [ "$RUN_DISTILL" = "false" ]; then
+            PIPELINE_FLAGS="--sft-only"
+          fi
+          if [ -n "$EXPORT_GGUF" ]; then
+            PIPELINE_FLAGS="$PIPELINE_FLAGS --export $EXPORT_GGUF"
+          fi
+
+          echo "=== Running training pipeline ==="
+          # shellcheck disable=SC2086
+          ./scripts/run_training_pipeline.sh $PIPELINE_FLAGS
+
+          # ---------------------------------------------------------------
+          # Upload results to S3
+          # ---------------------------------------------------------------
+          echo "=== Uploading results to S3 ==="
+          if [ -d output/sft/lora_adapter ]; then
+            aws s3 sync output/sft/lora_adapter "s3://$S3_BUCKET/sft/lora_adapter/" --region "$REGION"
+          fi
+          if [ -d output/distillation/lora_adapter ]; then
+            aws s3 sync output/distillation/lora_adapter "s3://$S3_BUCKET/distillation/lora_adapter/" --region "$REGION"
+          fi
+          if [ -n "$EXPORT_GGUF" ] && [ -d output/distillation/lora_adapter-gguf ]; then
+            aws s3 sync output/distillation/lora_adapter-gguf "s3://$S3_BUCKET/distillation/lora_adapter-gguf/" --region "$REGION"
+          fi
+
+          # Stop MLflow server
+          kill "$MLFLOW_PID" 2>/dev/null || true
+
+          echo "=== Training complete at $(date -u) ==="
+
+Outputs:
+  BucketName:
+    Description: S3 bucket where training results are uploaded
+    Value: !Ref ResultsBucket
+
+  InstanceId:
+    Description: EC2 instance ID (use with SSM for monitoring)
+    Value: !Ref TrainingInstance
+
+  MlflowCommand:
+    Description: Command to port-forward MLflow UI via SSM
+    Value: !Sub >-
+      aws ssm start-session
+      --target ${TrainingInstance}
+      --document-name AWS-StartPortForwardingSession
+      --parameters portNumber=5000,localPortNumber=5000
+      --region ${AWS::Region}
+
+  SsmShellCommand:
+    Description: Command to open a shell on the instance via SSM
+    Value: !Sub >-
+      aws ssm start-session
+      --target ${TrainingInstance}
+      --region ${AWS::Region}

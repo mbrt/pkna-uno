@@ -18,6 +18,7 @@ A walkthrough of the project is on [this blog](https://blog.mbrt.dev/posts/uno).
 | `data/` | Static data for fine-tuning (prompts, rubrics, profiles) |
 | `docs/` | Design documents |
 | `tests/` | Unit tests |
+| `infra/` | CloudFormation stack and launcher script for AWS GPU training |
 | `experimental/` | Archived one-shot scripts and notebooks from earlier exploration |
 | `results/` | Published outputs (soul document, ledger, wiki) |
 
@@ -50,6 +51,43 @@ uv run python training/smoke_test.py --stage prompts
 
 Stages: prompts, datagen, filter, assemble, train, eval.
 Output goes to `output/sft/smoke_test/`.
+
+## Training on AWS
+
+Run SFT + on-policy distillation on an AWS GPU instance. The stack provisions an
+EC2 instance, trains the model, uploads results to S3, and self-terminates.
+Requires the [AWS CLI](https://aws.amazon.com/cli/) and the [Session Manager
+plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html).
+
+```sh
+# Default: Qwen3.5-4B on 1x L40S (~$15, ~3 hours)
+./infra/launch-training.sh
+
+# Small model for quick iteration
+./infra/launch-training.sh --model unsloth/Qwen3.5-0.8B
+
+# MoE model on 4x L40S (~$84, ~9 hours)
+./infra/launch-training.sh --model unsloth/Qwen3.6-35B-A3B --instance-type g6e.12xlarge
+
+# SFT only (skip distillation), export GGUF
+./infra/launch-training.sh --sft-only --export-gguf q4_k_m
+```
+
+Monitor training live (all commands are printed by the launcher with the
+instance ID filled in):
+
+```sh
+# Follow training logs
+aws ssm start-session --target <instance-id> --region <region>
+# then: tail -f /home/ubuntu/training.log
+
+# MLflow UI for loss curves and metrics (port-forwarded through SSM)
+aws ssm start-session --target <instance-id> \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters portNumber=5000,localPortNumber=5000 \
+  --region <region>
+# Then browse http://localhost:5000
+```
 
 ## Results
 

@@ -93,11 +93,11 @@ def detect_hardware() -> HardwareProfile:
 # Training uses BF16 LoRA via Unsloth.
 MODEL_MAP: dict[HardwareClass, tuple[str, str]] = {
     # Laptop 8 GB: 0.8B fits BF16 inference (~2 GB) and LoRA train (~3 GB)
-    HardwareClass.SMALL_GPU: ("Qwen/Qwen3.5-0.8B", "Qwen/Qwen3.5-0.8B"),
-    # 1xL40S 48 GB: 9B fits BF16 inference (~18 GB) and LoRA train (~22 GB)
-    HardwareClass.SINGLE_L40S: ("Qwen/Qwen3.5-9B", "Qwen/Qwen3.5-9B"),
-    # 4xL40S 192 GB: 27B inference (~56 GB), 35B-A3B LoRA train (~74 GB)
-    HardwareClass.QUAD_L40S: ("Qwen/Qwen3.5-27B", "Qwen/Qwen3.5-27B"),
+    HardwareClass.SMALL_GPU: ("unsloth/Qwen3.5-0.8B", "unsloth/Qwen3.5-0.8B"),
+    # 1xL40S 48 GB: 4B fits BF16 inference (~8 GB) and LoRA train (~10 GB)
+    HardwareClass.SINGLE_L40S: ("unsloth/Qwen3.5-4B", "unsloth/Qwen3.5-4B"),
+    # 4xL40S 192 GB: 35B-A3B MoE LoRA train (~74 GB)
+    HardwareClass.QUAD_L40S: ("unsloth/Qwen3.6-35B-A3B", "unsloth/Qwen3.6-35B-A3B"),
 }
 
 
@@ -137,21 +137,21 @@ class ExpectedPerformance:
 # Keyed by (HardwareClass, model_name) for specificity.
 EXPECTED: dict[tuple[HardwareClass, str], ExpectedPerformance] = {
     # 0.8B on 8 GB laptop: lightweight, should be fast
-    (HardwareClass.SMALL_GPU, "Qwen/Qwen3.5-0.8B"): ExpectedPerformance(
+    (HardwareClass.SMALL_GPU, "unsloth/Qwen3.5-0.8B"): ExpectedPerformance(
         min_inference_tok_s=30.0,
         max_training_vram_mb=6 * 1024,  # ~3 GB model + overhead
         min_training_steps_per_s=0.5,
     ),
-    # 9B on 1xL40S: mid-range
-    (HardwareClass.SINGLE_L40S, "Qwen/Qwen3.5-9B"): ExpectedPerformance(
-        min_inference_tok_s=15.0,
-        max_training_vram_mb=30 * 1024,  # ~22 GB LoRA + overhead
-        min_training_steps_per_s=0.2,
+    # 4B on 1xL40S
+    (HardwareClass.SINGLE_L40S, "unsloth/Qwen3.5-4B"): ExpectedPerformance(
+        min_inference_tok_s=20.0,
+        max_training_vram_mb=16 * 1024,  # ~10 GB LoRA + overhead
+        min_training_steps_per_s=0.3,
     ),
-    # 27B on 4xL40S
-    (HardwareClass.QUAD_L40S, "Qwen/Qwen3.5-27B"): ExpectedPerformance(
+    # 35B-A3B MoE on 4xL40S
+    (HardwareClass.QUAD_L40S, "unsloth/Qwen3.6-35B-A3B"): ExpectedPerformance(
         min_inference_tok_s=8.0,
-        max_training_vram_mb=80 * 1024,
+        max_training_vram_mb=80 * 1024,  # ~74 GB LoRA + overhead
         min_training_steps_per_s=0.1,
     ),
 }
