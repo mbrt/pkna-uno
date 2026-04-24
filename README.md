@@ -59,6 +59,19 @@ EC2 instance, trains the model, uploads results to S3, and self-terminates.
 Requires the [AWS CLI](https://aws.amazon.com/cli/) and the [Session Manager
 plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html).
 
+To automatically upload trained adapters to HuggingFace Hub, store a
+[write-access token](https://huggingface.co/settings/tokens) in SSM Parameter
+Store. The `--region` must match the region you deploy the stack to. This is
+optional -- without it, adapters are still uploaded to S3.
+
+```sh
+aws ssm put-parameter \
+  --name /pkna-uno/hf-token \
+  --type SecureString \
+  --value "hf_YOUR_TOKEN" \
+  --region us-east-1
+```
+
 ```sh
 # Default: Qwen3.5-4B on 1x L40S (~$15, ~3 hours)
 ./infra/launch-training.sh
