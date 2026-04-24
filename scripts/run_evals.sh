@@ -17,6 +17,7 @@
 #   ./scripts/run_evals.sh --model mbrt/uno-distill-adapter --suites personality,tool_use
 #   ./scripts/run_evals.sh --model gemini-3-flash --backend gemini
 #   ./scripts/run_evals.sh --traces-dir output/evals/traces/run-20260424  # score only
+#   ./scripts/run_evals.sh --mini --model output/sft/lora_adapter        # quick run, 5 items
 
 set -euo pipefail
 
@@ -45,6 +46,7 @@ Options:
     --output-base DIR       Base output directory (default: $OUTPUT_BASE)
     --traces-dir DIR        Score existing traces (skip prompts + inference)
     --skip-prompts          Reuse existing prompts (skip stage 1)
+    --mini [N]              Quick run with N prompts per suite (default: 5)
     -h, --help              Show this help
 EOF
     exit 0
@@ -61,6 +63,12 @@ while [ $# -gt 0 ]; do
         --output-base) OUTPUT_BASE="$2"; shift 2 ;;
         --traces-dir) TRACES_DIR="$2"; SKIP_INFERENCE=true; SKIP_PROMPTS=true; shift 2 ;;
         --skip-prompts) SKIP_PROMPTS=true; shift ;;
+        --mini)
+            if [ "$MAX_ITEMS" -eq 0 ]; then MAX_ITEMS=5; fi
+            if [ $# -gt 1 ] && [[ "$2" =~ ^[0-9]+$ ]]; then
+                MAX_ITEMS="$2"; shift
+            fi
+            shift ;;
         -h|--help) usage ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac

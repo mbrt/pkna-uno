@@ -22,7 +22,7 @@ tar --append -f pkna-llm-backup.tar \
     --exclude='input/pkna' \
     --exclude='input/schede' \
     --exclude='**/mlartifacts' \
-    --exclude='output/sft/smoke_test' \
+    --exclude='output/sft' \
     input/ output/ input-files.txt
 
 # Compress backup

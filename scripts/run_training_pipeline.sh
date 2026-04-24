@@ -16,6 +16,7 @@
 #   ./scripts/run_training_pipeline.sh --sft-only        # SFT only, skip distillation
 #   ./scripts/run_training_pipeline.sh --distill-only    # distillation only (needs existing adapter)
 #   ./scripts/run_training_pipeline.sh --export q4_k_m   # export GGUF after distillation
+#   ./scripts/run_training_pipeline.sh --mini            # quick run: 20 SFT + 10 distill steps
 
 set -euo pipefail
 
@@ -29,6 +30,7 @@ DISTILL_ADAPTER="output/distillation/lora_adapter"
 
 RUN_SFT=true
 RUN_DISTILL=true
+MINI=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -36,9 +38,19 @@ while [ $# -gt 0 ]; do
         --distill-only) RUN_SFT=false; shift ;;
         --export)
             GGUF="$2"; shift 2 ;;
+        --mini) MINI=true; shift ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
+
+# --mini: small model, few steps, short sequences
+SFT_EXTRA_FLAGS=()
+DISTILL_EXTRA_FLAGS=()
+if [ "$MINI" = true ]; then
+    MODEL="${TRAIN_MODEL:-unsloth/Qwen3.5-0.8B}"
+    SFT_EXTRA_FLAGS=(--max-steps 20 --max-seq-length 2048 --gradient-accumulation-steps 1)
+    DISTILL_EXTRA_FLAGS=(--max-steps 10 --max-length 512 --max-completion-length 128)
+fi
 
 banner() {
     echo ""
@@ -62,7 +74,8 @@ if [ "$RUN_SFT" = true ]; then
     uv run python training/run_sft.py \
         --dataset "$SFT_DATASET" \
         --output "$SFT_ADAPTER" \
-        --model "$MODEL"
+        --model "$MODEL" \
+        "${SFT_EXTRA_FLAGS[@]}"
 fi
 
 # ------------------------------------------------------------------
@@ -91,6 +104,7 @@ if [ "$RUN_DISTILL" = true ]; then
         --adapter "$SFT_ADAPTER" \
         --output "$DISTILL_ADAPTER" \
         --model "$MODEL" \
+        "${DISTILL_EXTRA_FLAGS[@]}" \
         "${GGUF_FLAG[@]}"
 fi
 

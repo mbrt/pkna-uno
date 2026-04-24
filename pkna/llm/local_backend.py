@@ -153,6 +153,14 @@ class LocalBackend(LLMBackend):
         max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
         max_seq_length: int = 8192,
     ):
+        import torch
+
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "LocalBackend requires a CUDA GPU. No CUDA device detected. "
+                "Use --backend gemini or --backend anthropic for CPU-only machines."
+            )
+
         from unsloth import FastLanguageModel
 
         from training import select_device_map
@@ -172,6 +180,10 @@ class LocalBackend(LLMBackend):
             device_map=device_map,
         )
         FastLanguageModel.for_inference(self._model)
+
+        # PEFT-wrapped models may report .device as cpu even when
+        # parameters live on GPU. Use the first parameter's device instead.
+        self._device = next(self._model.parameters()).device
 
         # Unwrap processor to get a real tokenizer for encode/decode.
         self._encoder = (
@@ -229,8 +241,8 @@ class LocalBackend(LLMBackend):
         encoded = self._encoder(
             prompt_text, return_tensors="pt", return_attention_mask=True
         )
-        input_ids = encoded["input_ids"].to(self._model.device)
-        attention_mask = encoded["attention_mask"].to(self._model.device)
+        input_ids = encoded["input_ids"].to(self._device)
+        attention_mask = encoded["attention_mask"].to(self._device)
         prompt_len = input_ids.shape[1]
 
         with torch.no_grad():
