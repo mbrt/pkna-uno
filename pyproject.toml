@@ -14,8 +14,6 @@ dependencies = [
     "causal-conv1d>=1.6.1",
     "flash-attn>=2.8.3",
     "flash-linear-attention>=0.4.2",
-    "gguf>=0.18.0",
-    "llama-cpp-python>=0.3.16",
     "ninja>=1.13.0",
     "google-genai>=1.73.1",
     "jupyter>=1.1.1",
@@ -42,7 +40,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-experimental = ["vllm>=0.17"]
+experimental = [
+    "gguf>=0.18.0",
+    "llama-cpp-python>=0.3.16",
+    "vllm>=0.17",
+]
 
 [dependency-groups]
 dev = [
