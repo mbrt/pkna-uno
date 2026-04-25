@@ -145,6 +145,22 @@ def run_distillation(
     ):
         student.config.vocab_size = student.config.text_config.vocab_size
 
+    # Load teacher (base model for self-distillation) via Unsloth so it
+    # lands on GPU.  Previously the teacher was passed as a string, which
+    # caused TRL to load it with AutoModelForCausalLM.from_pretrained
+    # *without* device_map — putting it on CPU and making every logprob
+    # forward pass take 60+ seconds.
+    log.info("Loading teacher %s (device_map=%s)", model_name, device_map)
+    teacher, _teacher_tok = FastLanguageModel.from_pretrained(
+        model_name=model_name,
+        max_seq_length=max_length,
+        load_in_4bit=False,
+        load_in_16bit=True,
+        full_finetuning=False,
+        device_map=device_map,
+    )
+    FastLanguageModel.for_inference(teacher)
+
     # Load dataset
     log.info("Loading dataset from %s", dataset_path)
     loaded = load_from_disk(dataset_path)
@@ -172,9 +188,8 @@ def run_distillation(
         max_length=max_length,
         max_completion_length=max_completion_length,
         temperature=1.0,
-        # Teacher: base model for self-distillation
+        # Teacher is passed as a pre-loaded model object (no config kwargs)
         teacher_model_name_or_path=model_name,
-        teacher_model_init_kwargs={"torch_dtype": "bfloat16"},
         # Logging
         logging_steps=logging_steps,
         report_to="mlflow",
@@ -184,7 +199,7 @@ def run_distillation(
 
     trainer = _UnslothDistillationTrainer(
         model=student,
-        teacher_model=model_name,
+        teacher_model=teacher,
         args=config,
         train_dataset=dataset,
         processing_class=tokenizer,
