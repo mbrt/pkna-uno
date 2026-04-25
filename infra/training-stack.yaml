@@ -172,6 +172,9 @@ Resources:
             aws s3 cp "$LOG_FILE" "s3://$S3_BUCKET/$MODEL_KEY/logs/training.log" --region "$REGION" || true
             aws s3 cp /var/log/cloud-init-output.log "s3://$S3_BUCKET/$MODEL_KEY/logs/cloud-init-output.log" --region "$REGION" || true
 
+            if [ -d "$WORK_DIR/output" ]; then
+              aws s3 sync "$WORK_DIR/output" "s3://$S3_BUCKET/$MODEL_KEY/output/" --region "$REGION" || true
+            fi
             if [ -d "$MLFLOW_DIR" ]; then
               aws s3 sync "$MLFLOW_DIR" "s3://$S3_BUCKET/$MODEL_KEY/mlflow/" --region "$REGION" || true
             fi

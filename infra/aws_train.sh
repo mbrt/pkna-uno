@@ -93,22 +93,6 @@ echo "=== Running training pipeline ==="
 ./scripts/run_training_pipeline.sh $PIPELINE_FLAGS
 
 # -------------------------------------------------------------------
-# Upload results to S3
-# -------------------------------------------------------------------
-MODEL_KEY="${TRAIN_MODEL##*/}"
-
-echo "=== Uploading results to S3 (prefix=$MODEL_KEY) ==="
-if [ -d output/sft/lora_adapter ]; then
-    aws s3 sync output/sft/lora_adapter "s3://$S3_BUCKET/$MODEL_KEY/sft/lora_adapter/" --region "$REGION"
-fi
-if [ -d output/distillation/lora_adapter ]; then
-    aws s3 sync output/distillation/lora_adapter "s3://$S3_BUCKET/$MODEL_KEY/distillation/lora_adapter/" --region "$REGION"
-fi
-if [ -n "$EXPORT_GGUF" ] && [ -d output/distillation/lora_adapter-gguf ]; then
-    aws s3 sync output/distillation/lora_adapter-gguf "s3://$S3_BUCKET/$MODEL_KEY/distillation/lora_adapter-gguf/" --region "$REGION"
-fi
-
-# -------------------------------------------------------------------
 # Upload adapters to HuggingFace Hub
 # -------------------------------------------------------------------
 if [ -n "$HF_TOKEN" ]; then
@@ -139,13 +123,8 @@ else
     echo "=== Skipping HuggingFace Hub upload (no token) ==="
 fi
 
-# Stop MLflow server and upload its DB to S3
+# Stop MLflow server (upload happens via the EXIT trap)
 kill "$MLFLOW_PID" 2>/dev/null || true
 sleep 2
-
-echo "=== Uploading MLflow data to S3 ==="
-if [ -d "$MLFLOW_DIR" ]; then
-    aws s3 sync "$MLFLOW_DIR" "s3://$S3_BUCKET/$MODEL_KEY/mlflow/" --region "$REGION"
-fi
 
 echo "=== Training complete at $(date -u) ==="
