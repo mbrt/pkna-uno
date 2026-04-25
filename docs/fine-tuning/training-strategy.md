@@ -85,7 +85,7 @@ References:
 | Parameter | Value | Rationale |
 |---|---|---|
 | Rank | 64 | Sufficient for ~1,500 SFT examples. RL/distillation needs very low capacity per "LoRA Without Regret" |
-| Alpha | 32 | Standard; with 1/r scaling, optimal LR is ~independent of rank. Unsloth examples use alpha == r; we use alpha = r/2 per "LoRA Without Regret" |
+| Alpha | 64 | Unsloth recommends alpha >= rank (alpha/rank >= 1). alpha == rank is standard; alpha == 2*rank makes learning more aggressive |
 | Target modules | All layers (MLP + attention) | MLP-only or all-layers >> attention-only per "LoRA Without Regret". Unsloth: `target_modules = "all-linear"` |
 | Dropout | 0 | Standard for LoRA |
 
@@ -134,14 +134,15 @@ LoRA on MoE models introduces specific challenges:
    because the base model itself is large (70 GB at BF16). The inference
    advantage of MoE comes from activation sparsity, not weight size.
 
-| Parameter | Value (MoE) | Notes |
-|---|---|---|
-| Total rank | 64 | Same effective capacity as dense |
-| Per-expert rank | 8 | 64 / 8 active experts |
-| Shared expert rank | 64 | Full rank for the always-active shared expert |
-| Target modules | MoE FFN layers + attention | Per "LoRA Without Regret" MoE findings |
-| Expert selection | Top-25% most-routed | Per MoE-Sieve; reduces params ~70% |
-| Router fine-tuning | Disabled | Default in Unsloth; recommended for stability |
+| Parameter | Value (MoE) | Notes | Implemented |
+|---|---|---|---|
+| Total rank | 64 | Same effective capacity as dense | Yes |
+| Per-expert rank | 8 | 64 / 8 active experts, via PEFT `rank_pattern` | Yes |
+| Shared expert rank | 64 | Full rank for the always-active shared expert | Yes (inherits base rank) |
+| Target modules | all-linear (MoE FFN + attention) | Per "LoRA Without Regret" MoE findings | Yes |
+| rsLoRA | Enabled (`use_rslora=True`) | Auto-scales alpha per rank so a single alpha works | Yes |
+| Expert selection | Top-25% most-routed | Per MoE-Sieve; reduces params ~70% | Not yet |
+| Router fine-tuning | Disabled | Default in Unsloth; recommended for stability | Yes (Unsloth default) |
 
 Trainable parameters at rank 64 (MoE):
 
@@ -154,7 +155,7 @@ Trainable parameters at rank 64 (MoE):
 
 | Parameter | SFT (Stage 1) | Distillation (Stage 2) |
 |---|---|---|
-| Learning rate | 2e-4 to 3e-4 | 1e-4 |
+| Learning rate | Model-dependent (see below) | Model-dependent (see below) |
 | LR schedule | Linear (with warmup) | Constant |
 | Batch size | 1 (with GA=4) | 32 (4 samples x 8 prompts) |
 | Epochs | 3 | N/A (step-based) |
@@ -164,10 +165,28 @@ Trainable parameters at rank 64 (MoE):
 | Gradient checkpointing | `"unsloth"` | `"unsloth"` |
 | Loss masking | `train_on_responses_only` | N/A |
 
+### Per-Model Learning Rates
+
+"LoRA Without Regret" shows that optimal LoRA LR scales with hidden size:
+`LR = M_LoRA * (2000 / hidden_size)^model_pow`. Smaller models need lower LR
+to avoid oscillating loss. The scripts in `training/` select the default
+automatically based on `--model` (see `training/__init__.py`).
+
+| Student | Hidden size | SFT LR | Distillation LR |
+|---|---|---|---|
+| 0.8B | 1024 | 5e-5 | 3e-5 |
+| 4B | 3584 | 2e-4 | 1e-4 |
+| 35B-A3B | ~2560 (active) | 2e-4 | 1e-4 |
+
+The 4B values come from Unsloth's Qwen3.5 examples and the 10x FullFT
+multiplier. The 0.8B values are scaled down ~4x to account for its smaller
+hidden dimension. The 35B-A3B MoE uses 4B-class LR since its active hidden
+size is comparable. All values can be overridden via `--lr`.
+
 **Notes on learning rate**: The 10x multiplier over FullFT optimal (per "LoRA
-Without Regret") gives ~3e-4 for SFT. Unsloth's Qwen3.5 examples use 2e-4 with
-a linear schedule. For distillation, a lower LR is appropriate since we're
-making smaller behavioral adjustments. For short runs (<100 steps), a 15x
+Without Regret") gives ~3e-4 for SFT on 4B. Unsloth's Qwen3.5 examples use
+2e-4 with a linear schedule. For distillation, a lower LR is appropriate since
+we're making smaller behavioral adjustments. For short runs (<100 steps), a 15x
 multiplier may be better.
 
 **Notes on batch size**: Keep small. "LoRA Without Regret" shows LoRA pays a

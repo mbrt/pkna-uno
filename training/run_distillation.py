@@ -42,7 +42,7 @@ from trl.experimental.distillation import (
 )
 
 from pkna.logging import setup_logging
-from training import select_device_map
+from training import get_config, select_device_map
 
 os.environ.setdefault("TRL_EXPERIMENTAL_SILENCE", "1")
 
@@ -284,8 +284,8 @@ def main() -> None:
     parser.add_argument(
         "--lr",
         type=float,
-        default=1e-4,
-        help="Learning rate",
+        default=None,
+        help="Learning rate (default: model-aware, see training/__init__.py)",
     )
     parser.add_argument(
         "--batch-size",
@@ -321,6 +321,9 @@ def main() -> None:
 
     console.print("[bold cyan]Uno On-Policy Distillation[/bold cyan]\n")
 
+    lr = args.lr if args.lr is not None else get_config(args.model).distill_lr
+    log.info("Learning rate: %g (model=%s)", lr, args.model)
+
     run_distillation(
         dataset_path=args.dataset,
         adapter_path=args.adapter,
@@ -328,7 +331,7 @@ def main() -> None:
         model_name=args.model,
         max_length=args.max_length,
         max_completion_length=args.max_completion_length,
-        learning_rate=args.lr,
+        learning_rate=lr,
         batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         max_steps=args.max_steps,

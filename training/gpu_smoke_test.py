@@ -41,7 +41,7 @@ def stage_triton() -> None:
     print(f"  Triton:     {triton.__version__}")
 
 
-def stage_model_load() -> None:
+def stage_model_load() -> tuple:  # type: ignore[type-arg]
     print(f"\n[{now()}] === Stage 3: Unsloth model load ===")
     t0 = time.time()
     from unsloth import FastLanguageModel
@@ -121,7 +121,7 @@ def stage_training() -> None:
         processing_class=tokenizer,
         train_dataset=ds,
         args=SFTConfig(
-            max_seq_length=512,
+            max_seq_length=512,  # ty: ignore[unknown-argument]  # added by unsloth
             per_device_train_batch_size=1,
             max_steps=1,
             output_dir="/tmp/smoke_test",

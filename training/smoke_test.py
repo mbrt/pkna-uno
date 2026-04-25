@@ -278,6 +278,7 @@ def run_stage_assemble(output_dir: Path) -> Path:
 
 
 def run_stage_train(output_dir: Path, model_name: str, max_steps: int) -> Path:
+    from training import get_config
     from training.run_sft import run_sft
 
     dataset_path = output_dir / "dataset"
@@ -288,7 +289,7 @@ def run_stage_train(output_dir: Path, model_name: str, max_steps: int) -> Path:
         model_name=model_name,
         max_seq_length=2048,
         num_epochs=1,
-        learning_rate=2e-4,
+        learning_rate=get_config(model_name).sft_lr,
         batch_size=1,
         gradient_accumulation_steps=1,
         warmup_steps=1,
@@ -339,6 +340,7 @@ def run_stage_distill_prompts(output_dir: Path) -> Path:
 
 
 def run_stage_distill(output_dir: Path, model_name: str, max_steps: int) -> Path:
+    from training import get_config
     from training.run_distillation import run_distillation
 
     prompts_path = output_dir / "distillation_prompts"
@@ -352,7 +354,7 @@ def run_stage_distill(output_dir: Path, model_name: str, max_steps: int) -> Path
         model_name=model_name,
         max_length=512,
         max_completion_length=128,
-        learning_rate=1e-4,
+        learning_rate=get_config(model_name).distill_lr,
         batch_size=1,
         gradient_accumulation_steps=1,
         max_steps=max_steps,

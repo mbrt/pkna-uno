@@ -45,13 +45,10 @@ from transformers import PreTrainedTokenizerBase
 from trl import SFTConfig, SFTTrainer
 
 from pkna.logging import setup_logging
-from training import select_device_map
+from training import get_config, select_device_map
 
 console, log = setup_logging()
 
-# LoRA config from training-strategy.md
-LORA_RANK = 64
-LORA_ALPHA = 32
 LORA_DROPOUT = 0
 
 # Qwen3.5 chat template boundary tokens for loss masking.
@@ -152,15 +149,21 @@ def run_sft(
         device_map=device_map,
     )
 
+    model_cfg = get_config(model_name)
+    lora = model_cfg.lora
     log.info(
-        "Applying LoRA (rank=%d, alpha=%d, target=all-linear)", LORA_RANK, LORA_ALPHA
+        "Applying LoRA (rank=%d, alpha=%d, target=%s%s)",
+        lora.rank,
+        lora.alpha,
+        lora.target_modules,
+        ", rsLoRA" if lora.use_rslora else "",
     )
+    if lora.rank_pattern:
+        log.info("  rank_pattern: %s", lora.rank_pattern)
     model = FastLanguageModel.get_peft_model(
         model,
-        r=LORA_RANK,
-        lora_alpha=LORA_ALPHA,
+        **lora.to_kwargs(),
         lora_dropout=LORA_DROPOUT,
-        target_modules="all-linear",
         bias="none",
         use_gradient_checkpointing="unsloth",
         random_state=3407,
@@ -220,8 +223,9 @@ def run_sft(
         log_params(
             {
                 "model": model_name,
-                "lora_rank": LORA_RANK,
-                "lora_alpha": LORA_ALPHA,
+                "lora_rank": lora.rank,
+                "lora_alpha": lora.alpha,
+                "lora_use_rslora": lora.use_rslora,
                 "max_seq_length": max_seq_length,
                 "num_epochs": num_epochs,
                 "learning_rate": learning_rate,
@@ -281,8 +285,8 @@ def main() -> None:
     parser.add_argument(
         "--lr",
         type=float,
-        default=2e-4,
-        help="Learning rate",
+        default=None,
+        help="Learning rate (default: model-aware, see training/__init__.py)",
     )
     parser.add_argument(
         "--batch-size",
@@ -330,13 +334,16 @@ def main() -> None:
 
     console.print("[bold cyan]Uno SFT Training[/bold cyan]\n")
 
+    lr = args.lr if args.lr is not None else get_config(args.model).sft_lr
+    log.info("Learning rate: %g (model=%s)", lr, args.model)
+
     run_sft(
         dataset_path=args.dataset,
         output_path=args.output,
         model_name=args.model,
         max_seq_length=args.max_seq_length,
         num_epochs=args.epochs,
-        learning_rate=args.lr,
+        learning_rate=lr,
         batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         warmup_steps=args.warmup_steps,
