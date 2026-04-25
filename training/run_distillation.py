@@ -190,10 +190,12 @@ def run_distillation(
         processing_class=tokenizer,
     )
 
-    # MLflow setup
-    mlflow_dir = Path(output_path).resolve().parent / "mlflow"
-    mlflow_dir.mkdir(parents=True, exist_ok=True)
-    set_tracking_uri(f"sqlite:///{mlflow_dir / 'mlflow.db'}")
+    # MLflow setup — respect MLFLOW_TRACKING_URI from the environment
+    # (e.g. set by aws_train.sh to point at the centralized server)
+    if not os.environ.get("MLFLOW_TRACKING_URI"):
+        mlflow_dir = Path(output_path).resolve().parent / "mlflow"
+        mlflow_dir.mkdir(parents=True, exist_ok=True)
+        set_tracking_uri(f"sqlite:///{mlflow_dir / 'mlflow.db'}")
     set_experiment("uno-distillation")
 
     log.info(

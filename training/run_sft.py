@@ -33,6 +33,7 @@ from unsloth import FastLanguageModel
 from unsloth.chat_templates import train_on_responses_only
 
 import argparse
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -210,9 +211,10 @@ def run_sft(
     )
 
     log.info("Starting training")
-    mlflow_dir = Path(output_path).resolve().parent / "mlflow"
-    mlflow_dir.mkdir(parents=True, exist_ok=True)
-    set_tracking_uri(f"sqlite:///{mlflow_dir / 'mlflow.db'}")
+    if not os.environ.get("MLFLOW_TRACKING_URI"):
+        mlflow_dir = Path(output_path).resolve().parent / "mlflow"
+        mlflow_dir.mkdir(parents=True, exist_ok=True)
+        set_tracking_uri(f"sqlite:///{mlflow_dir / 'mlflow.db'}")
     set_experiment("uno-sft")
     with start_run(run_name=f"sft-{model_name.split('/')[-1]}"):
         log_params(

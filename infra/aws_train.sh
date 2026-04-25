@@ -139,8 +139,13 @@ else
     echo "=== Skipping HuggingFace Hub upload (no token) ==="
 fi
 
-# Stop MLflow server
+# Stop MLflow server and upload its DB to S3
 kill "$MLFLOW_PID" 2>/dev/null || true
 sleep 2
+
+echo "=== Uploading MLflow data to S3 ==="
+if [ -d "$MLFLOW_DIR" ]; then
+    aws s3 sync "$MLFLOW_DIR" "s3://$S3_BUCKET/$MODEL_KEY/mlflow/" --region "$REGION"
+fi
 
 echo "=== Training complete at $(date -u) ==="
