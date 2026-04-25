@@ -38,3 +38,7 @@ Common patterns:
 * Error Handling: Retry logic with exponential backoff for LLM API calls
 * Version Control: Pipeline outputs are versioned (v2, v3) in separate directories
 * Use structured output instead of asking the model to output JSON and manually parsing
+
+## Formatting
+
+* Use 4 spaces indent in bash scripts
