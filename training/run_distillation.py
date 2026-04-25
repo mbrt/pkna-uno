@@ -293,7 +293,7 @@ def main() -> None:
     parser.add_argument(
         "--max-completion-length",
         type=int,
-        default=2048,
+        default=1024,
         help="Maximum completion length during on-policy generation",
     )
     parser.add_argument(

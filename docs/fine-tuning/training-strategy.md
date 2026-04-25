@@ -160,6 +160,7 @@ Trainable parameters at rank 64 (MoE):
 | Batch size | 1 (with GA=4) | 32 (4 samples x 8 prompts) |
 | Epochs | 3 | N/A (step-based) |
 | Max seq length | 8,192 | 4,096 (shorter rollouts suffice) |
+| Max completion length | N/A | 1,024 |
 | Optimizer | AdamW 8-bit | AdamW |
 | Weight decay | 0.01 | 0 |
 | Gradient checkpointing | `"unsloth"` | `"unsloth"` |
