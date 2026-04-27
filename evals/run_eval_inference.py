@@ -245,6 +245,7 @@ def run_eval(
     model_name: str,
     output_dir: Path,
     max_items: int = 0,
+    simulator_backend: LLMBackend | None = None,
 ) -> int:
     """Run inference for all prompts, writing traces to per-suite JSONL files.
 
@@ -279,7 +280,9 @@ def run_eval(
             task = progress.add_task("Running inference", total=len(pending))
 
             for prompt in pending:
-                trace = run_single_prompt(prompt, backend, model_name)
+                trace = run_single_prompt(
+                    prompt, backend, model_name, simulator_backend
+                )
                 if trace is None:
                     progress.advance(task)
                     continue
@@ -347,6 +350,18 @@ def main() -> None:
         default=False,
         help="Load local model in 4-bit quantization (faster, less VRAM)",
     )
+    parser.add_argument(
+        "--simulator-backend",
+        type=str,
+        default="gemini",
+        help="Backend for the user simulator in multi-turn evals (default: gemini)",
+    )
+    parser.add_argument(
+        "--simulator-model",
+        type=str,
+        default=None,
+        help="Model for the user simulator (default: backend's default)",
+    )
     args = parser.parse_args()
 
     suite_filter = args.suites.split(",") if args.suites else None
@@ -365,8 +380,23 @@ def main() -> None:
     backend = create_backend(args.backend, args.model, load_in_4bit=args.load_in_4bit)
     model_name = args.model or args.backend
 
+    has_multi_turn = any(p.metadata.get("multi_turn") for p in prompts)
+    sim_backend: LLMBackend | None = None
+    if has_multi_turn:
+        log.info(
+            "Creating simulator backend: %s (model=%s)",
+            args.simulator_backend,
+            args.simulator_model or "default",
+        )
+        sim_backend = create_backend(args.simulator_backend, args.simulator_model)
+
     written = run_eval(
-        prompts, backend, model_name, args.output_dir, max_items=args.max_items
+        prompts,
+        backend,
+        model_name,
+        args.output_dir,
+        max_items=args.max_items,
+        simulator_backend=sim_backend,
     )
 
     console.print(
