@@ -197,6 +197,7 @@ def run_distillation(
         weight_decay=0.0,
         max_grad_norm=1.0,
         bf16=True,
+        optim="adamw_8bit",
         gradient_checkpointing=True,
         # Distillation: fully on-policy with full-vocabulary reverse KL.
         # loss_top_k=0 computes exact KL over the entire vocabulary rather
