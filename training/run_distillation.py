@@ -101,13 +101,17 @@ class _UnslothDistillationTrainer(DistillationTrainer):
         return super().compute_loss(model, inputs, return_outputs, num_items_in_batch)
 
 
-def _save_peft_adapter(model: Any, tokenizer: Any, output_path: str) -> None:
-    """Save a PEFT adapter, working around Qwen3.5's missing vocab_size.
+def _patch_qwen35_vocab_size(model: Any) -> None:
+    """Monkeypatch Qwen3.5's config class so new instances expose vocab_size.
 
-    PEFT's ``save_pretrained`` loads a fresh ``Qwen3_5Config`` via
-    ``from_pretrained`` and accesses ``.vocab_size``, which doesn't exist
-    on the multimodal composite config.  We monkeypatch the config class
-    to expose ``vocab_size`` before saving.
+    PEFT's ``get_peft_model_state_dict`` loads a fresh ``Qwen3_5Config``
+    via ``from_pretrained`` and accesses ``.vocab_size``, which doesn't
+    exist on the multimodal composite config (it lives on
+    ``.text_config.vocab_size``).  This affects both mid-training
+    checkpoint saves and the final explicit save.
+
+    The patch is safe to leave in place for the process lifetime: it only
+    adds ``vocab_size`` when it is genuinely missing.
     """
     cfg_cls = model.config.__class__
     original_init = cfg_cls.__init__
@@ -118,11 +122,44 @@ def _save_peft_adapter(model: Any, tokenizer: Any, output_path: str) -> None:
             self.vocab_size = self.text_config.vocab_size
 
     cfg_cls.__init__ = _patched_init  # ty: ignore[invalid-assignment]
-    try:
-        model.save_pretrained(output_path)
-        tokenizer.save_pretrained(output_path)
-    finally:
-        cfg_cls.__init__ = original_init
+
+
+def prepare_for_distillation(model: Any, tokenizer: Any) -> Any:
+    """Fix up model and tokenizer for DistillationTrainer compatibility.
+
+    Handles two Qwen3.5 quirks:
+    1. Unwraps the tokenizer from a Processor if needed (DistillationTrainer
+       requires ``get_vocab()``).
+    2. Exposes ``vocab_size`` on the model config (Qwen3.5's composite config
+       stores it on ``text_config``).
+
+    Returns the (possibly unwrapped) tokenizer.
+    """
+    if hasattr(tokenizer, "tokenizer") and not hasattr(tokenizer, "get_vocab"):
+        tokenizer = tokenizer.tokenizer
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    if not hasattr(model.config, "vocab_size") and hasattr(model.config, "text_config"):
+        model.config.vocab_size = model.config.text_config.vocab_size
+
+    return tokenizer
+
+
+def create_trainer(
+    model: Any,
+    tokenizer: Any,
+    dataset: Dataset,
+    config: DistillationConfig,
+) -> _UnslothDistillationTrainer:
+    """Create an ``_UnslothDistillationTrainer`` for self-distillation."""
+    return _UnslothDistillationTrainer(
+        model=model,
+        teacher_model=None,  # ty: ignore[invalid-argument-type]
+        args=config,
+        train_dataset=dataset,
+        processing_class=tokenizer,
+    )
 
 
 def run_distillation(
@@ -140,7 +177,6 @@ def run_distillation(
     export_gguf: str | None,
 ) -> None:
     """Run on-policy distillation using TRL's DistillationTrainer."""
-    # Load student (SFT adapter) via Unsloth for optimized training
     device_map = select_device_map()
     log.info(
         "Loading student from adapter %s (base: %s, device_map=%s)",
@@ -156,26 +192,9 @@ def run_distillation(
         full_finetuning=False,
         device_map=device_map,
     )
-    # Unsloth returns a Qwen3VLProcessor for Qwen3.5 models, but
-    # DistillationTrainer needs a tokenizer with get_vocab(). Extract
-    # the inner tokenizer when wrapped in a processor.
-    if hasattr(tokenizer, "tokenizer") and not hasattr(tokenizer, "get_vocab"):
-        tokenizer = tokenizer.tokenizer
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token_id = tokenizer.eos_token_id
+    tokenizer = prepare_for_distillation(student, tokenizer)
+    _patch_qwen35_vocab_size(student)
 
-    # Qwen3.5's composite config stores vocab_size on text_config, but
-    # DistillationTrainer expects model.config.vocab_size directly.
-    if not hasattr(student.config, "vocab_size") and hasattr(
-        student.config, "text_config"
-    ):
-        student.config.vocab_size = student.config.text_config.vocab_size
-
-    # No separate teacher model is loaded: self-distillation uses the
-    # student's own base weights with LoRA adapters temporarily disabled
-    # (see _UnslothDistillationTrainer._get_teacher_logits).
-
-    # Load dataset
     log.info("Loading dataset from %s", dataset_path)
     loaded = load_from_disk(dataset_path)
     if not isinstance(loaded, Dataset):
@@ -183,12 +202,8 @@ def run_distillation(
     dataset: Dataset = loaded
     log.info("Loaded %d prompts", len(dataset))
 
-    # DistillationConfig extends TrainingArguments with distillation params.
-    # No teacher_model_name_or_path is set: the teacher is the student's
-    # own base weights with LoRA disabled (weight sharing).
     config = DistillationConfig(
         output_dir=output_path,
-        # Training schedule (on-policy-distillation.md)
         per_device_train_batch_size=batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         max_steps=max_steps,
@@ -199,16 +214,12 @@ def run_distillation(
         bf16=True,
         optim="adamw_8bit",
         gradient_checkpointing=True,
-        # Distillation: fully on-policy with full-vocabulary reverse KL.
-        # loss_top_k=0 computes exact KL over the entire vocabulary rather
-        # than TRL's default sparse top-1 approximation.
         lmbda=1.0,
         beta=1.0,
         loss_top_k=0,
         max_length=max_length,
         max_completion_length=max_completion_length,
         temperature=1.0,
-        # Logging
         logging_steps=logging_steps,
         report_to="mlflow",
         save_strategy="steps",
@@ -217,13 +228,7 @@ def run_distillation(
         seed=3407,
     )
 
-    trainer = _UnslothDistillationTrainer(
-        model=student,
-        teacher_model=None,  # ty: ignore[invalid-argument-type]
-        args=config,
-        train_dataset=dataset,
-        processing_class=tokenizer,
-    )
+    trainer = create_trainer(student, tokenizer, dataset, config)
 
     # MLflow setup — respect MLFLOW_TRACKING_URI from the environment
     # (e.g. set by aws_train.sh to point at the centralized server)
@@ -259,12 +264,9 @@ def run_distillation(
         )
         trainer.train()
 
-    # Save the LoRA adapter. PEFT's save_pretrained loads a fresh
-    # Qwen3_5Config and accesses .vocab_size which doesn't exist on the
-    # multimodal config. Work around by temporarily patching the config
-    # class so from_pretrained returns a config with vocab_size.
     log.info("Saving adapter to %s", output_path)
-    _save_peft_adapter(student, tokenizer, output_path)
+    student.save_pretrained(output_path)
+    tokenizer.save_pretrained(output_path)
 
     if export_gguf:
         gguf_dir = f"{output_path}-gguf"

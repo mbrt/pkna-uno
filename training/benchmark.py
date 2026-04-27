@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 
-"""GPU performance benchmark for inference and training.
+"""GPU performance benchmark for inference, training, and distillation.
 
 Detects the available GPU, selects the largest Qwen3.5 model that fits,
-and measures inference throughput (tok/s) and training throughput
-(steps/s). Results are compared against expectations from the design
-docs (docs/fine-tuning/infra-costs.md, docs/fine-tuning/model-selection.md).
+and measures inference throughput (tok/s), training throughput (steps/s),
+and distillation step profiling (time breakdown per phase).
+
+Results are compared against expectations from the design docs
+(docs/fine-tuning/infra-costs.md, docs/fine-tuning/model-selection.md).
 
 Works on both the development laptop (RTX 2000 Ada, 8 GB) and target
 cloud hardware (1x or 4x L40S).
@@ -14,6 +16,7 @@ Usage:
     python training/benchmark.py                          # auto-detect
     python training/benchmark.py --inference-only
     python training/benchmark.py --training-only
+    python training/benchmark.py --distillation-only
     python training/benchmark.py --model Qwen/Qwen3.5-4B  # override
     python training/benchmark.py --steps 50
 """
@@ -23,6 +26,7 @@ from unsloth import FastLanguageModel
 import argparse
 import gc
 import logging
+import os
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -32,6 +36,7 @@ from typing import cast
 import torch
 from datasets import Dataset
 from rich.table import Table
+from torch.profiler import ProfilerActivity, profile
 from trl import SFTConfig, SFTTrainer
 from unsloth.chat_templates import train_on_responses_only
 
@@ -315,6 +320,7 @@ def benchmark_training(
     model_name: str,
     n_steps: int = 20,
     max_seq_length: int = 2048,
+    output_dir: str = "output/sft/benchmark",
 ) -> TrainingResult:
     """Benchmark LoRA training throughput with Unsloth + SFTTrainer."""
     device_map = select_device_map()
@@ -371,7 +377,7 @@ def benchmark_training(
         optim="adamw_8bit",
         weight_decay=0.01,
         logging_strategy="no",
-        output_dir="/tmp/benchmark_training",
+        output_dir=os.path.join(output_dir, "training"),
         save_strategy="no",
         seed=3407,
         bf16=True,
@@ -420,6 +426,147 @@ def benchmark_training(
 
 
 # ---------------------------------------------------------------------------
+# Distillation profiling
+# ---------------------------------------------------------------------------
+
+os.environ.setdefault("TRL_EXPERIMENTAL_SILENCE", "1")
+
+DISTILL_PROMPTS = [
+    [
+        {
+            "role": "user",
+            "content": f"Domanda di distillazione numero {i}. Spiega brevemente.",
+        }
+    ]
+    for i in range(16)
+]
+
+
+@dataclass
+class DistillationProfile:
+    model_name: str
+    peak_vram_mb: int
+    total_time_s: float
+    n_steps: int
+    trace_path: str | None = None
+
+
+def benchmark_distillation(
+    model_name: str,
+    n_steps: int = 3,
+    max_length: int = 2048,
+    max_completion_length: int = 256,
+    enable_profiler: bool = False,
+    output_dir: str = "output/sft/benchmark",
+) -> DistillationProfile:
+    """Benchmark distillation throughput and optionally profile with PyTorch.
+
+    Runs a short self-distillation session (SFT adapter created on the
+    fly). When *enable_profiler* is True, wraps the run in
+    ``torch.profiler.profile`` to capture a per-kernel time breakdown.
+    """
+    from trl.experimental.distillation import DistillationConfig
+
+    from training.run_distillation import create_trainer, prepare_for_distillation
+
+    device_map = select_device_map()
+    log.info(
+        "Loading %s for distillation profiling (device_map=%s)",
+        model_name,
+        device_map,
+    )
+
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=model_name,
+        max_seq_length=max_length,
+        load_in_4bit=False,
+        load_in_16bit=True,
+        full_finetuning=False,
+        device_map=device_map,
+    )
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=LORA_RANK,
+        lora_alpha=LORA_ALPHA,
+        lora_dropout=0,
+        target_modules="all-linear",
+        bias="none",
+        use_gradient_checkpointing="unsloth",
+        random_state=3407,
+        max_seq_length=max_length,
+    )
+    tokenizer = prepare_for_distillation(model, tokenizer)
+
+    dataset = Dataset.from_dict({"messages": DISTILL_PROMPTS})
+    log.info("Distillation dataset: %d prompts", len(dataset))
+
+    config = DistillationConfig(
+        output_dir=os.path.join(output_dir, "distillation"),
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=1,
+        max_steps=n_steps,
+        learning_rate=1e-4,
+        lr_scheduler_type="constant",
+        weight_decay=0.0,
+        optim="adamw_8bit",
+        bf16=True,
+        gradient_checkpointing=True,
+        lmbda=1.0,
+        beta=1.0,
+        loss_top_k=0,
+        max_length=max_length,
+        max_completion_length=max_completion_length,
+        temperature=1.0,
+        logging_strategy="no",
+        save_strategy="no",
+        report_to="none",
+        seed=3407,
+    )
+
+    trainer = create_trainer(model, tokenizer, dataset, config)
+
+    torch.cuda.reset_peak_memory_stats()
+    torch.cuda.synchronize()
+    t0 = time.perf_counter()
+
+    trace_path: str | None = None
+
+    if enable_profiler:
+        log.info(
+            "PyTorch profiler enabled — trace processing may be slow after training"
+        )
+        with profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=False,
+        ) as prof:
+            trainer.train()
+
+        trace_path = os.path.join(output_dir, "distill_trace.json")
+        prof.export_chrome_trace(trace_path)
+        log.info("Profiler trace saved to %s", trace_path)
+    else:
+        trainer.train()
+
+    torch.cuda.synchronize()
+    total_time = time.perf_counter() - t0
+    peak_vram_mb = torch.cuda.max_memory_allocated() // (1024 * 1024)
+
+    del model, tokenizer, trainer
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    return DistillationProfile(
+        model_name=model_name,
+        peak_vram_mb=peak_vram_mb,
+        total_time_s=total_time,
+        n_steps=n_steps,
+        trace_path=trace_path,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Comparison and reporting
 # ---------------------------------------------------------------------------
 
@@ -446,6 +593,7 @@ def print_results(
     hw: HardwareProfile,
     infer: InferenceResult | None,
     train: TrainingResult | None,
+    distill: DistillationProfile | None = None,
 ) -> None:
     """Print benchmark results with comparison to expectations."""
     # Hardware info
@@ -462,6 +610,8 @@ def print_results(
         model_name = infer.model_name
     elif train:
         model_name = train.model_name
+    elif distill:
+        model_name = distill.model_name
     else:
         model_name = ""
     expected = get_expected(hw, model_name)
@@ -542,9 +692,31 @@ def print_results(
             vram_status,
         )
 
-    console.print(results)
+    if infer or train:
+        console.print(results)
 
-    if not expected:
+    if distill:
+        console.print()
+        distill_table = Table(title="Distillation Profile")
+        distill_table.add_column("Metric", style="cyan")
+        distill_table.add_column("Value", justify="right")
+        distill_table.add_row("Model", distill.model_name)
+        distill_table.add_row("Steps", str(distill.n_steps))
+        distill_table.add_row("Total time", f"{distill.total_time_s:.1f}s")
+        avg_step = distill.total_time_s / distill.n_steps if distill.n_steps else 0
+        distill_table.add_row("Avg step time", f"{avg_step:.1f}s")
+        distill_table.add_row("Peak VRAM", f"{distill.peak_vram_mb} MB")
+        distill_table.add_row(
+            "VRAM headroom",
+            f"{hw.total_vram_mb - distill.peak_vram_mb} MB",
+        )
+        console.print(distill_table)
+
+        if distill.trace_path:
+            console.print(f"\nProfiler trace: [bold]{distill.trace_path}[/bold]")
+            console.print("  View with: chrome://tracing or https://ui.perfetto.dev")
+
+    if not expected and not distill:
         console.print(
             f"\n[yellow]No expected baselines for ({hw.hw_class.value}, {model_name}). "
             "Results are informational only.[/yellow]"
@@ -558,7 +730,7 @@ def print_results(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="GPU performance benchmark for inference and training"
+        description="GPU performance benchmark for inference, training, and distillation"
     )
     parser.add_argument(
         "--model",
@@ -577,10 +749,32 @@ def main() -> None:
         help="Run training benchmark only",
     )
     parser.add_argument(
+        "--distillation-only",
+        action="store_true",
+        help="Run distillation profiling only",
+    )
+    parser.add_argument(
         "--steps",
         type=int,
         default=20,
         help="Number of training steps (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--distill-steps",
+        type=int,
+        default=3,
+        help="Number of distillation steps to profile (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Enable PyTorch profiler for distillation (slow trace processing)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="output/sft/benchmark",
+        help="Base directory for benchmark outputs (default: %(default)s)",
     )
     args = parser.parse_args()
 
@@ -596,11 +790,15 @@ def main() -> None:
 
     infer_model, train_model = select_models(hw, args.model)
 
-    run_inference = not args.training_only
-    run_training = not args.inference_only
+    only_flags = [args.inference_only, args.training_only, args.distillation_only]
+    any_only = any(only_flags)
+    run_inference = args.inference_only or not any_only
+    run_training = args.training_only or not any_only
+    run_distillation = args.distillation_only or not any_only
 
     infer_result: InferenceResult | None = None
     train_result: TrainingResult | None = None
+    distill_result: DistillationProfile | None = None
 
     if run_inference:
         console.rule("[bold]Inference Benchmark")
@@ -616,7 +814,9 @@ def main() -> None:
     if run_training:
         console.rule("[bold]Training Benchmark")
         log.info("Model: %s, steps: %d", train_model, args.steps)
-        train_result = benchmark_training(train_model, n_steps=args.steps)
+        train_result = benchmark_training(
+            train_model, n_steps=args.steps, output_dir=args.output_dir
+        )
         log.info(
             "Training: %.3f steps/s, peak %d MB, total %.1fs",
             train_result.steps_per_s,
@@ -624,8 +824,24 @@ def main() -> None:
             train_result.total_time_s,
         )
 
+    if run_distillation:
+        console.rule("[bold]Distillation Profile")
+        log.info("Model: %s, steps: %d", train_model, args.distill_steps)
+        distill_result = benchmark_distillation(
+            train_model,
+            n_steps=args.distill_steps,
+            enable_profiler=args.profile,
+            output_dir=args.output_dir,
+        )
+        log.info(
+            "Distillation: %d steps in %.1fs, peak %d MB",
+            distill_result.n_steps,
+            distill_result.total_time_s,
+            distill_result.peak_vram_mb,
+        )
+
     console.rule("[bold]Summary")
-    print_results(hw, infer_result, train_result)
+    print_results(hw, infer_result, train_result, distill_result)
     console.print("\n[bold green]Benchmark complete.[/bold green]")
 
 
