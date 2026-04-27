@@ -6,82 +6,12 @@ Back to [Fine-Tuning Design](../fine-tuning-design.md).
 
 Training proceeds in two stages:
 
-1. **Off-Policy SFT** -- Teach the student Uno's personality, tone, and
-   interaction patterns using a curated dataset (see [SFT Dataset](sft-dataset.md)).
-2. **On-Policy Distillation** -- Recover instruction-following and tool-use
-   capabilities degraded by SFT, and sharpen character adherence with dense
-   per-token feedback from a teacher.
-
-## Stage 1: Off-Policy SFT (Personality Mid-Training)
-
-**Goal**: Teach the student Uno's personality, tone, and interaction patterns,
-including internal social reasoning via thinking traces.
-
-**Loss**: Standard cross-entropy (forward KL), applied to both thinking traces
-and visible responses (see loss masking notes below).
-
-See [SFT Dataset](sft-dataset.md) for dataset construction, thinking trace
-format, and data mix.
-
-## Stage 2: On-Policy Distillation (Behavior Recovery + Sharpening)
-
-**Goal**: Recover any instruction-following and tool-use capabilities degraded
-by SFT, and sharpen character adherence with dense per-token feedback.
-
-**Method**: Sample rollouts from the student, compute teacher logprobs on those
-rollouts, train with reverse KL as per-token advantage.
-
-```
-for each batch of prompts:
-    trajectories = student.sample(prompts)           # student generates
-    student_logprobs = trajectories.logprobs          # already computed
-    teacher_logprobs = teacher.compute_logprobs(trajectories)  # single forward pass
-    advantage = -(student_logprobs - teacher_logprobs)         # negative reverse KL
-    student.train(trajectories, advantage)            # policy gradient update
-```
-
-### Prompt Sources for Distillation
-
-| Source | Prompts | Purpose |
-|---|---|---|
-| Character interview questions | ~100 | Test personality consistency |
-| Scenario starters (crisis, casual, technical) | ~100 | Test situational adaptation |
-| Tool-use prompts (wiki search, delegation) | ~100 | Recover/sharpen tool calling |
-| General chat (Tulu3 subset) | ~300 | Recover instruction following |
-| **Total** | **~600** | |
-
-**Sampling**: 4 rollouts per prompt, ~150-300 training steps.
-
-### Teacher Choice for This Stage
-
-- Option A: Qwen3.5-27B (strongest signal, requires 4xL40S)
-- Option B: Original Qwen3.5-4B pre-SFT (self-distillation, single GPU, cheaper)
-- Recommendation: Start with Option B. If tool-use recovery is insufficient,
-  switch to Option A.
-
-See [Model Selection](model-selection.md) for details on teacher models and
-self-distillation.
-
-### Weight Sharing for Self-Distillation
-
-When using self-distillation (Option B), the teacher is the same base model as
-the student -- just without the LoRA adapters. Instead of loading a second copy
-of the base weights into VRAM, `run_distillation.py` uses PEFT's
-`model.disable_adapter()` context manager to temporarily zero out the LoRA
-contributions during the teacher forward pass. This produces identical logits
-to a standalone base model while sharing all base weights with the student.
-
-VRAM savings from weight sharing:
-
-| Student | Without sharing | With sharing | Saved |
-|---|---|---|---|
-| 4B BF16 | ~18 GB (2x base + LoRA + optim) | ~10 GB (1x base + LoRA + optim) | ~8 GB |
-| 9B BF16 | ~40 GB | ~22 GB | ~18 GB |
-| 35B-A3B BF16 | ~144 GB | ~74 GB | ~70 GB |
-
-This optimization only applies to self-distillation (same base model for
-teacher and student). If switching to a larger teacher (Option A), a separate
-model load is required.
+1. **[Off-Policy SFT](sft-training.md)** -- Teach the student Uno's
+   personality, tone, and interaction patterns using a curated dataset (see
+   [SFT Dataset](sft-dataset.md)).
+2. **[On-Policy Distillation](on-policy-distillation.md)** -- Recover
+   instruction-following and tool-use capabilities degraded by SFT, and sharpen
+   character adherence with dense per-token feedback from a teacher.
 
 ## Tooling
 
@@ -172,22 +102,7 @@ Trainable parameters at rank 64 (MoE):
 | 35B-A3B (all experts) | ~200M | 0.6% | Expensive, most capacity wasted on cold experts |
 | 35B-A3B (top-25% experts) | ~60M | 0.2% | Recommended; comparable to 9B dense |
 
-## Training Hyperparameters
-
-| Parameter | SFT (Stage 1) | Distillation (Stage 2) |
-|---|---|---|
-| Learning rate | Model-dependent (see below) | Model-dependent (see below) |
-| LR schedule | Linear (with warmup) | Constant |
-| Batch size | 1 (with GA=4) | 32 (4 samples x 8 prompts) |
-| Epochs | 3 | N/A (step-based) |
-| Max seq length | 8,192 | 4,096 (shorter rollouts suffice) |
-| Max completion length | N/A | 1,024 |
-| Optimizer | AdamW 8-bit | AdamW |
-| Weight decay | 0.01 | 0 |
-| Gradient checkpointing | `"unsloth"` | `"unsloth"` |
-| Loss masking | `train_on_responses_only` | N/A |
-
-### Per-Model Learning Rates
+## Per-Model Learning Rates
 
 "LoRA Without Regret" shows that optimal LoRA LR scales with hidden size:
 `LR = M_LoRA * (2000 / hidden_size)^model_pow`. Smaller models need lower LR
@@ -215,36 +130,6 @@ multiplier may be better.
 larger penalty for large batch sizes than FullFT, independent of rank. Unsloth
 recommends `per_device_train_batch_size = 1` with `gradient_accumulation_steps
 = 4` to simulate larger batches without the VRAM cost.
-
-**Notes on loss masking**: Use Unsloth's `train_on_responses_only` to mask user
-turns during SFT, training only on assistant outputs. This improves fine-tune
-accuracy by not penalizing the model for user-provided text. The loss is
-computed on both the thinking trace and the visible response -- the model must
-learn *how* to reason about social situations, not just what to say.
-
-Tool result tokens (`"role": "tool"` messages in the
-[trace format](dataset-generation-agent.md#trace-format)) must also be masked
-during loss computation. These tokens come from the environment (wiki results,
-delegation outputs), not from the model -- training on them would teach the
-model to memorize tool outputs rather than learn when to call tools. In
-summary, the loss mask is:
-
-- User messages: **masked** (not generated by the model)
-- Tool results: **masked** (environment responses)
-- System prompt / context slots: **masked** (provided context)
-- Assistant thinking traces: **trained**
-- Assistant visible responses: **trained**
-- Assistant tool calls: **trained** (the model must learn to emit these)
-
-**Notes on thinking mode**: Use the thinking-enabled chat template during
-training (`"qwen3.5-thinking"` in Unsloth). Qwen3.5 small models (0.8B-9B)
-have thinking disabled by default; it must be explicitly enabled. Unsloth
-recommends keeping at least 75% reasoning-style examples to preserve reasoning
-ability. Our dataset is 100% reasoning-style (all examples include thinking
-traces), which is ideal.
-
-**Notes on gradient accumulation**: Unsloth fixed a universal bug where gradient
-accumulation inflated loss values. Use Unsloth's corrected implementation.
 
 ## Quantization for Deployment
 

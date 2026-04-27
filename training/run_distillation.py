@@ -10,7 +10,7 @@ Uses TRL's DistillationTrainer with reverse KL (beta=1.0) and fully
 on-policy generation (lmbda=1.0) to recover general instruction-following
 capabilities degraded by personality SFT.
 
-Hyperparameters follow docs/fine-tuning/training-strategy.md (Stage 2).
+Hyperparameters follow docs/fine-tuning/on-policy-distillation.md.
 
 Usage:
     python training/run_distillation.py \\
@@ -188,7 +188,7 @@ def run_distillation(
     # own base weights with LoRA disabled (weight sharing).
     config = DistillationConfig(
         output_dir=output_path,
-        # Training schedule (training-strategy.md Stage 2)
+        # Training schedule (on-policy-distillation.md)
         per_device_train_batch_size=batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         max_steps=max_steps,
@@ -198,9 +198,12 @@ def run_distillation(
         max_grad_norm=1.0,
         bf16=True,
         gradient_checkpointing=True,
-        # Distillation: fully on-policy with reverse KL
+        # Distillation: fully on-policy with full-vocabulary reverse KL.
+        # loss_top_k=0 computes exact KL over the entire vocabulary rather
+        # than TRL's default sparse top-1 approximation.
         lmbda=1.0,
         beta=1.0,
+        loss_top_k=0,
         max_length=max_length,
         max_completion_length=max_completion_length,
         temperature=1.0,

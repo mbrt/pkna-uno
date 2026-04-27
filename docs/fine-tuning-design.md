@@ -220,7 +220,7 @@ accordingly, informed by his character profile.
   sampling from Tulu3 for distillation prompts (see On-Policy Distillation
   section below).
 
-### SFT Training (training-strategy.md)
+### SFT Training (sft-training.md)
 
 - [x] **SFT dataset assembly** -- `pkna/training/sft_dataset.py`:
   `trace_to_messages` converts `DatagenTrace` to Qwen3.5 chat format
@@ -233,14 +233,14 @@ accordingly, informed by his character profile.
   BF16 LoRA (rank=64, alpha=32, all-linear, dropout=0),
   `train_on_responses_only` loss masking, linear LR schedule with AdamW
   8-bit, gradient checkpointing (`"unsloth"`), MLflow tracking, GGUF
-  export via `--export-gguf`. Hyperparameters match `training-strategy.md`.
+  export via `--export-gguf`. Hyperparameters match `sft-training.md`.
 - [x] **End-to-end smoke test** -- `training/smoke_test.py`: runs all 7
   pipeline stages (prompts, datagen, filter, assemble, train, eval
   inference, eval scoring) with fake backends and canned responses.
   Validates real I/O, serialization, and orchestration. Supports
   `--stage`, `--no-training`, `--all` flags.
 
-### On-Policy Distillation (training-strategy.md)
+### On-Policy Distillation (on-policy-distillation.md)
 
 - [x] **Distillation prompt set** -- `distillation/generate_prompts.py`:
   samples 600 prompts from `allenai/tulu-3-sft-mixture` with stratified
@@ -268,7 +268,9 @@ accordingly, informed by his character profile.
 | [Model Selection](fine-tuning/model-selection.md) | Student & teacher model analysis, benchmarks, tradeoffs |
 | [SFT Dataset](fine-tuning/sft-dataset.md) | Dataset construction, data mix, what goes into vs. stays out of the weights |
 | [Dataset Generation Agent](fine-tuning/dataset-generation-agent.md) | Trace capture pipeline: context composer, prompt bank, execution loop, quality filtering |
-| [Training Strategy](fine-tuning/training-strategy.md) | Two-stage pipeline (SFT + on-policy distillation), LoRA config, hyperparameters |
+| [Training Strategy](fine-tuning/training-strategy.md) | Two-stage pipeline overview, LoRA config, shared hyperparameters |
+| [SFT Training](fine-tuning/sft-training.md) | Stage 1: off-policy SFT, loss masking, thinking mode |
+| [On-Policy Distillation](fine-tuning/on-policy-distillation.md) | Stage 2: on-policy distillation, teacher choice, weight sharing |
 | [Evaluation](fine-tuning/evals.md) | Evaluation dimensions, protocol, baselines |
 | [Infrastructure & Costs](fine-tuning/infra-costs.md) | Hardware options, cost breakdown per scenario, experimentation budget |
 | [Risks & Open Questions](fine-tuning/risks-and-open-questions.md) | Known risks, research questions, future work |

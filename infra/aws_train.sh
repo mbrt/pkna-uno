@@ -66,7 +66,8 @@ uv run mlflow server \
     --host 127.0.0.1 \
     --port 5000 \
     --backend-store-uri "sqlite:///$PWD/$MLFLOW_DIR/mlflow.db" \
-    --default-artifact-root "$PWD/$MLFLOW_DIR/artifacts" &
+    --default-artifact-root "$PWD/$MLFLOW_DIR/artifacts" \
+    --uvicorn-opts "--log-level warning" &
 MLFLOW_PID=$!
 sleep 3
 export MLFLOW_TRACKING_URI="http://localhost:5000"

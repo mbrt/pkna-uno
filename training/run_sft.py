@@ -3,14 +3,14 @@
 """SFT training script for Uno personality fine-tuning.
 
 Uses Unsloth + LoRA to fine-tune a Qwen3.5 model on the assembled SFT
-dataset. Hyperparameters follow docs/fine-tuning/training-strategy.md.
+dataset. Hyperparameters follow docs/fine-tuning/sft-training.md.
 
 The dataset is expected to contain a ``messages`` column in standard chat
 format (reasoning_content + OpenAI tool_calls). This script applies the
 model's chat template at training time, making the dataset
 tokenizer-independent.
 
-Requires a GPU with sufficient VRAM (see training-strategy.md for estimates).
+Requires a GPU with sufficient VRAM (see sft-training.md for estimates).
 
 Usage:
     python training/run_sft.py \
