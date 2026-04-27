@@ -17,6 +17,7 @@
 #   ./scripts/run_evals.sh --model mbrt/uno-distill-adapter --suites personality,tool_use
 #   ./scripts/run_evals.sh --model gemini-3-flash --backend gemini
 #   ./scripts/run_evals.sh --traces-dir output/evals/traces/run-20260424  # score only
+#   ./scripts/run_evals.sh --4bit --model output/sft/lora_adapter         # 4-bit quantized inference
 #   ./scripts/run_evals.sh --mini --model output/sft/lora_adapter        # quick run, 5 items
 
 set -euo pipefail
@@ -31,6 +32,7 @@ OUTPUT_BASE="output/evals"
 TRACES_DIR=""
 SKIP_PROMPTS=false
 SKIP_INFERENCE=false
+LOAD_4BIT=false
 
 usage() {
     cat <<EOF
@@ -46,6 +48,7 @@ Options:
     --output-base DIR       Base output directory (default: $OUTPUT_BASE)
     --traces-dir DIR        Score existing traces (skip prompts + inference)
     --skip-prompts          Reuse existing prompts (skip stage 1)
+    --4bit                  Load local model in 4-bit quantization (faster, less VRAM)
     --mini [N]              Quick run with N prompts per suite (default: 5)
     -h, --help              Show this help
 EOF
@@ -63,6 +66,7 @@ while [ $# -gt 0 ]; do
         --output-base) OUTPUT_BASE="$2"; shift 2 ;;
         --traces-dir) TRACES_DIR="$2"; SKIP_INFERENCE=true; SKIP_PROMPTS=true; shift 2 ;;
         --skip-prompts) SKIP_PROMPTS=true; shift ;;
+        --4bit) LOAD_4BIT=true; shift ;;
         --mini)
             if [ "$MAX_ITEMS" -eq 0 ]; then MAX_ITEMS=5; fi
             if [ $# -gt 1 ] && [[ "$2" =~ ^[0-9]+$ ]]; then
@@ -107,6 +111,7 @@ banner() {
 banner "Eval Pipeline"
 echo "  Model:         ${MODEL:-N/A}"
 echo "  Backend:       $BACKEND"
+echo "  4-bit:         $LOAD_4BIT"
 echo "  Judge:         $JUDGE_BACKEND"
 echo "  Suites:        ${SUITES:-all}"
 echo "  Output:        $RUN_DIR"
@@ -157,6 +162,9 @@ if [ "$SKIP_INFERENCE" = false ]; then
     fi
     if [ "$MAX_ITEMS" -gt 0 ]; then
         INFER_FLAGS+=("--max-items" "$MAX_ITEMS")
+    fi
+    if [ "$LOAD_4BIT" = true ]; then
+        INFER_FLAGS+=("--4bit")
     fi
 
     uv run python evals/run_eval_inference.py "${INFER_FLAGS[@]}"

@@ -340,6 +340,13 @@ def main() -> None:
         default=0,
         help="Process at most N prompts (0 = unlimited)",
     )
+    parser.add_argument(
+        "--4bit",
+        dest="load_in_4bit",
+        action="store_true",
+        default=False,
+        help="Load local model in 4-bit quantization (faster, less VRAM)",
+    )
     args = parser.parse_args()
 
     suite_filter = args.suites.split(",") if args.suites else None
@@ -355,7 +362,7 @@ def main() -> None:
         f"Loaded {len(prompts)} prompts across {len({p.suite for p in prompts})} suites"
     )
 
-    backend = create_backend(args.backend, args.model)
+    backend = create_backend(args.backend, args.model, load_in_4bit=args.load_in_4bit)
     model_name = args.model or args.backend
 
     written = run_eval(

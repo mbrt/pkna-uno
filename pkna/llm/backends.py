@@ -859,6 +859,7 @@ def create_backend(
     backend_name: str,
     model: str | None = None,
     max_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+    load_in_4bit: bool = False,
 ) -> LLMBackend:
     if backend_name == "gemini":
         return GeminiBackend(model=model or DEFAULT_GEMINI_MODEL, max_tokens=max_tokens)
@@ -871,5 +872,7 @@ def create_backend(
 
         if not model:
             raise ValueError("LocalBackend requires a model path (--model)")
-        return LocalBackend(model_name=model, max_new_tokens=max_tokens)
+        return LocalBackend(
+            model_name=model, max_new_tokens=max_tokens, load_in_4bit=load_in_4bit
+        )
     raise ValueError(f"Unknown backend: {backend_name}")

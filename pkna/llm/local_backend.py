@@ -152,6 +152,7 @@ class LocalBackend(LLMBackend):
         model_name: str,
         max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
         max_seq_length: int = 8192,
+        load_in_4bit: bool = False,
     ):
         import torch
 
@@ -169,13 +170,18 @@ class LocalBackend(LLMBackend):
         self._max_new_tokens = max_new_tokens
 
         device_map = select_device_map()
-        log.info("Loading model %s (device_map=%s)", model_name, device_map)
+        log.info(
+            "Loading model %s (device_map=%s, 4bit=%s)",
+            model_name,
+            device_map,
+            load_in_4bit,
+        )
 
         self._model, self._tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_name,
             max_seq_length=max_seq_length,
-            load_in_4bit=False,
-            load_in_16bit=True,
+            load_in_4bit=load_in_4bit,
+            load_in_16bit=not load_in_4bit,
             full_finetuning=False,
             device_map=device_map,
         )
