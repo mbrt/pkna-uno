@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 
-"""On-policy distillation for behavior recovery after SFT.
+"""On-policy self-distillation for behavior recovery after SFT.
 
-Loads the SFT LoRA adapter as the student and the original base model as
-the teacher.  Uses TRL's DistillationTrainer with reverse KL (beta=1.0)
-and fully on-policy generation (lmbda=1.0) to recover general
-instruction-following capabilities degraded by personality SFT.
+Uses the student's own base weights (with LoRA adapters disabled) as the
+teacher, avoiding a second copy of the base model in VRAM.  This halves
+the model memory required compared to loading a separate teacher.
+
+Uses TRL's DistillationTrainer with reverse KL (beta=1.0) and fully
+on-policy generation (lmbda=1.0) to recover general instruction-following
+capabilities degraded by personality SFT.
 
 Hyperparameters follow docs/fine-tuning/training-strategy.md (Stage 2).
 
@@ -50,16 +53,39 @@ console, log = setup_logging()
 
 
 class _UnslothDistillationTrainer(DistillationTrainer):
-    """Workaround for Unsloth + TRL DistillationTrainer incompatibility.
+    """Self-distillation trainer with Unsloth compatibility and weight sharing.
 
-    Unsloth's patched ``model.generate()`` runs under
-    ``torch.inference_mode()``, producing tensors that cannot participate
-    in autograd.  The base ``compute_loss`` passes those tensors (via
-    ``input_ids``) into ``gather`` operations that need gradients.
+    Two customizations over the base ``DistillationTrainer``:
 
-    This subclass clones any inference-mode tensors in ``inputs`` before
-    they reach the loss computation.
+    1. **Weight-shared teacher**: Instead of loading a separate teacher
+       model, ``_get_teacher_logits`` temporarily disables the LoRA
+       adapters on the student via PEFT's ``disable_adapter()`` context
+       manager, producing base-model logits from the same weights.
+       This halves model VRAM usage for self-distillation.
+
+    2. **Unsloth inference_mode fix**: Unsloth's patched
+       ``model.generate()`` runs under ``torch.inference_mode()``,
+       producing tensors that cannot participate in autograd.  The
+       ``compute_loss`` override clones any such tensors before they
+       reach the loss computation.
     """
+
+    def _get_teacher_logits(
+        self, inputs: dict[str, torch.Tensor | Any]
+    ) -> torch.Tensor:
+        """Produce base-model logits by disabling LoRA adapters."""
+        model = self.model
+        assert model is not None
+        was_training = model.training
+        model.eval()
+        with torch.no_grad(), model.disable_adapter():  # ty: ignore[call-non-callable]
+            logits = model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+            ).logits
+        if was_training:
+            model.train()
+        return logits
 
     def compute_loss(
         self,
@@ -145,21 +171,9 @@ def run_distillation(
     ):
         student.config.vocab_size = student.config.text_config.vocab_size
 
-    # Load teacher (base model for self-distillation) via Unsloth so it
-    # lands on GPU.  Previously the teacher was passed as a string, which
-    # caused TRL to load it with AutoModelForCausalLM.from_pretrained
-    # *without* device_map — putting it on CPU and making every logprob
-    # forward pass take 60+ seconds.
-    log.info("Loading teacher %s (device_map=%s)", model_name, device_map)
-    teacher, _teacher_tok = FastLanguageModel.from_pretrained(
-        model_name=model_name,
-        max_seq_length=max_length,
-        load_in_4bit=False,
-        load_in_16bit=True,
-        full_finetuning=False,
-        device_map=device_map,
-    )
-    FastLanguageModel.for_inference(teacher)
+    # No separate teacher model is loaded: self-distillation uses the
+    # student's own base weights with LoRA adapters temporarily disabled
+    # (see _UnslothDistillationTrainer._get_teacher_logits).
 
     # Load dataset
     log.info("Loading dataset from %s", dataset_path)
@@ -169,7 +183,9 @@ def run_distillation(
     dataset: Dataset = loaded
     log.info("Loaded %d prompts", len(dataset))
 
-    # DistillationConfig extends TrainingArguments with distillation params
+    # DistillationConfig extends TrainingArguments with distillation params.
+    # No teacher_model_name_or_path is set: the teacher is the student's
+    # own base weights with LoRA disabled (weight sharing).
     config = DistillationConfig(
         output_dir=output_path,
         # Training schedule (training-strategy.md Stage 2)
@@ -188,8 +204,6 @@ def run_distillation(
         max_length=max_length,
         max_completion_length=max_completion_length,
         temperature=1.0,
-        # Teacher is passed as a pre-loaded model object (no config kwargs)
-        teacher_model_name_or_path=model_name,
         # Logging
         logging_steps=logging_steps,
         report_to="mlflow",
@@ -199,7 +213,7 @@ def run_distillation(
 
     trainer = _UnslothDistillationTrainer(
         model=student,
-        teacher_model=teacher,
+        teacher_model=None,  # ty: ignore[invalid-argument-type]
         args=config,
         train_dataset=dataset,
         processing_class=tokenizer,

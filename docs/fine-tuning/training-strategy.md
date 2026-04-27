@@ -62,6 +62,27 @@ for each batch of prompts:
 See [Model Selection](model-selection.md) for details on teacher models and
 self-distillation.
 
+### Weight Sharing for Self-Distillation
+
+When using self-distillation (Option B), the teacher is the same base model as
+the student -- just without the LoRA adapters. Instead of loading a second copy
+of the base weights into VRAM, `run_distillation.py` uses PEFT's
+`model.disable_adapter()` context manager to temporarily zero out the LoRA
+contributions during the teacher forward pass. This produces identical logits
+to a standalone base model while sharing all base weights with the student.
+
+VRAM savings from weight sharing:
+
+| Student | Without sharing | With sharing | Saved |
+|---|---|---|---|
+| 4B BF16 | ~18 GB (2x base + LoRA + optim) | ~10 GB (1x base + LoRA + optim) | ~8 GB |
+| 9B BF16 | ~40 GB | ~22 GB | ~18 GB |
+| 35B-A3B BF16 | ~144 GB | ~74 GB | ~70 GB |
+
+This optimization only applies to self-distillation (same base model for
+teacher and student). If switching to a larger teacher (Option A), a separate
+model load is required.
+
 ## Tooling
 
 **[Unsloth](https://unsloth.ai/)** is the recommended training framework. It

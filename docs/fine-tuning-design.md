@@ -250,9 +250,10 @@ accordingly, informed by his character profile.
 - [x] **Distillation loop** -- `training/run_distillation.py`: uses TRL's
   `DistillationTrainer` (experimental) with reverse KL (`beta=1.0`), fully
   on-policy generation (`lmbda=1.0`), and self-distillation (base model as
-  teacher). Loads the SFT LoRA adapter via Unsloth. MLflow tracking, GGUF
-  export via `--export-gguf`. Smoke-tested in `training/smoke_test.py`
-  (stages 6-7).
+  teacher). Uses PEFT `disable_adapter()` weight sharing to avoid loading
+  a second copy of the base model, halving model VRAM. Loads the SFT LoRA
+  adapter via Unsloth. MLflow tracking, GGUF export via `--export-gguf`.
+  Smoke-tested in `training/smoke_test.py` (stages 6-7).
 
 ### Deployment (training-strategy.md)
 
