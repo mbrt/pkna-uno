@@ -875,4 +875,11 @@ def create_backend(
         return LocalBackend(
             model_name=model, max_new_tokens=max_tokens, load_in_4bit=load_in_4bit
         )
+    if backend_name == "vllm":
+        from pkna.llm.vllm_backend import VllmBackend
+
+        if not model:
+            raise ValueError("VllmBackend requires a model name (--model)")
+        base_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
+        return VllmBackend(model=model, base_url=base_url, max_tokens=max_tokens)
     raise ValueError(f"Unknown backend: {backend_name}")

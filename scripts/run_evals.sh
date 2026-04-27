@@ -44,7 +44,7 @@ Usage: $(basename "$0") [OPTIONS]
 
 Options:
     --model MODEL           Model name or adapter path (required unless --traces-dir)
-    --backend BACKEND       Inference backend: local, gemini, anthropic (default: local)
+    --backend BACKEND       Inference backend: local, vllm, gemini, anthropic (default: local)
     --judge-backend BACKEND Judge backend: gemini, anthropic (default: gemini)
     --judge-model MODEL     Judge model name (default: backend default)
     --suites SUITES         Comma-separated suites (default: all)

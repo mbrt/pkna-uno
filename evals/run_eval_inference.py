@@ -323,7 +323,7 @@ def main() -> None:
         "--backend",
         type=str,
         default="gemini",
-        help="LLM backend to use (gemini or anthropic)",
+        help="LLM backend to use (local, vllm, gemini, anthropic)",
     )
     parser.add_argument(
         "--model",

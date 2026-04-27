@@ -102,6 +102,103 @@ aws ssm start-session --target <instance-id> \
 # Then browse http://localhost:5000
 ```
 
+## Evals
+
+Run the eval pipeline against a trained model. Three stages: generate prompts
+(deterministic), run inference, score traces with a judge model.
+
+```sh
+# Full run with a cloud backend
+./scripts/run_evals.sh --backend gemini --model gemini-3-flash
+
+# Local model (Unsloth, slow for multi-turn)
+./scripts/run_evals.sh --backend local --model output/sft/lora_adapter --4bit
+
+# Quick sanity check (5 prompts per suite)
+./scripts/run_evals.sh --mini --backend vllm --model my-model
+```
+
+### vLLM backend (recommended for local models)
+
+The `vllm` backend connects to an external vLLM server, which handles KV cache,
+PagedAttention, and continuous batching -- much faster than the `local` backend,
+especially for multi-turn suites.
+
+#### Merging the LoRA adapter
+
+Merge the LoRA adapter into the base model first. This avoids the extra memory
+overhead of serving LoRA at runtime (which often causes OOM on 8 GB GPUs):
+
+```python
+from unsloth import FastLanguageModel
+
+model, tokenizer = FastLanguageModel.from_pretrained(
+    "output/sft/qwen3-5-4b/output/sft/lora_adapter",
+    max_seq_length=4096,
+    load_in_4bit=True,
+    load_in_16bit=False,
+    full_finetuning=False,
+)
+model.save_pretrained_merged(
+    "output/sft/qwen3-5-4b-merged",
+    tokenizer,
+    save_method="merged_16bit",
+)
+```
+
+#### Starting the server
+
+Start the server with reasoning and tool-call parsing enabled:
+
+```sh
+uv tool run --from vllm vllm serve /path/to/merged-model \
+    --reasoning-parser qwen3 \
+    --enable-auto-tool-choice \
+    --tool-call-parser hermes \
+    --dtype auto
+```
+
+On GPUs with limited memory (e.g. 8 GB), add `--quantization bitsandbytes` for
+on-the-fly 4-bit quantization and `--enforce-eager` to disable CUDA graphs
+(which reserve significant additional memory):
+
+```sh
+uv tool run --from vllm --with 'bitsandbytes>=0.49.2' \
+    vllm serve /path/to/merged-model \
+    --quantization bitsandbytes \
+    --max-model-len 4096 \
+    --enforce-eager \
+    --reasoning-parser qwen3 \
+    --enable-auto-tool-choice \
+    --tool-call-parser hermes \
+    --dtype auto
+```
+
+> [!NOTE]
+> On 8 GB GPUs, serving LoRA adapters on-the-fly with `--enable-lora` typically
+> OOMs because the base model + LoRA weights + KV cache don't fit. Merge the
+> adapter first (see above) and serve the merged model instead.
+
+Then run evals:
+
+```sh
+./scripts/run_evals.sh --backend vllm --model /path/to/merged-model
+
+# Custom server URL
+VLLM_BASE_URL=http://gpu-box:8000/v1 \
+    ./scripts/run_evals.sh --backend vllm --model my-model
+```
+
+### Resuming interrupted runs
+
+```sh
+./scripts/run_evals.sh --resume output/evals/run-lora-adapter-20260427-193000 \
+    --model output/sft/lora_adapter --backend local
+```
+
+Each stage skips already-processed items, so the run continues from where it was
+interrupted.
+
 ## Results
 
 * Uno's [soul document](results/uno_soul_document.md) (condensed for datagen)
