@@ -113,11 +113,15 @@ automatically based on `--model` (see `training/__init__.py`).
 |---|---|---|---|
 | 0.8B | 1024 | 5e-5 | 3e-5 |
 | 4B | 3584 | 2e-4 | 1e-4 |
+| 9B | 4096 | 2e-4 | 1e-4 |
 | 35B-A3B | ~2560 (active) | 2e-4 | 1e-4 |
 
 The 4B values come from Unsloth's Qwen3.5 examples and the 10x FullFT
 multiplier. The 0.8B values are scaled down ~4x to account for its smaller
-hidden dimension. The 35B-A3B MoE uses 4B-class LR since its active hidden
+hidden dimension. The 9B uses the same LR as the 4B: the hidden_size scaling
+formula gives `2e-4 * (3584/4096) ~= 1.75e-4`, but the ~12% reduction is
+within noise, and Unsloth recommends 2e-4 as a starting point for all Qwen3.5
+dense models. The 35B-A3B MoE uses 4B-class LR since its active hidden
 size is comparable. All values can be overridden via `--lr`.
 
 **Notes on learning rate**: The 10x multiplier over FullFT optimal (per "LoRA

@@ -106,6 +106,7 @@ class ModelConfig:
 _REGISTRY: dict[str, ModelConfig] = {
     "0.8B": ModelConfig(sft_lr=5e-5, distill_lr=3e-5),
     "4B": ModelConfig(sft_lr=2e-4, distill_lr=1e-4),
+    "9B": ModelConfig(sft_lr=2e-4, distill_lr=1e-4),
     "35B-A3B": ModelConfig(sft_lr=2e-4, distill_lr=1e-4, lora=_MOE_LORA),
 }
 

@@ -64,6 +64,23 @@ but serving is comparable.
 | Student training (Stage 2) | ~2 hrs | 1x g6e.2xlarge | ~$5 |
 | **Total per run** | | | **~$42** |
 
+### Scenario C1: 9B Self-Distillation
+
+| Phase | Duration | Instance | Cost |
+|---|---|---|---|
+| Synthetic data generation (Gemini API) | -- | -- | ~$5 |
+| SFT (Stage 1) | ~1 hr | 1x g6e.2xlarge | ~$2 |
+| Student sampling (Stage 2) | ~4 hrs | 1x g6e.2xlarge | ~$9 |
+| Teacher logprobs (Stage 2) | ~2 hrs | 1x g6e.2xlarge | ~$5 |
+| Student training (Stage 2) | ~2 hrs | 1x g6e.2xlarge | ~$5 |
+| **Total per run** | | | **~$26** |
+
+Self-distillation saves ~$16/run vs the 27B teacher (Scenario C) by keeping
+the entire pipeline on a single L40S. The teacher forward pass uses the
+student's own base weights with LoRA disabled (22 GB fits comfortably in 48 GB
+L40S VRAM). This is the recommended first attempt for the 9B student: if
+tool-use recovery is insufficient, upgrade to Scenario C.
+
 ### Scenario D: 35B-A3B MoE + 27B Teacher
 
 | Phase | Duration | Instance | Cost |
@@ -101,6 +118,7 @@ Expect 5-10 runs for hyperparameter tuning and ablations.
 |---|---|---|---|
 | A: 4B self-distill | $15 | $150 | Cheapest, good starting point |
 | B: 4B + 27B teacher | $34 | $340 | Better if self-distill underperforms |
-| C: 9B + 27B teacher | $42 | $420 | Best dense capability |
+| C: 9B + 27B teacher | $42 | $420 | Best dense capability, strongest teacher signal |
+| C1: 9B self-distill | $26 | $260 | Recommended first 9B attempt |
 | D: 35B-A3B + 27B teacher | $84 | $840 | Best benchmarks, highest training cost |
 | E: 35B-A3B self-distill | $84 | $840 | Same cost -- MoE training dominates |

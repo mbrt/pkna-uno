@@ -70,9 +70,17 @@ implementations) are unnecessary.
 ## Teacher Choice
 
 - Option A: Qwen3.5-27B (strongest signal, requires 4xL40S)
-- Option B: Original Qwen3.5-4B pre-SFT (self-distillation, single GPU, cheaper)
+- Option B: Self-distillation -- the student's own pre-SFT base weights as
+  teacher (single GPU, cheaper)
 - Recommendation: Start with Option B. If tool-use recovery is insufficient,
   switch to Option A.
+
+Self-distillation applies to all dense students (4B, 9B). The 9B case is
+particularly attractive: with weight sharing, the entire distillation pipeline
+runs on a single L40S at ~22 GB VRAM, saving ~$16/run compared to the 27B
+teacher path (Scenario C1 vs C in [Infrastructure & Costs](infra-costs.md)).
+This makes the 9B self-distillation cheaper per run ($26) than the 4B + 27B
+teacher ($34) while using a more capable student.
 
 See [Model Selection](model-selection.md) for details on teacher models and
 self-distillation.

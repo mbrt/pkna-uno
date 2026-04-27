@@ -79,9 +79,14 @@ accordingly, informed by his character profile.
 3. Train SFT, evaluate personality and tool use.
 4. Run on-policy distillation to recover any lost capabilities.
 5. If tool use is insufficient, switch to **27B teacher** (Scenario B).
-6. If personality depth is insufficient, try **9B student** (Scenario C).
-   The 9B is the natural next step before MoE -- same training infrastructure,
-   just slower.
+6. If personality depth is insufficient, try **9B student with
+   self-distillation** (Scenario C1, ~$26/run). The 9B fits on the same 1x
+   L40S as the 4B (22 GB VRAM for BF16 LoRA), uses the same LR (2e-4), and
+   the self-distill path is actually cheaper per run than 4B + 27B teacher
+   ($26 vs $34). Architecture: hidden_size=4096, 32 layers (24
+   linear_attention + 8 full_attention), intermediate_size=12288. If tool-use
+   recovery is insufficient with self-distillation, upgrade to the **27B
+   teacher** (Scenario C, ~$42/run).
 7. If 9B still falls short on personality nuance, try **Qwen3.6-35B-A3B**
    (Scenario D). This requires a 4xL40S node for training but delivers the
    best benchmarks. Qwen3.6 is the preferred MoE base over Qwen3.5: same
