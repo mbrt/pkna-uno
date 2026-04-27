@@ -211,7 +211,9 @@ def run_distillation(
         # Logging
         logging_steps=logging_steps,
         report_to="mlflow",
-        save_strategy="no",
+        save_strategy="steps",
+        save_steps=5,
+        save_total_limit=3,
         seed=3407,
     )
 
