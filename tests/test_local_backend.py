@@ -88,6 +88,35 @@ class TestParseToolCalls:
         assert "Python script" in calls[0]["arguments"]["task"]
         assert "JSON" in calls[0]["arguments"]["task"]
 
+    def test_bare_function_block_fallback(self):
+        text = (
+            "<function=recall>\n"
+            "<parameter=query>Xadhoom</parameter>\n"
+            "<parameter=max_results>5</parameter>\n"
+            "</function>"
+        )
+        calls = parse_tool_calls(text)
+        assert calls == [
+            {
+                "name": "recall",
+                "arguments": {"query": "Xadhoom", "max_results": 5},
+            },
+        ]
+
+    def test_wrapped_block_wins_over_bare(self):
+        text = (
+            "<tool_call>\n<function=recall>\n"
+            "<parameter=query>Xadhoom</parameter>\n"
+            "</function>\n</tool_call>"
+        )
+        calls = parse_tool_calls(text)
+        assert len(calls) == 1
+        assert calls[0]["name"] == "recall"
+
+    def test_truncated_tool_call_no_match(self):
+        text = "<tool_call>\n<function=recall>\n<parameter=query>Xadhoom</parameter>\n"
+        assert parse_tool_calls(text) == []
+
 
 class TestExtractThinkingAndContent:
     def test_thinking_and_content(self):
@@ -119,6 +148,41 @@ class TestExtractThinkingAndContent:
         thinking, content = extract_thinking_and_content(text)
         assert thinking == "Padded thinking"
         assert content == "Padded content"
+
+    def test_missing_opener_template_consumed(self):
+        text = (
+            "Analyzing the user's tone and preparing a witty reply.\n"
+            "</think>\n\n"
+            "Diciamo che sono in forma, socio."
+        )
+        thinking, content = extract_thinking_and_content(text)
+        assert thinking == "Analyzing the user's tone and preparing a witty reply."
+        assert content == "Diciamo che sono in forma, socio."
+
+    def test_missing_opener_with_tool_call(self):
+        text = (
+            "Structuring the memory search for Xadhoom's research.\n"
+            "</think>\n\n"
+            "<tool_call>\n<function=recall>\n"
+            "<parameter=query>\nXadhoom research\n</parameter>\n"
+            "<parameter=max_results>\n5\n</parameter>\n"
+            "</function>\n</tool_call>"
+        )
+        thinking, content = extract_thinking_and_content(text)
+        assert thinking is not None
+        assert "Xadhoom" in thinking
+        assert content.startswith("<tool_call>")
+        calls = parse_tool_calls(content)
+        assert len(calls) == 1
+        assert calls[0]["name"] == "recall"
+        assert calls[0]["arguments"]["query"] == "Xadhoom research"
+        assert calls[0]["arguments"]["max_results"] == 5
+
+    def test_missing_opener_empty_thinking(self):
+        text = "</think>\n\nHello."
+        thinking, content = extract_thinking_and_content(text)
+        assert thinking is None
+        assert content == "Hello."
 
 
 class TestStripToolCallText:

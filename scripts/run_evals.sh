@@ -29,6 +29,7 @@ JUDGE_BACKEND="gemini"
 JUDGE_MODEL=""
 SUITES=""
 MAX_ITEMS=0
+MAX_TOKENS=0
 OUTPUT_BASE="output/evals"
 TRACES_DIR=""
 SKIP_PROMPTS=false
@@ -49,6 +50,7 @@ Options:
     --judge-model MODEL     Judge model name (default: backend default)
     --suites SUITES         Comma-separated suites (default: all)
     --max-items N           Max prompts per suite (default: 0 = unlimited)
+    --max-tokens N          Max output tokens per generation (default: backend default)
     --output-base DIR       Base output directory (default: $OUTPUT_BASE)
     --resume DIR            Resume an interrupted run (reuse existing run directory)
     --traces-dir DIR        Score existing traces (skip prompts + inference)
@@ -70,6 +72,7 @@ while [ $# -gt 0 ]; do
         --judge-model) JUDGE_MODEL="$2"; shift 2 ;;
         --suites) SUITES="$2"; shift 2 ;;
         --max-items) MAX_ITEMS="$2"; shift 2 ;;
+        --max-tokens) MAX_TOKENS="$2"; shift 2 ;;
         --output-base) OUTPUT_BASE="$2"; shift 2 ;;
         --resume) RESUME_DIR="$2"; shift 2 ;;
         --traces-dir) TRACES_DIR="$2"; SKIP_INFERENCE=true; SKIP_PROMPTS=true; shift 2 ;;
@@ -181,6 +184,9 @@ if [ "$SKIP_INFERENCE" = false ]; then
     fi
     if [ "$MAX_ITEMS" -gt 0 ]; then
         INFER_FLAGS+=("--max-items" "$MAX_ITEMS")
+    fi
+    if [ "$MAX_TOKENS" -gt 0 ]; then
+        INFER_FLAGS+=("--max-tokens" "$MAX_TOKENS")
     fi
     if [ "$LOAD_4BIT" = true ]; then
         INFER_FLAGS+=("--4bit")

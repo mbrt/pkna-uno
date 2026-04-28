@@ -351,6 +351,12 @@ def main() -> None:
         help="Load local model in 4-bit quantization (faster, less VRAM)",
     )
     parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Max output tokens per generation (default: backend default)",
+    )
+    parser.add_argument(
         "--simulator-backend",
         type=str,
         default="gemini",
@@ -377,7 +383,10 @@ def main() -> None:
         f"Loaded {len(prompts)} prompts across {len({p.suite for p in prompts})} suites"
     )
 
-    backend = create_backend(args.backend, args.model, load_in_4bit=args.load_in_4bit)
+    backend_kwargs: dict[str, Any] = {"load_in_4bit": args.load_in_4bit}
+    if args.max_tokens is not None:
+        backend_kwargs["max_tokens"] = args.max_tokens
+    backend = create_backend(args.backend, args.model, **backend_kwargs)
     model_name = args.model or args.backend
 
     has_multi_turn = any(p.metadata.get("multi_turn") for p in prompts)

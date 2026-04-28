@@ -40,32 +40,53 @@ _PARAMETER_RE = re.compile(
 _THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 
 
+_BARE_FUNCTION_RE = re.compile(
+    r"<function=(\w+)>(.*?)</function>",
+    re.DOTALL,
+)
+
+
 def parse_tool_calls(text: str) -> list[dict[str, Any]]:
     """Parse Qwen3.5 XML-format tool calls from generated text.
+
+    Primary format wraps a ``<function=...>`` block in ``<tool_call>`` tags.
+    Some Qwen3 variants emit the ``<function=...>`` block without the outer
+    wrapper; fall back to that shape when no ``<tool_call>`` blocks match.
 
     Returns a list of dicts with "name" and "arguments" keys.
     """
     calls: list[dict[str, Any]] = []
     for match in _TOOL_CALL_RE.finditer(text):
-        fn_name = match.group(1)
-        body = match.group(2)
-        args: dict[str, Any] = {}
-        for pm in _PARAMETER_RE.finditer(body):
-            param_name = pm.group(1)
-            raw_value = pm.group(2)
-            try:
-                args[param_name] = json.loads(raw_value)
-            except (json.JSONDecodeError, ValueError):
-                args[param_name] = raw_value
-        calls.append({"name": fn_name, "arguments": args})
+        calls.append(_extract_call(match.group(1), match.group(2)))
+    if calls:
+        return calls
+
+    for match in _BARE_FUNCTION_RE.finditer(text):
+        calls.append(_extract_call(match.group(1), match.group(2)))
     return calls
+
+
+def _extract_call(fn_name: str, body: str) -> dict[str, Any]:
+    args: dict[str, Any] = {}
+    for pm in _PARAMETER_RE.finditer(body):
+        param_name = pm.group(1)
+        raw_value = pm.group(2)
+        try:
+            args[param_name] = json.loads(raw_value)
+        except (json.JSONDecodeError, ValueError):
+            args[param_name] = raw_value
+    return {"name": fn_name, "arguments": args}
 
 
 def extract_thinking_and_content(text: str) -> tuple[str | None, str]:
     """Split thinking traces and visible content from generated text.
 
     Qwen3.5 wraps reasoning in <think>...</think> tags at the start of
-    the assistant turn.
+    the assistant turn. When the chat template is built with
+    ``add_generation_prompt=True`` and ``enable_thinking=True`` the
+    opening ``<think>`` tag is part of the prompt rather than the
+    generated tokens, so the decoded output starts *inside* the thinking
+    block and only contains the closing ``</think>``. Handle both shapes.
     """
     think_match = _THINK_RE.search(text)
     if think_match:
@@ -73,6 +94,13 @@ def extract_thinking_and_content(text: str) -> tuple[str | None, str]:
         content = text[: think_match.start()] + text[think_match.end() :]
         content = content.strip()
         return thinking if thinking else None, content
+
+    close_idx = text.find("</think>")
+    if close_idx != -1:
+        thinking = text[:close_idx].strip()
+        content = text[close_idx + len("</think>") :].strip()
+        return thinking if thinking else None, content
+
     return None, text.strip()
 
 
@@ -313,6 +341,12 @@ class LocalBackend(LLMBackend):
 
             parsed_calls = parse_tool_calls(content)
             if not parsed_calls:
+                if "<tool_call>" in content or "<function=" in content:
+                    log.warning(
+                        "Local: tool-call markup in content but parser matched nothing; "
+                        "model output may be malformed (content head: %r)",
+                        content[:200],
+                    )
                 visible_text = strip_tool_call_text(content)
                 msg: dict[str, Any] = {"role": "assistant", "content": visible_text}
                 if thinking:
