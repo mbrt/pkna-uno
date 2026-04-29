@@ -93,37 +93,6 @@ echo "=== Running training pipeline ==="
 # shellcheck disable=SC2086
 ./scripts/run_training_pipeline.sh $PIPELINE_FLAGS
 
-# -------------------------------------------------------------------
-# Upload adapters to HuggingFace Hub
-# -------------------------------------------------------------------
-if [ -n "$HF_TOKEN" ]; then
-    echo "=== Uploading adapters to HuggingFace Hub ==="
-    HF_REVISION="$GIT_REF"
-    if [ -d output/sft/lora_adapter ]; then
-        uv tool run hf upload \
-            "$HF_REPO_PREFIX-sft-adapter" \
-            output/sft/lora_adapter \
-            --revision "$HF_REVISION" \
-            --commit-message "SFT adapter from $GIT_REF (model=$TRAIN_MODEL)" || true
-    fi
-    if [ -d output/distillation/lora_adapter ]; then
-        uv tool run hf upload \
-            "$HF_REPO_PREFIX-distill-adapter" \
-            output/distillation/lora_adapter \
-            --revision "$HF_REVISION" \
-            --commit-message "Distill adapter from $GIT_REF (model=$TRAIN_MODEL)" || true
-    fi
-    if [ -n "$EXPORT_GGUF" ] && [ -d output/distillation/lora_adapter-gguf ]; then
-        uv tool run hf upload \
-            "$HF_REPO_PREFIX-distill-adapter-gguf" \
-            output/distillation/lora_adapter-gguf \
-            --revision "$HF_REVISION" \
-            --commit-message "GGUF ($EXPORT_GGUF) from $GIT_REF (model=$TRAIN_MODEL)" || true
-    fi
-else
-    echo "=== Skipping HuggingFace Hub upload (no token) ==="
-fi
-
 # Stop MLflow server (upload happens via the EXIT trap)
 kill "$MLFLOW_PID" 2>/dev/null || true
 sleep 2
