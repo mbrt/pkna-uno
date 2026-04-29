@@ -154,7 +154,7 @@ Start the server with reasoning and tool-call parsing enabled:
 uv tool run --from vllm vllm serve /path/to/merged-model \
     --reasoning-parser qwen3 \
     --enable-auto-tool-choice \
-    --tool-call-parser hermes \
+    --tool-call-parser qwen3_xml \
     --dtype auto
 ```
 
@@ -170,7 +170,7 @@ uv tool run --from vllm --with 'bitsandbytes>=0.49.2' \
     --enforce-eager \
     --reasoning-parser qwen3 \
     --enable-auto-tool-choice \
-    --tool-call-parser hermes \
+    --tool-call-parser qwen3_xml \
     --dtype auto
 ```
 

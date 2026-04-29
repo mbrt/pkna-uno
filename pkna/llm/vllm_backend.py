@@ -9,7 +9,7 @@ Start the server separately before running evals::
     vllm serve /path/to/merged-model \
         --reasoning-parser qwen3 \
         --enable-auto-tool-choice \
-        --tool-call-parser hermes \
+        --tool-call-parser qwen3_xml \
         --dtype auto
 
 This module only imports the lightweight ``openai`` client package, not
@@ -42,7 +42,7 @@ class VllmBackend(LLMBackend):
     """Inference backend that talks to a vLLM OpenAI-compatible server.
 
     Supports tool calling (server must be started with
-    ``--enable-auto-tool-choice --tool-call-parser hermes``) and Qwen3
+    ``--enable-auto-tool-choice --tool-call-parser qwen3_xml``) and Qwen3
     thinking mode (``--reasoning-parser qwen3``).
     """
 

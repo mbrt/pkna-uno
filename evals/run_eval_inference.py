@@ -397,7 +397,9 @@ def main() -> None:
             args.simulator_backend,
             args.simulator_model or "default",
         )
-        sim_backend = create_backend(args.simulator_backend, args.simulator_model)
+        sim_backend = create_backend(
+            args.simulator_backend, args.simulator_model, **backend_kwargs
+        )
 
     written = run_eval(
         prompts,

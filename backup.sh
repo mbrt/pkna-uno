@@ -24,6 +24,7 @@ tar --append -f pkna-llm-backup.tar \
     --exclude='**/mlartifacts' \
     --exclude='output/sft' \
     --exclude='output/distillation' \
+    --exclude='output/merged-models' \
     input/ output/ input-files.txt
 
 # Compress backup

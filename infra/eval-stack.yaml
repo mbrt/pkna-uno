@@ -1,0 +1,211 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Uno eval tracing stack: provisions a GPU EC2 instance that runs eval
+  inference (stages 1+2) via vLLM, uploads traces to S3, and self-terminates.
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: g6e.4xlarge
+    AllowedValues:
+      - g6e.2xlarge
+      - g6e.4xlarge
+      - g6e.12xlarge
+    Description: >-
+      EC2 instance type. g6e.2xlarge = 1x L40S 48GB (small models),
+      g6e.4xlarge = 1x L40S 48GB + more CPU/RAM,
+      g6e.12xlarge = 4x L40S (large models).
+
+  Model:
+    Type: String
+    Description: >-
+      HuggingFace model ID (full model or LoRA adapter).
+      Examples: Qwen/Qwen3.5-4B, mbrt/uno-sft-adapter
+
+  MaxModelLen:
+    Type: Number
+    Default: 16384
+    Description: >-
+      Max model context length passed to vLLM --max-model-len.
+
+  GitRepo:
+    Type: String
+    Default: https://github.com/mbrt/pkna-uno.git
+    Description: Git repository URL.
+
+  GitRef:
+    Type: String
+    Default: main
+    Description: Git branch or tag to checkout.
+
+  HfTokenSsmPath:
+    Type: String
+    Default: /pkna-uno/hf-token
+    Description: >-
+      SSM SecureString parameter path containing the HuggingFace token.
+      The token is fetched at runtime, never stored in the template.
+
+Resources:
+  ResultsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAfter90Days
+            Status: Enabled
+            ExpirationInDays: 90
+
+  EvalRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: EvalPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: S3Upload
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ResultsBucket.Arn
+                  - !Sub "${ResultsBucket.Arn}/*"
+              - Sid: ReadHfToken
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${HfTokenSsmPath}"
+              - Sid: SelfTerminate
+                Effect: Allow
+                Action:
+                  - ec2:TerminateInstances
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "aws:ResourceTag/aws:cloudformation:stack-id": !Ref AWS::StackId
+
+  EvalInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EvalRole
+
+  EvalSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${AWS::StackName} - no inbound, all outbound"
+
+  EvalInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref EvalInstanceProfile
+      SecurityGroupIds:
+        - !GetAtt EvalSecurityGroup.GroupId
+      ImageId: "{{resolve:ssm:/aws/service/deeplearning/ami/x86_64/oss-nvidia-driver-gpu-pytorch-2.8-ubuntu-24.04/latest/ami-id}}"
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 200
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eval"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+
+          # ---------------------------------------------------------------
+          # Configuration from CloudFormation parameters
+          # ---------------------------------------------------------------
+          S3_BUCKET="${ResultsBucket}"
+          REGION="${AWS::Region}"
+          EVAL_MODEL="${Model}"
+          MAX_MODEL_LEN="${MaxModelLen}"
+
+          WORK_DIR="/home/ubuntu/eval"
+          LOG_FILE="/home/ubuntu/eval.log"
+          IMDS_TOKEN=$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+          INSTANCE_ID=$(curl -sf -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+
+          MODEL_KEY=$(echo "$EVAL_MODEL" | sed 's|.*/||')
+
+          # ---------------------------------------------------------------
+          # Cleanup trap: upload logs and self-terminate on exit
+          # ---------------------------------------------------------------
+          cleanup() {
+            local exit_code=$?
+            echo "=== Cleanup (exit_code=$exit_code) ==="
+
+            aws s3 cp "$LOG_FILE" "s3://$S3_BUCKET/$MODEL_KEY/logs/eval.log" --region "$REGION" || true
+            aws s3 cp /var/log/cloud-init-output.log "s3://$S3_BUCKET/$MODEL_KEY/logs/cloud-init-output.log" --region "$REGION" || true
+
+            if [ -d "$WORK_DIR/output" ]; then
+              aws s3 sync "$WORK_DIR/output" "s3://$S3_BUCKET/$MODEL_KEY/output/" --region "$REGION" || true
+            fi
+
+            aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$REGION" || true
+          }
+          trap cleanup EXIT
+
+          # ---------------------------------------------------------------
+          # All output to log file (and console for cloud-init)
+          # ---------------------------------------------------------------
+          exec > >(tee -a "$LOG_FILE") 2>&1
+          echo "=== Eval tracing started at $(date -u) ==="
+          echo "Instance: $INSTANCE_ID  Region: $REGION"
+          echo "Model: $EVAL_MODEL  MaxModelLen: $MAX_MODEL_LEN"
+          nvidia-smi || true
+
+          # ---------------------------------------------------------------
+          # Clone repo as ubuntu
+          # ---------------------------------------------------------------
+          echo "=== Cloning ${GitRepo} @ ${GitRef} ==="
+          sudo -u ubuntu git clone --depth 1 --branch "${GitRef}" "${GitRepo}" "$WORK_DIR"
+
+          # ---------------------------------------------------------------
+          # Run eval script as ubuntu
+          # ---------------------------------------------------------------
+          echo "=== Handing off to infra/aws_eval.sh ==="
+          sudo -u ubuntu \
+            EVAL_MODEL="$EVAL_MODEL" \
+            MAX_MODEL_LEN="$MAX_MODEL_LEN" \
+            S3_BUCKET="$S3_BUCKET" \
+            REGION="$REGION" \
+            HF_TOKEN_SSM_PATH="${HfTokenSsmPath}" \
+            HOME=/home/ubuntu \
+            PATH="/usr/local/bin:/usr/bin:/bin" \
+            bash -c 'cd "$0" && exec ./infra/aws_eval.sh' "$WORK_DIR"
+
+          echo "=== Eval tracing finished ==="
+
+Outputs:
+  BucketName:
+    Description: S3 bucket where eval results are uploaded
+    Value: !Ref ResultsBucket
+
+  InstanceId:
+    Description: EC2 instance ID (use with SSM for monitoring)
+    Value: !Ref EvalInstance
+
+  SsmShellCommand:
+    Description: Command to open a shell on the instance via SSM
+    Value: !Sub >-
+      aws ssm start-session
+      --target ${EvalInstance}
+      --region ${AWS::Region}
