@@ -156,7 +156,7 @@ Resources:
             aws s3 cp /var/log/cloud-init-output.log "s3://$S3_BUCKET/$MODEL_KEY/logs/cloud-init-output.log" --region "$REGION" || true
 
             if [ -d "$WORK_DIR/output" ]; then
-              aws s3 sync "$WORK_DIR/output" "s3://$S3_BUCKET/$MODEL_KEY/output/" --region "$REGION" || true
+              aws s3 sync "$WORK_DIR/output/evals" "s3://$S3_BUCKET/$MODEL_KEY/output/" --region "$REGION" || true
             fi
 
             aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$REGION" || true

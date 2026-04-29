@@ -33,7 +33,7 @@ from pkna.inference.system_prompts import (
     render_system_prompt,
 )
 from pkna.inference.tools import make_eval_tools
-from pkna.llm.backends import LLMBackend, create_backend
+from pkna.llm.backends import LLMBackend, OutputTruncatedError, create_backend
 from pkna.logging import setup_logging
 
 console, log = setup_logging()
@@ -104,11 +104,16 @@ def run_single_turn(
     bank = load_memory_bank(prompt.memory_bank_path)
     tools = make_eval_tools(prompt.tools, memory_bank=bank, eval_mode=True)
 
-    result = backend.generate(
-        system=system_prompt,
-        messages=messages,
-        tools=tools if tools else None,
-    )
+    try:
+        result = backend.generate(
+            system=system_prompt,
+            messages=messages,
+            tools=tools if tools else None,
+        )
+    except OutputTruncatedError:
+        log.warning(f"Context window exceeded for prompt {prompt.id}, skipping")
+        return None
+
     if result is None:
         log.error(f"Inference failed for prompt {prompt.id}")
         return None
@@ -181,11 +186,19 @@ def run_multi_turn(
     all_thinking: list[str] = []
 
     for turn in range(turn_count):
-        result = backend.generate(
-            system=system_prompt,
-            messages=all_messages,
-            tools=tools_or_none,
-        )
+        try:
+            result = backend.generate(
+                system=system_prompt,
+                messages=all_messages,
+                tools=tools_or_none,
+            )
+        except OutputTruncatedError:
+            log.warning(
+                f"Context window exceeded for prompt {prompt.id} at turn {turn}, "
+                "truncating trace"
+            )
+            break
+
         if result is None:
             log.error(f"Inference failed for prompt {prompt.id} at turn {turn}")
             break
@@ -202,12 +215,20 @@ def run_multi_turn(
             break
 
         directive = _get_directive(directives, turn)
-        user_msg = simulate_user_turn(
-            backend=sim_backend,
-            conversation=_visible_messages(all_messages),
-            user_profile=prompt.user_summary,
-            directive=directive,
-        )
+        try:
+            user_msg = simulate_user_turn(
+                backend=sim_backend,
+                conversation=_visible_messages(all_messages),
+                user_profile=prompt.user_summary,
+                directive=directive,
+            )
+        except OutputTruncatedError:
+            log.warning(
+                f"Simulator context window exceeded for prompt {prompt.id} at "
+                f"turn {turn}, truncating trace"
+            )
+            break
+
         if user_msg is None:
             log.error(f"User simulator failed for prompt {prompt.id} at turn {turn}")
             break

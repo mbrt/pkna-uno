@@ -190,8 +190,7 @@ uv run python evals/generate_eval_prompts.py --output-dir "$PROMPTS_DIR"
 # ------------------------------------------------------------------
 banner "Step 4: Run eval inference"
 
-# Cap max output tokens to half the context window (leaving room for the prompt)
-MAX_TOKENS=$((MAX_MODEL_LEN / 2))
+MAX_TOKENS=4096
 
 uv run python evals/run_eval_inference.py \
     --prompts-dir "$PROMPTS_DIR" \

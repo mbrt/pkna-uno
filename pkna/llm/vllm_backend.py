@@ -29,6 +29,7 @@ from pkna.llm.backends import (
     MAX_TOOL_ITERATIONS,
     GenerateResult,
     LLMBackend,
+    OutputTruncatedError,
     _retry_with_backoff,
 )
 from pkna.llm.local_backend import _callable_to_tool_dict
@@ -150,7 +151,14 @@ class VllmBackend(LLMBackend):
         def _call():
             return self._client.chat.completions.create(**kwargs)
 
-        return _retry_with_backoff(_call, self._is_retryable)
+        try:
+            return _retry_with_backoff(_call, self._is_retryable)
+        except openai.BadRequestError as e:
+            if "maximum context length" in str(e) or "max_model_len" in str(e):
+                raise OutputTruncatedError(
+                    f"Prompt exceeded model context window: {e}"
+                ) from e
+            raise
 
     @staticmethod
     def _extract_response(
