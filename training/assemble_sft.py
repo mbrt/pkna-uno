@@ -2,31 +2,34 @@
 
 """Assemble SFT dataset from filtered traces.
 
-Reads quality-filtered DatagenTrace JSONL, converts each trace to standard
-chat messages (reasoning_content + OpenAI tool_calls), and saves as a
-HuggingFace Dataset.
+Reads quality-filtered DatagenTrace JSONL, renders each trace into a ChatML
+text string using the target tokenizer's chat template, and saves as a
+HuggingFace Dataset with a single ``text`` column.
 
-The output is tokenizer-independent: each row has a ``messages`` column
-containing a list of message dicts that can be passed directly to any
-tokenizer's apply_chat_template(). Token-length filtering happens at
-training time, not here.
+Pre-rendering at assembly time is intentional: PyArrow's struct-schema
+unification would otherwise pad every ``tool_call.arguments`` dict with the
+union of all argument keys seen across the dataset, polluting the training
+text with spurious ``<parameter=...>\\nNone\\n</parameter>`` blocks. Storing
+only a string column keeps the on-disk / HF-Hub representation clean and
+makes training a straight tokenize-and-filter step.
 
 Usage:
     python training/assemble_sft.py \
         --input output/datagen/traces_filtered.jsonl \
-        --output output/sft/dataset
+        --output output/sft/dataset \
+        --model unsloth/Qwen3.5-4B
 """
 
 import argparse
 from pathlib import Path
-from typing import Any
 
 from datasets import Dataset
+from transformers import AutoTokenizer
 
 from datagen.filter_traces import load_traces
 from pkna.inference.system_prompts import MINIMAL_TEMPLATE
 from pkna.logging import setup_logging
-from pkna.training.sft_dataset import trace_to_messages
+from pkna.training.sft_dataset import trace_to_chatml_text
 
 console, log = setup_logging()
 
@@ -35,24 +38,26 @@ def assemble_dataset(
     input_path: Path,
     output_path: Path,
     system_prompt: str,
+    model_name: str,
 ) -> Dataset:
-    """Load traces, convert to standard chat messages, and save.
+    """Load traces, render to ChatML text, and save as a text-only dataset.
 
     Returns the assembled Dataset.
     """
     traces = load_traces(input_path)
     if not traces:
         log.warning("No traces found in %s", input_path)
-        return Dataset.from_dict({"messages": []})
+        return Dataset.from_dict({"text": []})
 
     log.info("Loaded %d filtered traces", len(traces))
 
-    all_messages: list[list[dict[str, Any]]] = []
-    for trace in traces:
-        messages = trace_to_messages(trace, system_prompt)
-        all_messages.append(messages)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    dataset = Dataset.from_dict({"messages": all_messages})
+    texts: list[str] = []
+    for trace in traces:
+        texts.append(trace_to_chatml_text(trace, system_prompt, tokenizer))
+
+    dataset = Dataset.from_dict({"text": texts})
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset.save_to_disk(str(output_path))
@@ -77,6 +82,15 @@ def main() -> None:
         default=Path("output/sft/dataset"),
         help="Output directory for the HuggingFace Dataset",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        required=True,
+        help=(
+            "Tokenizer to render ChatML with "
+            "(e.g. unsloth/Qwen3.5-4B or a local merged model path)"
+        ),
+    )
     args = parser.parse_args()
 
     console.print("[bold cyan]SFT Dataset Assembly[/bold cyan]\n")
@@ -86,6 +100,7 @@ def main() -> None:
         input_path=args.input,
         output_path=args.output,
         system_prompt=MINIMAL_TEMPLATE,
+        model_name=args.model,
     )
 
     console.print("\n[bold green]Done.[/bold green]")

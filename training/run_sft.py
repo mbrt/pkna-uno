@@ -5,10 +5,9 @@
 Uses Unsloth + LoRA to fine-tune a Qwen3.5 model on the assembled SFT
 dataset. Hyperparameters follow docs/fine-tuning/sft-training.md.
 
-The dataset is expected to contain a ``messages`` column in standard chat
-format (reasoning_content + OpenAI tool_calls). This script applies the
-model's chat template at training time, making the dataset
-tokenizer-independent.
+The dataset is expected to contain a ``text`` column of pre-rendered ChatML
+strings produced by ``training/assemble_sft.py`` against the target
+tokenizer; this script only tokenizes and filters by length.
 
 Requires a GPU with sufficient VRAM (see sft-training.md for estimates).
 
@@ -35,7 +34,7 @@ from unsloth.chat_templates import train_on_responses_only
 import argparse
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import numpy as np
 from datasets import Dataset, load_from_disk
@@ -64,10 +63,11 @@ def render_and_filter(
     tokenizer: PreTrainedTokenizerBase,
     max_seq_length: int,
 ) -> Dataset:
-    """Apply chat template to messages and filter by token length.
+    """Filter pre-rendered ``text`` rows by token length.
 
-    Takes a dataset with a ``messages`` column and returns a dataset with a
-    ``text`` column, dropping examples that exceed ``max_seq_length`` tokens.
+    The dataset is already a ChatML ``text`` column produced by
+    ``training/assemble_sft.py`` against the target tokenizer, so this step
+    only drops examples that exceed ``max_seq_length`` tokens.
     """
     texts: list[str] = []
     token_lengths: list[int] = []
@@ -78,15 +78,7 @@ def render_and_filter(
     encoder = tokenizer.tokenizer if hasattr(tokenizer, "tokenizer") else tokenizer
 
     for row in dataset:
-        text = cast(
-            str,
-            tokenizer.apply_chat_template(
-                cast(list[dict[str, Any]], row["messages"]),
-                tokenize=False,
-                add_generation_prompt=False,
-                enable_thinking=True,
-            ),
-        )
+        text = cast(str, row["text"])
         n_tokens = len(encoder.encode(text))
 
         if n_tokens > max_seq_length:

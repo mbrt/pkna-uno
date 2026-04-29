@@ -10,13 +10,46 @@ conventions:
 The output can be passed directly to tokenizer.apply_chat_template() on any
 model that supports these conventions, with no additional conversion step.
 
-No GPU or model dependencies -- this is pure data transformation.
+For publishing the SFT dataset, prefer ``trace_to_chatml_text`` which returns
+a fully-rendered ChatML string: storing a single ``text`` column avoids the
+PyArrow struct-unification that pollutes ``tool_calls.arguments`` with
+``None`` entries when the dataset is round-tripped through
+``Dataset.from_dict`` / ``save_to_disk``.
+
+No GPU dependencies -- text rendering needs a tokenizer but not the model.
 """
 
-from typing import Any
+from typing import Any, cast
 
 from pkna.datagen.types import DatagenTrace
 from pkna.inference.system_prompts import strip_trace_guidance
+
+# Qwen3's stock chat template only renders <think>...</think> on the final
+# assistant turn (``loop.index0 > ns.last_query_index``) and strips reasoning
+# from every earlier turn. That's intentional for inference (saves context),
+# but during SFT it discards the "reason → tool call / reason → response"
+# supervision signal on every multi-turn intermediate step. We patch the
+# clause to *also* render thinking whenever ``reasoning_content`` is
+# non-empty, so real reasoning is preserved on every turn while Qwen's
+# default behavior for empty-thinking turns is untouched.
+_QWEN_THINK_CLAUSE = "        {%- if loop.index0 > ns.last_query_index %}"
+_QWEN_THINK_CLAUSE_PATCHED = (
+    "        {%- if reasoning_content or loop.index0 > ns.last_query_index %}"
+)
+
+
+def patch_chat_template_for_sft(template: str) -> str:
+    """Patch Qwen3's chat template to preserve thinking on all turns.
+
+    Raises ValueError if the expected clause is missing -- catches upstream
+    template changes before they silently drop supervision signal.
+    """
+    if _QWEN_THINK_CLAUSE not in template:
+        raise ValueError(
+            "Could not find Qwen think-position clause in chat template. "
+            "The tokenizer may not be Qwen3, or upstream changed the template."
+        )
+    return template.replace(_QWEN_THINK_CLAUSE, _QWEN_THINK_CLAUSE_PATCHED)
 
 
 def _convert_tool_calls(
@@ -84,3 +117,33 @@ def trace_to_messages(trace: DatagenTrace, system_prompt: str) -> list[dict[str,
     for msg in trace.messages:
         messages.append(_convert_message(msg))
     return messages
+
+
+def trace_to_chatml_text(
+    trace: DatagenTrace,
+    system_prompt: str,
+    tokenizer: Any,
+) -> str:
+    """Render a DatagenTrace to a ChatML text string for SFT.
+
+    Applies the tokenizer's chat template to the converted messages. The
+    result is the canonical ChatML string that the model will see during
+    training (e.g. ``<|im_start|>assistant\\n<think>\\n...``), with tool
+    calls rendered from *actual* argument dicts so no ``None`` parameters
+    leak through.
+
+    Storing this string in a ``text`` column lets the SFT dataset round-trip
+    cleanly through Arrow/Parquet without struct-schema unification.
+    """
+    messages = trace_to_messages(trace, system_prompt)
+    patched_template = patch_chat_template_for_sft(tokenizer.chat_template)
+    return cast(
+        str,
+        tokenizer.apply_chat_template(
+            messages,
+            chat_template=patched_template,
+            tokenize=False,
+            add_generation_prompt=False,
+            enable_thinking=True,
+        ),
+    )

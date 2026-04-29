@@ -5,6 +5,8 @@ from pkna.inference.system_prompts import TRACE_GUIDANCE_CLOSE, TRACE_GUIDANCE_O
 from pkna.training.sft_dataset import (
     _convert_message,
     _convert_tool_calls,
+    patch_chat_template_for_sft,
+    trace_to_chatml_text,
     trace_to_messages,
 )
 
@@ -282,3 +284,268 @@ class TestTraceGuidanceStripping:
         }
         result = _convert_message(msg)
         assert TRACE_GUIDANCE_OPEN in result["content"]
+
+
+class _FakeTokenizer:
+    """Minimal stand-in for a HuggingFace tokenizer.
+
+    Records the messages it was called with and emits a predictable text
+    form that mirrors ChatML closely enough for assertions, without
+    pulling in ``transformers``. Argument rendering stays faithful: only
+    the keys actually present in the call are emitted, so tests fail if a
+    future refactor reintroduces ``None``-padded keys.
+
+    The ``chat_template`` attribute contains the exact clause that
+    ``patch_chat_template_for_sft`` looks for, so callers can exercise
+    the patching path even against the fake.
+    """
+
+    chat_template = (
+        "{# fake qwen-ish template #}\n"
+        "        {%- if loop.index0 > ns.last_query_index %}\n"
+    )
+
+    def __init__(self):
+        self.calls = []
+
+    def apply_chat_template(
+        self,
+        messages,
+        *,
+        chat_template=None,
+        tokenize,
+        add_generation_prompt,
+        enable_thinking,
+    ):
+        self.calls.append(
+            {
+                "messages": messages,
+                "chat_template": chat_template,
+                "tokenize": tokenize,
+                "add_generation_prompt": add_generation_prompt,
+                "enable_thinking": enable_thinking,
+            }
+        )
+        parts: list[str] = []
+        for m in messages:
+            role = m["role"]
+            parts.append(f"<|im_start|>{role}")
+            if role == "assistant":
+                parts.append(f"<think>\n{m.get('reasoning_content', '')}\n</think>")
+                if m.get("content"):
+                    parts.append(m["content"])
+                for tc in m.get("tool_calls", []) or []:
+                    fn = tc["function"]
+                    parts.append(f"<tool_call>\n<function={fn['name']}>")
+                    for k, v in fn["arguments"].items():
+                        parts.append(f"<parameter={k}>\n{v}\n</parameter>")
+                    parts.append("</function>\n</tool_call>")
+            elif role == "tool":
+                parts.append(f"<tool_response>\n{m['content']}\n</tool_response>")
+            else:
+                parts.append(m.get("content", ""))
+            parts.append("<|im_end|>")
+        return "\n".join(parts)
+
+
+class TestPatchChatTemplateForSft:
+    def test_rewrites_position_check_to_content_check(self):
+        src = (
+            "... preamble ...\n"
+            "        {%- if loop.index0 > ns.last_query_index %}\n"
+            "            render with think\n"
+            "        {%- endif %}\n"
+        )
+        patched = patch_chat_template_for_sft(src)
+        assert "reasoning_content or loop.index0 > ns.last_query_index" in patched
+        assert "{%- if loop.index0 > ns.last_query_index %}" not in patched
+
+    def test_raises_when_clause_missing(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="Qwen think-position clause"):
+            patch_chat_template_for_sft("{# some other template #}")
+
+
+class TestTraceToChatmlText:
+    def test_renders_and_invokes_template(self):
+        trace = _make_trace(
+            messages=[
+                {"role": "user", "content": "Ciao"},
+                {
+                    "role": "assistant",
+                    "content": "Ciao, socio.",
+                    "thinking": "Casual reply.",
+                },
+            ]
+        )
+        tok = _FakeTokenizer()
+        text = trace_to_chatml_text(trace, SYSTEM_PROMPT, tok)
+        assert "<|im_start|>system" in text
+        assert "Casual reply." in text
+        assert "Ciao, socio." in text
+        assert len(tok.calls) == 1
+        kwargs = tok.calls[0]
+        assert kwargs["tokenize"] is False
+        assert kwargs["add_generation_prompt"] is False
+        assert kwargs["enable_thinking"] is True
+
+    def test_tool_call_arguments_have_no_none(self):
+        """Regression guard: rendered tool calls must only carry the argument
+        keys that were actually set on the trace (no struct-unification
+        leakage from HF Datasets)."""
+        trace = _make_trace(
+            messages=[
+                {"role": "user", "content": "Search that up"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "name": "search_knowledge",
+                            "arguments": {"keywords": "Xadhoom"},
+                        }
+                    ],
+                },
+            ]
+        )
+        tok = _FakeTokenizer()
+        text = trace_to_chatml_text(trace, SYSTEM_PROMPT, tok)
+        assert "<parameter=keywords>" in text
+        assert "Xadhoom" in text
+        assert "None" not in text
+        for forbidden in ("query", "segment_id", "task", "value", "key"):
+            assert f"<parameter={forbidden}>" not in text
+
+    def test_passes_patched_template_to_tokenizer(self):
+        trace = _make_trace(
+            messages=[
+                {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": "Hello", "thinking": "Short reply."},
+            ]
+        )
+        tok = _FakeTokenizer()
+        trace_to_chatml_text(trace, SYSTEM_PROMPT, tok)
+        assert len(tok.calls) == 1
+        passed = tok.calls[0]["chat_template"]
+        assert passed is not None
+        assert "reasoning_content or loop.index0 > ns.last_query_index" in passed
+
+
+class TestTraceToChatmlTextWithRealTokenizer:
+    """Integration tests against a real Qwen3 tokenizer.
+
+    Skipped when the local merged-model tokenizer isn't available.
+    """
+
+    @staticmethod
+    def _load_tokenizer():
+        import pytest
+
+        try:
+            from transformers import AutoTokenizer
+        except ImportError:
+            pytest.skip("transformers not installed")
+        from pathlib import Path
+
+        path = Path("output/sft/qwen3-5-4b-merged")
+        if not path.exists():
+            pytest.skip(f"Qwen3 tokenizer not available at {path}")
+        return AutoTokenizer.from_pretrained(path)
+
+    def test_multi_turn_preserves_thinking_on_intermediate_turn(self):
+        """Regression guard: the patched template must render <think> on an
+        intermediate assistant turn that has real thinking, even when another
+        user turn follows. This is exactly the case Qwen's stock template
+        drops."""
+        tok = self._load_tokenizer()
+        trace = _make_trace(
+            messages=[
+                {"role": "user", "content": "First question."},
+                {
+                    "role": "assistant",
+                    "content": "Intermediate answer.",
+                    "thinking": "INTERMEDIATE_REASONING_MARKER",
+                },
+                {"role": "user", "content": "Follow-up question."},
+                {
+                    "role": "assistant",
+                    "content": "Final answer.",
+                    "thinking": "FINAL_REASONING_MARKER",
+                },
+            ]
+        )
+        text = trace_to_chatml_text(trace, SYSTEM_PROMPT, tok)
+        assert "INTERMEDIATE_REASONING_MARKER" in text
+        assert "FINAL_REASONING_MARKER" in text
+        # Both should appear inside proper <think>...</think> blocks.
+        assert text.count("<think>") >= 2
+        assert text.count("</think>") >= 2
+
+    def test_multi_turn_tool_call_thinking_precedes_tool_call(self):
+        """Patched template renders <think> before the <tool_call> block
+        on a tool-calling intermediate turn."""
+        tok = self._load_tokenizer()
+        trace = _make_trace(
+            messages=[
+                {"role": "user", "content": "Who is Xadhoom?"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "thinking": "TOOL_REASONING_MARKER",
+                    "tool_calls": [
+                        {
+                            "name": "search_knowledge",
+                            "arguments": {"keywords": "Xadhoom"},
+                        }
+                    ],
+                },
+                {"role": "tool", "content": "Xadhoom is a Xerbian scientist."},
+                {
+                    "role": "assistant",
+                    "content": "She's a Xerbian scientist.",
+                    "thinking": "FINAL_REASONING_MARKER",
+                },
+                {"role": "user", "content": "Thanks!"},
+                {
+                    "role": "assistant",
+                    "content": "Prego, socio!",
+                    "thinking": "CLOSING_REASONING_MARKER",
+                },
+            ]
+        )
+        text = trace_to_chatml_text(trace, SYSTEM_PROMPT, tok)
+        tool_idx = text.index("<tool_call>")
+        tool_reason_idx = text.index("TOOL_REASONING_MARKER")
+        assert tool_reason_idx < tool_idx, (
+            "thinking must appear before the tool_call block it motivates"
+        )
+        # All three reasoning markers should survive the render, not just the last.
+        assert "TOOL_REASONING_MARKER" in text
+        assert "FINAL_REASONING_MARKER" in text
+        assert "CLOSING_REASONING_MARKER" in text
+
+    def test_no_spurious_empty_think_on_intermediate_turn_without_thinking(self):
+        """When an intermediate assistant turn has no thinking, the patched
+        template must not inject an empty <think></think> block (that would
+        teach the model to always emit empty reasoning). Qwen's default
+        emits empty <think> only on the last turn; we preserve that."""
+        tok = self._load_tokenizer()
+        trace = _make_trace(
+            messages=[
+                {"role": "user", "content": "First."},
+                {"role": "assistant", "content": "No reasoning here."},
+                {"role": "user", "content": "Second."},
+                {
+                    "role": "assistant",
+                    "content": "Final.",
+                    "thinking": "FINAL_REASONING_MARKER",
+                },
+            ]
+        )
+        text = trace_to_chatml_text(trace, SYSTEM_PROMPT, tok)
+        # Split on the first assistant block and check it has no think tags.
+        first_asst = text.split("<|im_start|>assistant\n", 1)[1]
+        first_asst = first_asst.split("<|im_end|>", 1)[0]
+        assert "<think>" not in first_asst
+        assert "</think>" not in first_asst
