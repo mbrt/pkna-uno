@@ -2,10 +2,11 @@
 #
 # Run the eval pipeline against a local or HuggingFace model/adapter.
 #
-# Three stages:
+# Four stages:
 #   1. Generate eval prompts (deterministic, no LLM needed)
 #   2. Run eval inference (model under test via --backend)
 #   3. Score traces (judge model via --judge-backend)
+#   4. MMLU-Pro benchmark via lm-eval (vllm backend only)
 #
 # Prerequisites:
 #   - GPU available for --backend local
@@ -38,6 +39,7 @@ LOAD_4BIT=false
 SIM_BACKEND=""
 SIM_MODEL=""
 RESUME_DIR=""
+SKIP_MMLU=false
 
 usage() {
     cat <<EOF
@@ -59,6 +61,7 @@ Options:
     --simulator-backend B   Backend for user simulator (default: judge backend)
     --simulator-model M     Model for user simulator (default: backend default)
     --mini [N]              Quick run with N prompts per suite (default: 5)
+    --skip-mmlu             Skip the MMLU-Pro benchmark stage
     -h, --help              Show this help
 EOF
     exit 0
@@ -75,6 +78,7 @@ while [ $# -gt 0 ]; do
         --max-tokens) MAX_TOKENS="$2"; shift 2 ;;
         --output-base) OUTPUT_BASE="$2"; shift 2 ;;
         --resume) RESUME_DIR="$2"; shift 2 ;;
+        --skip-mmlu) SKIP_MMLU=true; shift ;;
         --traces-dir) TRACES_DIR="$2"; SKIP_INFERENCE=true; SKIP_PROMPTS=true; shift 2 ;;
         --skip-prompts) SKIP_PROMPTS=true; shift ;;
         --4bit) LOAD_4BIT=true; shift ;;
@@ -118,6 +122,7 @@ if [ -z "$TRACES_DIR" ]; then
     TRACES_DIR="$RUN_DIR/traces"
 fi
 SCORED_DIR="$RUN_DIR/scored"
+MMLU_DIR="$RUN_DIR/mmlu_pro"
 
 mkdir -p "$RUN_DIR"
 
@@ -136,6 +141,7 @@ echo "  4-bit:         $LOAD_4BIT"
 echo "  Simulator:     ${SIM_BACKEND:-$JUDGE_BACKEND} ${SIM_MODEL:-${JUDGE_MODEL:-(default)}}"
 echo "  Judge:         $JUDGE_BACKEND"
 echo "  Suites:        ${SUITES:-all}"
+echo "  MMLU-Pro:      $([ "$SKIP_MMLU" = true ] && echo "skipped" || ([ "$BACKEND" = "vllm" ] && echo "enabled" || echo "skipped (backend != vllm)"))"
 echo "  Output:        $RUN_DIR"
 echo ""
 
@@ -222,6 +228,32 @@ fi
 uv run python evals/score_eval_traces.py "${SCORE_FLAGS[@]}"
 
 # ------------------------------------------------------------------
+# Stage 4: MMLU-Pro benchmark
+# ------------------------------------------------------------------
+if [ "$SKIP_MMLU" = true ]; then
+    echo "Skipping MMLU-Pro (--skip-mmlu)"
+elif [ "$BACKEND" != "vllm" ]; then
+    echo "Skipping MMLU-Pro (backend is '$BACKEND', not 'vllm')"
+else
+    banner "Stage 4: MMLU-Pro Benchmark (backend=vllm)"
+
+    if [ "$MAX_ITEMS" -gt 0 ]; then
+        MMLU_LIMIT="$MAX_ITEMS"
+    else
+        MMLU_LIMIT=0.17
+    fi
+
+    uv tool run --with 'lm-eval[api]' --with transformers lm-eval run \
+        --model local-completions \
+        --model_args "model=$MODEL,base_url=http://localhost:8000/v1/completions,num_concurrent=4,tokenized_requests=False" \
+        --tasks mmlu_pro \
+        --num_fewshot 5 \
+        --limit "$MMLU_LIMIT" \
+        --output_path "$MMLU_DIR" \
+        --log_samples
+fi
+
+# ------------------------------------------------------------------
 # Summary
 # ------------------------------------------------------------------
 banner "Done"
@@ -230,6 +262,9 @@ echo "  Prompts:       $PROMPTS_DIR"
 echo "  Traces:        $TRACES_DIR"
 echo "  Scored:        $SCORED_DIR"
 echo "  Report:        $SCORED_DIR/report.json"
+if [ "$SKIP_MMLU" = false ] && [ "$BACKEND" = "vllm" ]; then
+    echo "  MMLU-Pro:      $MMLU_DIR"
+fi
 
 if [ -f "$SCORED_DIR/report.json" ]; then
     echo ""

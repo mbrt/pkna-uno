@@ -202,9 +202,26 @@ uv run python evals/run_eval_inference.py \
     --simulator-model "$SERVE_MODEL"
 
 # ------------------------------------------------------------------
+# Step 5: MMLU-Pro benchmark
+# ------------------------------------------------------------------
+banner "Step 5: MMLU-Pro Benchmark (17%)"
+
+MMLU_DIR="$RUN_DIR/mmlu_pro"
+
+uv tool run --with 'lm-eval[api]' --with transformers lm-eval run \
+    --model local-completions \
+    --model_args "model=$SERVE_MODEL,base_url=http://localhost:8000/v1/completions,num_concurrent=4,tokenized_requests=False" \
+    --tasks mmlu_pro \
+    --num_fewshot 5 \
+    --limit 0.17 \
+    --output_path "$MMLU_DIR" \
+    --log_samples
+
+# ------------------------------------------------------------------
 # Done
 # ------------------------------------------------------------------
 banner "Done"
 echo "  Run directory: $RUN_DIR"
 echo "  Prompts:       $PROMPTS_DIR"
 echo "  Traces:        $TRACES_DIR"
+echo "  MMLU-Pro:      $MMLU_DIR"
