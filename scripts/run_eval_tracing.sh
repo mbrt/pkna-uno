@@ -209,7 +209,9 @@ banner "Step 5: MMLU-Pro Benchmark (17%)"
 
 MMLU_DIR="$RUN_DIR/mmlu_pro"
 
-uv run lm-eval run \
+# lm-eval uses local-completions (HTTP to vLLM) — no model download needed,
+# but it does need to fetch the mmlu_pro dataset from HuggingFace Datasets.
+HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 uv run lm-eval run \
     --model local-completions \
     --model_args "model=$SERVE_MODEL,base_url=http://localhost:8000/v1/completions,num_concurrent=4,tokenized_requests=False" \
     --tasks mmlu_pro \

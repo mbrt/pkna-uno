@@ -76,6 +76,12 @@ print('Patched adapter_config.json: base_model_name_or_path -> $BASE_LOCAL_DIR')
 
     export EVAL_MODEL="$LOCAL_MODEL_DIR"
     echo "Using local model: $EVAL_MODEL"
+
+    # Block any accidental HuggingFace Hub downloads now that models are
+    # available locally.  The lm-eval MMLU step overrides these to allow
+    # dataset downloads from the Hub.
+    export HF_HUB_OFFLINE=1
+    export TRANSFORMERS_OFFLINE=1
 fi
 
 # -------------------------------------------------------------------
