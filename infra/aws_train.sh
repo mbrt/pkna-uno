@@ -40,6 +40,19 @@ if [ -z "$HF_TOKEN" ]; then
 fi
 
 # -------------------------------------------------------------------
+# Fetch base model from S3 cache (if configured)
+# -------------------------------------------------------------------
+if [ -n "${MODEL_CACHE_BUCKET:-}" ]; then
+    echo "=== Fetching base model from S3 cache: $TRAIN_MODEL ==="
+    LOCAL_MODEL_DIR="/home/ubuntu/model-cache/$TRAIN_MODEL"
+    mkdir -p "$LOCAL_MODEL_DIR"
+    aws s3 sync "s3://$MODEL_CACHE_BUCKET/models/$TRAIN_MODEL/" "$LOCAL_MODEL_DIR/" \
+        --region "$REGION"
+    export TRAIN_MODEL="$LOCAL_MODEL_DIR"
+    echo "Using local model: $TRAIN_MODEL"
+fi
+
+# -------------------------------------------------------------------
 # Download datasets from HuggingFace
 # -------------------------------------------------------------------
 echo "=== Downloading datasets from HuggingFace ==="

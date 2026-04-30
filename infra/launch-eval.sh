@@ -29,6 +29,7 @@ GIT_REF="main"
 STACK_NAME=""
 REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 HF_TOKEN_SSM_PATH="/pkna-uno/hf-token"
+MODEL_CACHE_BUCKET=""
 
 usage() {
     cat <<EOF
@@ -41,6 +42,7 @@ Options:
     --git-repo URL          Git repository URL (default: $GIT_REPO)
     --git-ref REF           Git branch or tag (default: $GIT_REF)
     --hf-token-ssm-path P  SSM path for HF token (default: $HF_TOKEN_SSM_PATH)
+    --model-cache-bucket B  S3 bucket with pre-fetched models (optional)
     --stack-name NAME       CloudFormation stack name (auto-generated if omitted)
     --region REGION         AWS region (default: $REGION)
     -h, --help              Show this help
@@ -56,6 +58,7 @@ while [ $# -gt 0 ]; do
         --git-repo) GIT_REPO="$2"; shift 2 ;;
         --git-ref) GIT_REF="$2"; shift 2 ;;
         --hf-token-ssm-path) HF_TOKEN_SSM_PATH="$2"; shift 2 ;;
+        --model-cache-bucket) MODEL_CACHE_BUCKET="$2"; shift 2 ;;
         --stack-name) STACK_NAME="$2"; shift 2 ;;
         --region) REGION="$2"; shift 2 ;;
         -h|--help) usage ;;
@@ -90,6 +93,7 @@ echo "  Instance type:  $INSTANCE_TYPE"
 echo "  Model:          $MODEL"
 echo "  Max model len:  $MAX_MODEL_LEN"
 echo "  Git ref:        $GIT_REF"
+echo "  Model cache:    ${MODEL_CACHE_BUCKET:-none (HuggingFace)}"
 echo ""
 
 aws cloudformation create-stack \
@@ -103,7 +107,8 @@ aws cloudformation create-stack \
         "ParameterKey=MaxModelLen,ParameterValue=$MAX_MODEL_LEN" \
         "ParameterKey=GitRepo,ParameterValue=$GIT_REPO" \
         "ParameterKey=GitRef,ParameterValue=$GIT_REF" \
-        "ParameterKey=HfTokenSsmPath,ParameterValue=$HF_TOKEN_SSM_PATH"
+        "ParameterKey=HfTokenSsmPath,ParameterValue=$HF_TOKEN_SSM_PATH" \
+        "ParameterKey=ModelCacheBucket,ParameterValue=$MODEL_CACHE_BUCKET"
 
 echo ""
 echo "Stack creation initiated. Waiting for instance to launch..."

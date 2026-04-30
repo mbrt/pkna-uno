@@ -1,34 +1,36 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Uno training stack: provisions a GPU EC2 instance that runs the full
-  SFT + distillation pipeline, uploads results to S3, and self-terminates.
+  Uno model cache: downloads HuggingFace models to a persistent S3 bucket
+  for fast retrieval by training and eval instances in the same region.
+  Deploy with launch-prefetch-models.sh; re-deploy with new Models to add
+  more models to the same bucket.
 
 Parameters:
+  BucketName:
+    Type: String
+    Description: >-
+      Name of the S3 bucket to store cached models. Must be globally unique.
+      Use the same value on every deploy to accumulate models in one bucket.
+
+  Models:
+    Type: String
+    Description: >-
+      Comma-separated list of HuggingFace model IDs to pre-fetch.
+      Example: unsloth/Qwen3.5-4B,unsloth/Qwen3.5-0.8B
+
   InstanceType:
     Type: String
-    Default: g6e.2xlarge
-    AllowedValues:
-      - g6e.2xlarge
-      - g6e.4xlarge
-      - g6e.12xlarge
+    Default: c5n.xlarge
     Description: >-
-      EC2 instance type. g6e.2xlarge = 1x L40S (Scenario A/B/C),
-      g6e.12xlarge = 4x L40S (Scenario D/E).
+      EC2 instance type. Only CPU is needed (no GPU); c5n instances have
+      high network throughput for fast downloads from HuggingFace.
 
-  Model:
+  HfTokenSsmPath:
     Type: String
-    Default: unsloth/Qwen3.5-4B
-    # Suggested (but not enforced):
-    #   - unsloth/Qwen3.5-0.8B
-    #   - unsloth/Qwen3.5-4B
-    #   - unsloth/Qwen3.6-35B-A3B
-    Description: HuggingFace model name for the base/student model.
-
-  ExportGguf:
-    Type: String
-    Default: ""
+    Default: /pkna-uno/hf-token
     Description: >-
-      GGUF quantization method (e.g. q4_k_m, q8_0). Leave empty to skip.
+      SSM SecureString parameter path containing the HuggingFace token.
+      The token is fetched at runtime, never stored in the template.
 
   GitRepo:
     Type: String
@@ -40,54 +42,15 @@ Parameters:
     Default: main
     Description: Git branch or tag to checkout.
 
-  RunDistillation:
-    Type: String
-    Default: "true"
-    AllowedValues:
-      - "true"
-      - "false"
-    Description: Whether to run Stage 2 (on-policy distillation) after SFT.
-
-  HfTokenSsmPath:
-    Type: String
-    Default: /pkna-uno/hf-token
-    Description: >-
-      SSM SecureString parameter path containing the HuggingFace token.
-      The token is fetched at runtime, never stored in the template.
-
-  HfRepoPrefix:
-    Type: String
-    Default: mbrt/uno
-    Description: >-
-      HuggingFace Hub repo prefix. Adapters are pushed to
-      {prefix}-sft-adapter and {prefix}-distill-adapter.
-
-  ModelCacheBucket:
-    Type: String
-    Default: ""
-    Description: >-
-      S3 bucket name of a pre-populated model cache (created by
-      launch-prefetch-models.sh). When set, the training instance syncs the
-      base model from S3 instead of downloading it from HuggingFace, which
-      is significantly faster within the same AWS region.
-      Leave empty to fall back to downloading directly from HuggingFace.
-
-Conditions:
-  HasModelCache: !Not [!Equals [!Ref ModelCacheBucket, ""]]
-
 Resources:
-  ResultsBucket:
+  ModelsBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      LifecycleConfiguration:
-        Rules:
-          - Id: ExpireAfter90Days
-            Status: Enabled
-            ExpirationInDays: 90
+      BucketName: !Ref BucketName
 
-  TrainingRole:
+  PrefetchRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -100,7 +63,7 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:
-        - PolicyName: TrainingPolicy
+        - PolicyName: PrefetchPolicy
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -111,8 +74,8 @@ Resources:
                   - s3:GetObject
                   - s3:ListBucket
                 Resource:
-                  - !GetAtt ResultsBucket.Arn
-                  - !Sub "${ResultsBucket.Arn}/*"
+                  - !GetAtt ModelsBucket.Arn
+                  - !Sub "${ModelsBucket.Arn}/*"
               - Sid: ReadHfToken
                 Effect: Allow
                 Action:
@@ -127,36 +90,25 @@ Resources:
                 Condition:
                   StringEquals:
                     "aws:ResourceTag/aws:cloudformation:stack-id": !Ref AWS::StackId
-              - !If
-                - HasModelCache
-                - Sid: ReadModelCache
-                  Effect: Allow
-                  Action:
-                    - s3:GetObject
-                    - s3:ListBucket
-                  Resource:
-                    - !Sub "arn:aws:s3:::${ModelCacheBucket}"
-                    - !Sub "arn:aws:s3:::${ModelCacheBucket}/*"
-                - !Ref AWS::NoValue
 
-  TrainingInstanceProfile:
+  PrefetchInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Roles:
-        - !Ref TrainingRole
+        - !Ref PrefetchRole
 
-  TrainingSecurityGroup:
+  PrefetchSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: !Sub "${AWS::StackName} - no inbound, all outbound"
 
-  TrainingInstance:
+  PrefetchInstance:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: !Ref InstanceType
-      IamInstanceProfile: !Ref TrainingInstanceProfile
+      IamInstanceProfile: !Ref PrefetchInstanceProfile
       SecurityGroupIds:
-        - !GetAtt TrainingSecurityGroup.GroupId
+        - !GetAtt PrefetchSecurityGroup.GroupId
       ImageId: "{{resolve:ssm:/aws/service/deeplearning/ami/x86_64/oss-nvidia-driver-gpu-pytorch-2.8-ubuntu-24.04/latest/ami-id}}"
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
@@ -165,7 +117,7 @@ Resources:
             VolumeType: gp3
       Tags:
         - Key: Name
-          Value: !Sub "${AWS::StackName}-training"
+          Value: !Sub "${AWS::StackName}-prefetch"
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
@@ -174,17 +126,14 @@ Resources:
           # ---------------------------------------------------------------
           # Configuration from CloudFormation parameters
           # ---------------------------------------------------------------
-          S3_BUCKET="${ResultsBucket}"
+          S3_BUCKET="${BucketName}"
           REGION="${AWS::Region}"
-          TRAIN_MODEL="${Model}"
+          MODELS="${Models}"
 
-          WORK_DIR="/home/ubuntu/training"
-          LOG_FILE="/home/ubuntu/training.log"
-          MLFLOW_DIR="$WORK_DIR/mlflow"
+          WORK_DIR="/home/ubuntu/prefetch"
+          LOG_FILE="/home/ubuntu/prefetch.log"
           IMDS_TOKEN=$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
           INSTANCE_ID=$(curl -sf -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
-
-          MODEL_KEY=$(echo "$TRAIN_MODEL" | sed 's|.*/||')
 
           # ---------------------------------------------------------------
           # Cleanup trap: upload logs and self-terminate on exit
@@ -192,17 +141,8 @@ Resources:
           cleanup() {
             local exit_code=$?
             echo "=== Cleanup (exit_code=$exit_code) ==="
-
-            aws s3 cp "$LOG_FILE" "s3://$S3_BUCKET/$MODEL_KEY/logs/training.log" --region "$REGION" || true
-            aws s3 cp /var/log/cloud-init-output.log "s3://$S3_BUCKET/$MODEL_KEY/logs/cloud-init-output.log" --region "$REGION" || true
-
-            if [ -d "$WORK_DIR/output" ]; then
-              aws s3 sync "$WORK_DIR/output" "s3://$S3_BUCKET/$MODEL_KEY/output/" --region "$REGION" || true
-            fi
-            if [ -d "$MLFLOW_DIR" ]; then
-              aws s3 sync "$MLFLOW_DIR" "s3://$S3_BUCKET/$MODEL_KEY/mlflow/" --region "$REGION" || true
-            fi
-
+            aws s3 cp "$LOG_FILE" "s3://$S3_BUCKET/logs/prefetch.log" --region "$REGION" || true
+            aws s3 cp /var/log/cloud-init-output.log "s3://$S3_BUCKET/logs/cloud-init-output.log" --region "$REGION" || true
             aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$REGION" || true
           }
           trap cleanup EXIT
@@ -211,10 +151,9 @@ Resources:
           # All output to log file (and console for cloud-init)
           # ---------------------------------------------------------------
           exec > >(tee -a "$LOG_FILE") 2>&1
-          echo "=== Training started at $(date -u) ==="
+          echo "=== Prefetch started at $(date -u) ==="
           echo "Instance: $INSTANCE_ID  Region: $REGION"
-          echo "Model: $TRAIN_MODEL  GGUF: ${ExportGguf}"
-          nvidia-smi || true
+          echo "Models: $MODELS"
 
           # ---------------------------------------------------------------
           # Clone repo as ubuntu
@@ -223,46 +162,32 @@ Resources:
           sudo -u ubuntu git clone --depth 1 --branch "${GitRef}" "${GitRepo}" "$WORK_DIR"
 
           # ---------------------------------------------------------------
-          # Run training script as ubuntu
+          # Run prefetch script as ubuntu
           # ---------------------------------------------------------------
-          echo "=== Handing off to infra/aws_train.sh ==="
+          echo "=== Handing off to infra/aws_prefetch_models.sh ==="
           sudo -u ubuntu \
-            TRAIN_MODEL="${Model}" \
-            EXPORT_GGUF="${ExportGguf}" \
-            RUN_DISTILL="${RunDistillation}" \
+            MODELS="$MODELS" \
             S3_BUCKET="$S3_BUCKET" \
             REGION="$REGION" \
             HF_TOKEN_SSM_PATH="${HfTokenSsmPath}" \
-            HF_REPO_PREFIX="${HfRepoPrefix}" \
-            GIT_REF="${GitRef}" \
-            MODEL_CACHE_BUCKET="${ModelCacheBucket}" \
             HOME=/home/ubuntu \
             PATH="/usr/local/bin:/usr/bin:/bin" \
-            bash -c 'cd "$0" && exec ./infra/aws_train.sh' "$WORK_DIR"
+            bash -c 'cd "$0" && exec ./infra/aws_prefetch_models.sh' "$WORK_DIR"
 
-          echo "=== Training script finished ==="
+          echo "=== Prefetch script finished ==="
 
 Outputs:
   BucketName:
-    Description: S3 bucket where training results are uploaded
-    Value: !Ref ResultsBucket
+    Description: S3 bucket where models are cached
+    Value: !Ref ModelsBucket
 
   InstanceId:
     Description: EC2 instance ID (use with SSM for monitoring)
-    Value: !Ref TrainingInstance
-
-  MlflowCommand:
-    Description: Command to port-forward MLflow UI via SSM
-    Value: !Sub >-
-      aws ssm start-session
-      --target ${TrainingInstance}
-      --document-name AWS-StartPortForwardingSession
-      --parameters portNumber=5000,localPortNumber=5000
-      --region ${AWS::Region}
+    Value: !Ref PrefetchInstance
 
   SsmShellCommand:
     Description: Command to open a shell on the instance via SSM
     Value: !Sub >-
       aws ssm start-session
-      --target ${TrainingInstance}
+      --target ${PrefetchInstance}
       --region ${AWS::Region}

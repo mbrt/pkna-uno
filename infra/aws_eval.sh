@@ -38,6 +38,47 @@ if [ -z "$HF_TOKEN" ]; then
 fi
 
 # -------------------------------------------------------------------
+# Fetch model from S3 cache (if configured)
+# -------------------------------------------------------------------
+if [ -n "${MODEL_CACHE_BUCKET:-}" ]; then
+    echo "=== Fetching model from S3 cache: $EVAL_MODEL ==="
+    LOCAL_MODEL_DIR="/home/ubuntu/model-cache/$EVAL_MODEL"
+    mkdir -p "$LOCAL_MODEL_DIR"
+    aws s3 sync "s3://$MODEL_CACHE_BUCKET/models/$EVAL_MODEL/" "$LOCAL_MODEL_DIR/" \
+        --region "$REGION"
+
+    # If it's a LoRA adapter, also fetch the base model and patch
+    # adapter_config.json to point to the local base model path.
+    ADAPTER_CFG="$LOCAL_MODEL_DIR/adapter_config.json"
+    if [ -f "$ADAPTER_CFG" ]; then
+        BASE_MODEL=$(python3 -c "
+import json
+with open('$ADAPTER_CFG') as f:
+    print(json.load(f).get('base_model_name_or_path', ''))
+")
+        if [ -n "$BASE_MODEL" ]; then
+            echo "=== Fetching base model from S3 cache: $BASE_MODEL ==="
+            BASE_LOCAL_DIR="/home/ubuntu/model-cache/$BASE_MODEL"
+            mkdir -p "$BASE_LOCAL_DIR"
+            aws s3 sync "s3://$MODEL_CACHE_BUCKET/models/$BASE_MODEL/" "$BASE_LOCAL_DIR/" \
+                --region "$REGION"
+            python3 -c "
+import json
+with open('$ADAPTER_CFG') as f:
+    cfg = json.load(f)
+cfg['base_model_name_or_path'] = '$BASE_LOCAL_DIR'
+with open('$ADAPTER_CFG', 'w') as f:
+    json.dump(cfg, f, indent=2)
+print('Patched adapter_config.json: base_model_name_or_path -> $BASE_LOCAL_DIR')
+"
+        fi
+    fi
+
+    export EVAL_MODEL="$LOCAL_MODEL_DIR"
+    echo "Using local model: $EVAL_MODEL"
+fi
+
+# -------------------------------------------------------------------
 # Run the portable eval tracing script
 # -------------------------------------------------------------------
 echo "=== Running eval tracing ==="

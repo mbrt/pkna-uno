@@ -45,6 +45,19 @@ Parameters:
       SSM SecureString parameter path containing the HuggingFace token.
       The token is fetched at runtime, never stored in the template.
 
+  ModelCacheBucket:
+    Type: String
+    Default: ""
+    Description: >-
+      S3 bucket name of a pre-populated model cache (created by
+      launch-prefetch-models.sh). When set, the eval instance syncs the
+      model from S3 instead of downloading it from HuggingFace, which is
+      significantly faster within the same AWS region.
+      Leave empty to fall back to downloading directly from HuggingFace.
+
+Conditions:
+  HasModelCache: !Not [!Equals [!Ref ModelCacheBucket, ""]]
+
 Resources:
   ResultsBucket:
     Type: AWS::S3::Bucket
@@ -97,6 +110,17 @@ Resources:
                 Condition:
                   StringEquals:
                     "aws:ResourceTag/aws:cloudformation:stack-id": !Ref AWS::StackId
+              - !If
+                - HasModelCache
+                - Sid: ReadModelCache
+                  Effect: Allow
+                  Action:
+                    - s3:GetObject
+                    - s3:ListBucket
+                  Resource:
+                    - !Sub "arn:aws:s3:::${ModelCacheBucket}"
+                    - !Sub "arn:aws:s3:::${ModelCacheBucket}/*"
+                - !Ref AWS::NoValue
 
   EvalInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -188,6 +212,7 @@ Resources:
             S3_BUCKET="$S3_BUCKET" \
             REGION="$REGION" \
             HF_TOKEN_SSM_PATH="${HfTokenSsmPath}" \
+            MODEL_CACHE_BUCKET="${ModelCacheBucket}" \
             HOME=/home/ubuntu \
             PATH="/usr/local/bin:/usr/bin:/bin" \
             bash -c 'cd "$0" && exec ./infra/aws_eval.sh' "$WORK_DIR"

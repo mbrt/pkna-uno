@@ -32,6 +32,7 @@ STACK_NAME=""
 REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 HF_REPO_PREFIX="mbrt/uno"
 HF_TOKEN_SSM_PATH="/pkna-uno/hf-token"
+MODEL_CACHE_BUCKET=""
 
 usage() {
   cat <<EOF
@@ -46,6 +47,7 @@ Options:
   --sft-only              Skip distillation (SFT only)
   --hf-repo-prefix PFX    HuggingFace repo prefix (default: $HF_REPO_PREFIX)
   --hf-token-ssm-path P   SSM path for HF token (default: $HF_TOKEN_SSM_PATH)
+  --model-cache-bucket B  S3 bucket with pre-fetched models (optional)
   --stack-name NAME       CloudFormation stack name (auto-generated if omitted)
   --region REGION         AWS region (default: $REGION)
   -h, --help              Show this help
@@ -63,6 +65,7 @@ while [ $# -gt 0 ]; do
     --sft-only) RUN_DISTILL="false"; shift ;;
     --hf-repo-prefix) HF_REPO_PREFIX="$2"; shift 2 ;;
     --hf-token-ssm-path) HF_TOKEN_SSM_PATH="$2"; shift 2 ;;
+    --model-cache-bucket) MODEL_CACHE_BUCKET="$2"; shift 2 ;;
     --stack-name) STACK_NAME="$2"; shift 2 ;;
     --region) REGION="$2"; shift 2 ;;
     -h|--help) usage ;;
@@ -93,6 +96,7 @@ echo "  Git ref:        $GIT_REF"
 echo "  Distillation:   $RUN_DISTILL"
 echo "  GGUF export:    ${EXPORT_GGUF:-none}"
 echo "  HF repo prefix: $HF_REPO_PREFIX"
+echo "  Model cache:    ${MODEL_CACHE_BUCKET:-none (HuggingFace)}"
 echo ""
 
 aws cloudformation create-stack \
@@ -108,7 +112,8 @@ aws cloudformation create-stack \
     "ParameterKey=GitRef,ParameterValue=$GIT_REF" \
     "ParameterKey=RunDistillation,ParameterValue=$RUN_DISTILL" \
     "ParameterKey=HfRepoPrefix,ParameterValue=$HF_REPO_PREFIX" \
-    "ParameterKey=HfTokenSsmPath,ParameterValue=$HF_TOKEN_SSM_PATH"
+    "ParameterKey=HfTokenSsmPath,ParameterValue=$HF_TOKEN_SSM_PATH" \
+    "ParameterKey=ModelCacheBucket,ParameterValue=$MODEL_CACHE_BUCKET"
 
 echo ""
 echo "Stack creation initiated. Waiting for instance to launch..."
