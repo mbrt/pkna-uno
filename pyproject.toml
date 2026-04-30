@@ -18,6 +18,7 @@ dependencies = [
     "google-genai>=1.73.1",
     "jupyter>=1.1.1",
     "layoutparser[layoutmodels]>=0.3.4",
+    "lm-eval[api]>=0.4.11",
     "markdown-it-py>=4.0.0",
     "mlflow>=3.11.1",
     "openai>=1.82.0",

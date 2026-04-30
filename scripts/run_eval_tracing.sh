@@ -208,7 +208,7 @@ banner "Step 5: MMLU-Pro Benchmark (17%)"
 
 MMLU_DIR="$RUN_DIR/mmlu_pro"
 
-uv tool run --with 'lm-eval[api]' --with transformers lm-eval run \
+uv run lm-eval run \
     --model local-completions \
     --model_args "model=$SERVE_MODEL,base_url=http://localhost:8000/v1/completions,num_concurrent=4,tokenized_requests=False" \
     --tasks mmlu_pro \
