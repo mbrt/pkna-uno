@@ -106,10 +106,35 @@ if [ "$IS_ADAPTER" = "true" ]; then
     mkdir -p "$(dirname "$MERGED_DIR")"
 
     uv run python -c "
+import json
+import os
+from huggingface_hub import snapshot_download
+
+token = os.environ.get('HF_TOKEN')
+
+# Pre-download the adapter using standard HF Hub before importing Unsloth.
+# Unsloth patches hf_hub_download at import time to use its own CDN, which
+# may be unreachable on some networks (e.g. AWS). By warming the cache first
+# with the unpatched downloader we avoid any CDN traffic later.
+print('Pre-downloading adapter: $MODEL')
+adapter_local = snapshot_download('$MODEL', token=token)
+print(f'Adapter cached at: {adapter_local}')
+
+# Pre-download the base model too (its ID lives in adapter_config.json).
+cfg_path = os.path.join(adapter_local, 'adapter_config.json')
+with open(cfg_path) as f:
+    base_model = json.load(f).get('base_model_name_or_path', '')
+if base_model:
+    print(f'Pre-downloading base model: {base_model}')
+    snapshot_download(base_model, token=token)
+    print('Base model cached.')
+
+# Import Unsloth only after the cache is warm; pass the local path so it
+# never needs to reach out to any CDN.
 from unsloth import FastLanguageModel
 
 model, tokenizer = FastLanguageModel.from_pretrained(
-    '$MODEL',
+    adapter_local,
     max_seq_length=$MAX_MODEL_LEN,
     load_in_4bit=True,
     load_in_16bit=False,
