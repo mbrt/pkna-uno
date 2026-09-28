@@ -5,6 +5,9 @@ distillation. The model should behave like Uno, have strong emotional
 intelligence, use tools to search factual knowledge (wiki), and delegate
 technical tasks to specialized sub-agents.
 
+For an experiment that learns a separate personality controller from comic
+decisions, see the [personality policy plan](personality-policy-plan.md).
+
 ## Context
 
 This design draws from:
