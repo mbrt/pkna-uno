@@ -1,0 +1,12 @@
+{
+  "description": "Identities established by the premise of the series, which a single issue may not show. Given to character resolution so that personas are linked consistently across issues.",
+  "identities": [
+    {
+      "character": "Paperino",
+      "personas": {
+        "Paperino": "In abiti civili (giacca da marinaio o abiti comuni).",
+        "Paperinik": "In costume: maschera nera, mantello, calzamaglia. Detto anche PK o Pikappa."
+      }
+    }
+  ]
+}

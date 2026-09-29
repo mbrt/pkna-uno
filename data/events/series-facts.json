@@ -1,0 +1,10 @@
+{
+  "facts": [
+    {
+      "id": "serie:identita-paperinik",
+      "statement": "Paolino Paperino è Paperinik.",
+      "truth": "true",
+      "about": []
+    }
+  ]
+}

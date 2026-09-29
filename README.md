@@ -10,8 +10,8 @@ A walkthrough of the project is on [this blog](https://blog.mbrt.dev/posts/uno).
 
 | Directory | Contents |
 |---|---|
-| `pkna/` | Shared library organized by phase: `llm/` (backends, test doubles), `extract/` (scenes, wiki), `inference/` (prompts, memory, tools), `datagen/` (types), `eval/` (types), `training/` (SFT dataset) |
-| `extract/` | Active pipeline: panel extraction, scene reflection, emotional profile building |
+| `pkna/` | Shared library organized by phase: `llm/` (backends, test doubles), `extract/` (scenes, wiki, observations, character registry, events), `inference/` (prompts, memory, tools), `datagen/` (types), `eval/` (types), `training/` (SFT dataset) |
+| `extract/` | Active pipeline: panel extraction, scene reflection, emotional profile building, observation layer prototype (`extract_observations.py` via DSPy, `extract_observations_agent.py` via batched `cursor-agent` sessions, `compare_observations.py`, `score_speakers.py` against `data/gold/`), character registry (`resolve_characters_agent.py` per issue, `merge_registry.py` across issues with manual merges in `data/registry/overrides.json`), event and knowledge log (`extract_events_agent.py` per issue, from text only), state views (`show_world_state.py`: beliefs and whereabouts at any panel or line) |
 | `datagen/` | Dataset generation: prompt bank, trace capture, quality filtering |
 | `training/` | SFT training: dataset assembly, Unsloth training script, smoke test |
 | `evals/` | Evaluation: prompt generation, inference, scoring |
