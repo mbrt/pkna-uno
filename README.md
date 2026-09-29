@@ -33,6 +33,26 @@ uv sync
 make test
 ```
 
+## Extraction
+
+To run the pipeline based on the [personality policy
+design](docs/personality-policy-plan.md):
+
+```sh
+# 1. Observations: fills the 399 pending pages across 8 issues
+uv run python extract/extract_observations_agent.py --issues all
+
+# 2. Character resolution: picks up the 3 ready-now issues, plus the 8
+#    that become ready once step 1 finishes them
+uv run python extract/resolve_characters_agent.py --issues all
+
+# 3. Event extraction: picks up newly-resolved issues from step 2
+uv run python extract/extract_events_agent.py --issues all
+
+# 4. Registry merge: pure code, no LLM, instant
+uv run python extract/merge_registry.py
+```
+
 ## Pipeline Smoke Test
 
 Validate the full pipeline locally with fake LLM backends (no API keys
