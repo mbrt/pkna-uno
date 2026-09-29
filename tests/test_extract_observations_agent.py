@@ -218,7 +218,7 @@ class TestProcessBatches:
 
         def runner(workspace: Path, model: str) -> dict:
             (workspace / "out" / "pkna-0-000.json").write_text(page_json())
-            raise RuntimeError("cursor-agent exited with 1")
+            raise RuntimeError("claude exited with 1")
 
         result = process_batches([batch], runner, "m", tmp_path, "cfg")
 
@@ -226,9 +226,7 @@ class TestProcessBatches:
             output_path(tmp_path, pages[0][0]).read_text()
         )
         assert result == (1, 1)
-        assert record.meta["agent"] == {
-            "error": "RuntimeError('cursor-agent exited with 1')"
-        }
+        assert record.meta["agent"] == {"error": "RuntimeError('claude exited with 1')"}
         assert read_failures(tmp_path) == ["pkna-0-001.jpg"]
 
     def test_os_error_from_the_agent_run_is_a_failure(

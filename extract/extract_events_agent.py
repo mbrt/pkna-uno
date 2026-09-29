@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the event and knowledge log of each issue with a Cursor agent.
+"""Build the event and knowledge log of each issue with a Claude Code agent.
 
 One agent session per issue reads the issue's observation records, with
 character labels resolved, and writes its scenes: place, events, and changes in
@@ -34,12 +34,12 @@ from pkna.extract.events import (
 )
 from pkna.extract.observations import ObservationRecord
 from pkna.extract.registry import IssueCast
-from pkna.llm.cursor_agent import run_cursor_agent
+from pkna.llm.claude_agent import run_claude_agent
 from pkna.logging import setup_logging
 
 console, log = setup_logging()
 
-DEFAULT_MODEL = "claude-opus-5-5-high"
+DEFAULT_MODEL = "claude-opus-5-5"
 VERSION = "v1"
 MAX_PARALLEL = 8
 ROUNDS = 2
@@ -280,7 +280,7 @@ def log_issue(
 
 
 def run_agent(workspace: Path, model: str) -> dict:
-    return run_cursor_agent(workspace, model, PROMPT, AGENT_TIMEOUT_S)
+    return run_claude_agent(workspace, model, PROMPT, AGENT_TIMEOUT_S)
 
 
 def ready_issues(
@@ -299,7 +299,7 @@ def ready_issues(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build per-issue event and knowledge logs with Cursor agents"
+        description="Build per-issue event and knowledge logs with Claude Code agents"
     )
     parser.add_argument(
         "--issues", nargs="+", default=["pkna-0"], help="Issue directories, or 'all'"

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Extract the observation layer with Cursor agents, several pages per request.
+"""Extract the observation layer with Claude Code agents, several pages per request.
 
-Each batch of consecutive pages runs as one headless `cursor-agent` session in
+Each batch of consecutive pages runs as one headless `claude` session in
 an isolated workspace holding only the page images, enlarged strips, the cast
 sheet, the output schema, and instructions. The agent zooms into balloons it
 cannot resolve and validates every file it writes. Plot summaries and earlier
@@ -47,12 +47,12 @@ from pkna.extract.observations import (
     page_problems,
     page_strips,
 )
-from pkna.llm.cursor_agent import run_cursor_agent
+from pkna.llm.claude_agent import run_claude_agent
 from pkna.logging import setup_logging
 
 console, log = setup_logging()
 
-DEFAULT_MODEL = "claude-opus-5-5-high"
+DEFAULT_MODEL = "claude-opus-5-5"
 VERSION = "v2"
 BATCH_SIZE = 8
 MAX_PARALLEL = 4
@@ -128,7 +128,7 @@ def compute_config_id(model_name: str) -> str:
     """Hash of everything that changes the output for the same page."""
     payload = {
         "model": model_name,
-        "extractor": "cursor-agent",
+        "extractor": "claude-agent",
         "schema_version": SCHEMA_VERSION,
         "instructions": INSTRUCTIONS,
         "rules": PageObserver.instructions,
@@ -218,7 +218,7 @@ def prepare_workspace(batch: Batch, workspace: Path) -> None:
 
 
 def run_agent(workspace: Path, model: str) -> dict:
-    return run_cursor_agent(workspace, model, PROMPT, AGENT_TIMEOUT_S)
+    return run_claude_agent(workspace, model, PROMPT, AGENT_TIMEOUT_S)
 
 
 def collect_batch(
@@ -253,7 +253,7 @@ def collect_batch(
                 "model_name": model_name,
                 "config_id": config_id,
                 "schema_version": SCHEMA_VERSION,
-                "extractor": "cursor-agent",
+                "extractor": "claude-agent",
                 "agent": agent,
                 "batch": [s.image for s, _ in batch.pages],
                 "context": {
@@ -356,7 +356,7 @@ def process_batches(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Extract the observation layer with Cursor agents"
+        description="Extract the observation layer with Claude Code agents"
     )
     parser.add_argument(
         "--issues", nargs="+", default=["pkna-0"], help="Issue directories, or 'all'"

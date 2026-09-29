@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve the character labels of each issue with a Cursor agent.
+"""Resolve the character labels of each issue with a Claude Code agent.
 
 Observation records name characters as each page shows them, so one character
 can appear under several labels (a descriptive label before being named, a
@@ -37,12 +37,12 @@ from pkna.extract.registry import (
     collect_mentions,
     render_transcript,
 )
-from pkna.llm.cursor_agent import run_cursor_agent
+from pkna.llm.claude_agent import run_claude_agent
 from pkna.logging import setup_logging
 
 console, log = setup_logging()
 
-DEFAULT_MODEL = "claude-opus-5-5-high"
+DEFAULT_MODEL = "claude-opus-5-5"
 VERSION = "v1"
 MAX_PARALLEL = 8
 ROUNDS = 2
@@ -259,7 +259,7 @@ def resolve_issue(
 
 
 def run_agent(workspace: Path, model: str) -> dict:
-    return run_cursor_agent(workspace, model, PROMPT, AGENT_TIMEOUT_S)
+    return run_claude_agent(workspace, model, PROMPT, AGENT_TIMEOUT_S)
 
 
 def complete_issues(
@@ -282,7 +282,7 @@ def complete_issues(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Resolve character labels per issue with Cursor agents"
+        description="Resolve character labels per issue with Claude Code agents"
     )
     parser.add_argument(
         "--issues", nargs="+", default=["pkna-0"], help="Issue directories, or 'all'"
