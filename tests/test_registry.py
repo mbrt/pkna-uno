@@ -238,6 +238,35 @@ class TestMergeCasts:
             id="generale-zondag", persona="Zondag"
         )
 
+    def test_overrides_separate_characters_sharing_a_persona_name(self):
+        casts = {
+            "pkna-12": IssueCast(
+                characters=[character("Odin Eidolon", ("Odin Eidolon", ["Eidolon"]))]
+            ),
+            "pkna-48": IssueCast(
+                characters=[
+                    character(
+                        "Uno", ("Uno", ["Uno"]), ("Odin Eidolon", ["Odin Eidolon"])
+                    )
+                ]
+            ),
+            "pkna-5": IssueCast(characters=[character("Uno", ("Uno", ["Voce"]))]),
+        }
+
+        registry = merge_casts(casts, Overrides(separate=[["Uno", "Odin Eidolon"]]))
+
+        assert [(c.id, c.issues) for c in registry.characters] == [
+            ("odin-eidolon", ["pkna-12"]),
+            ("uno", ["pkna-48", "pkna-5"]),
+        ]
+        assert registry.resolve("pkna-48", "Odin Eidolon") == LabelRef(
+            id="uno", persona="Odin Eidolon"
+        )
+        assert registry.kept_apart == []
+        odin = registry.find("Odin Eidolon")
+        assert odin is not None
+        assert odin.id == "odin-eidolon"
+
 
 def test_cast_problems_accepts_a_complete_assignment_with_personas():
     cast = IssueCast(

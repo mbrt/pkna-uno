@@ -212,9 +212,15 @@ class Registry(BaseModel):
 
     def find(self, name: str) -> RegistryCharacter | None:
         """The named character with this name, a name variant, or persona name."""
+        # A character's own names take precedence over another character's
+        # persona with the same name.
         key = name_key(name)
-        for c in self.characters:
-            if c.kind == "named" and key in character_keys(c.names, c.personas):
+        named = [c for c in self.characters if c.kind == "named"]
+        for c in named:
+            if key in {name_key(n) for n in c.names}:
+                return c
+        for c in named:
+            if key in character_keys(c.names, c.personas):
                 return c
         return None
 
@@ -226,6 +232,12 @@ class Overrides(BaseModel):
         default=[],
         description="Groups of names that are the same named character; the "
         "first name of a group is the character's canonical name.",
+    )
+    separate: list[list[str]] = Field(
+        default=[],
+        description="Groups of names that are each a different named character, "
+        "never linked even when one uses another's name as a persona (e.g. Uno "
+        "presenting himself as Odin Eidolon).",
     )
 
 
@@ -288,9 +300,25 @@ def merge_casts(
         for c in cast.characters
         if c.kind == "named"
     ]
+    alias = {name_key(n): name_key(g[0]) for g in overrides.merge for n in g}
+
+    def canonical_key(name: str) -> str:
+        key = name_key(name)
+        return alias.get(key, key)
+
+    separate_group = {
+        canonical_key(n): i for i, g in enumerate(overrides.separate) for n in g
+    }
+    own_keys = [canonical_key(c.name) for _, c in named]
     parent = list(range(len(named)))
     cluster_issues = [{issue} for issue, _ in named]
+    cluster_separate = [{key} if key in separate_group else set() for key in own_keys]
     refused: list[tuple[int, int]] = []
+
+    def kept_separate(a: set[str], b: set[str]) -> bool:
+        return any(
+            x != y and separate_group[x] == separate_group[y] for x in a for y in b
+        )
 
     def find(i: int) -> int:
         while parent[i] != i:
@@ -302,19 +330,23 @@ def merge_casts(
         # One issue's resolution is authoritative about which of its
         # characters are distinct, e.g. an impostor using a real person's name.
         ri, rj = find(i), find(j)
-        if ri == rj:
+        if ri == rj or kept_separate(cluster_separate[ri], cluster_separate[rj]):
             return
         if cluster_issues[ri] & cluster_issues[rj]:
             refused.append((i, j))
             return
         parent[ri] = rj
         cluster_issues[rj] |= cluster_issues[ri]
+        cluster_separate[rj] |= cluster_separate[ri]
 
-    alias = {name_key(n): name_key(g[0]) for g in overrides.merge for n in g}
     owner: dict[str, int] = {}
     for i, (_, c) in enumerate(named):
         for key in character_keys([c.name], c.personas):
             key = alias.get(key, key)
+            # A persona named after a separate character doesn't link to it,
+            # and must not claim the name for later issues either.
+            if key in separate_group and key != own_keys[i]:
+                continue
             if key in owner:
                 union(i, owner[key])
             else:

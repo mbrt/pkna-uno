@@ -2,7 +2,7 @@
 """Merge per-issue character resolutions into the series registry.
 
 Named characters are linked across issues by shared names and persona names,
-plus the manual merges in data/registry/overrides.json. Writes the registry and
+plus the manual merges and separations in data/registry/overrides.json. Writes the registry and
 a review report listing merges and near-duplicates worth checking.
 """
 
@@ -82,8 +82,8 @@ def format_review(registry: Registry) -> str:
         f"{len(named)} named characters; {others} unnamed characters and groups "
         f"scoped to single issues; {len(registry.labels)} issues.",
         "",
-        "Fix wrong links by adding name groups to `data/registry/overrides.json` "
-        "and rerunning the merge.",
+        "Fix wrong links by adding name groups to `merge` or `separate` in "
+        "`data/registry/overrides.json` and rerunning the merge.",
         "",
         "## Merged under different names",
         "",

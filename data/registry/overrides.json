@@ -3,6 +3,17 @@
     ["Lyla Lay", "Lyla"],
     ["Dan Woodstein", "Dan"],
     ["Paperon de' Paperoni", "Paperone", "Zio Paperone"],
-    ["Mike Martinus Morrighan", "Mike M. Morrighan", "Mike Morrighan", "Mike"]
+    ["Mike Martinus Morrighan", "Mike M. Morrighan", "Mike Morrighan", "Mike"],
+    ["Angus Fangus", "Angus", "Fangus"],
+    ["Razziatore", "Il Razziatore"],
+    ["Ducklair", "Everett Ducklair"],
+    ["Wisecube", "Generale Wisecube", "Abraham Lincoln Wisecube"],
+    ["Westcock", "Clint Westcock", "Colonnello Westcock", "Clint E. Westcock", "Generale Westcock"],
+    ["Baldo, l'Allegro Castoro", "Baldo"],
+    ["Norman Bates Russel", "Russel"],
+    ["Eugene Photomas", "Photomas"]
+  ],
+  "separate": [
+    ["Uno", "Odin Eidolon"]
   ]
 }
