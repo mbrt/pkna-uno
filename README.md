@@ -11,7 +11,7 @@ A walkthrough of the project is on [this blog](https://blog.mbrt.dev/posts/uno).
 | Directory | Contents |
 |---|---|
 | `pkna/` | Shared library organized by phase: `llm/` (backends, test doubles), `extract/` (scenes, wiki, observations, character registry, events), `inference/` (prompts, memory, tools), `datagen/` (types), `eval/` (types), `training/` (SFT dataset) |
-| `extract/` | Active pipeline: panel extraction, scene reflection, emotional profile building, observation layer prototype (`extract_observations.py` via DSPy, `extract_observations_agent.py` via batched `claude` sessions, `compare_observations.py`, `score_speakers.py` against `data/gold/`), character registry (`resolve_characters_agent.py` per issue, `merge_registry.py` across issues with manual merges and separations in `data/registry/overrides.json`), event and knowledge log (`extract_events_agent.py` per issue, from text only), state views (`show_world_state.py`: beliefs and whereabouts at any panel or line) |
+| `extract/` | Active pipeline: panel extraction, scene reflection, emotional profile building, observation layer prototype (`extract_observations.py` via DSPy, `extract_observations_agent.py` via batched `claude` sessions, `compare_observations.py`, `score_speakers.py` against `data/gold/`), character registry (`resolve_characters_agent.py` per issue, `merge_registry.py` across issues with manual merges and separations in `data/registry/overrides.json`), event and knowledge log (`extract_events_agent.py` per issue, from text only), fact links across issues (`link_facts_agent.py` per issue, with manual corrections in `data/events/fact-links.json`), state views (`show_world_state.py`: beliefs and whereabouts at any panel or line) |
 | `datagen/` | Dataset generation: prompt bank, trace capture, quality filtering |
 | `training/` | SFT training: dataset assembly, Unsloth training script, smoke test |
 | `evals/` | Evaluation: prompt generation, inference, scoring |
@@ -51,6 +51,12 @@ uv run python extract/extract_events_agent.py --issues all
 
 # 4. Registry merge: pure code, no LLM, instant
 uv run python extract/merge_registry.py
+
+# 5. Fact links: joins facts of different issues stating the same
+#    proposition, so later stances replace earlier ones in the state views.
+#    Review output/events/v1/links/review.md; fix it in
+#    data/events/fact-links.json (instant: rerun without new issues)
+uv run python extract/link_facts_agent.py --issues all
 ```
 
 ## Pipeline Smoke Test

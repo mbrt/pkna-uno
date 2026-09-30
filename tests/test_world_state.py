@@ -10,7 +10,14 @@ from pkna.extract.events import (
     Presence,
 )
 from pkna.extract.registry import IssueCast, Persona, ResolvedCharacter, merge_casts
-from pkna.extract.world_state import Cutoff, Sighting, ref_key, world_state
+from pkna.extract.world_state import (
+    Cutoff,
+    FactLink,
+    FactLinks,
+    Sighting,
+    ref_key,
+    world_state,
+)
 
 
 def character(name: str, *personas: str) -> ResolvedCharacter:
@@ -141,6 +148,69 @@ def test_beliefs_persist_across_issues_in_publication_order():
 
     before = world_state(LOGS, REGISTRY, Cutoff(issue="pkna-2"))
     assert before.beliefs["uno"]["serie:identita-paperinik"].stance == "believes"
+
+
+REVISED_LOGS = [
+    IssueLog(
+        issue="pkna-0",
+        facts=[Fact(id="f01", statement="Due è stato cancellato.", truth="true")],
+        scenes=[
+            scene(
+                "s01",
+                "pkna-0-001#p1",
+                "Ducklair Tower",
+                ["Uno"],
+                learns("pkna-0-001#p1.t1", "Uno", "f01"),
+            )
+        ],
+    ),
+    IssueLog(
+        issue="pkna-2",
+        facts=[
+            Fact(id="f05", statement="Due è sopravvissuto.", truth="true"),
+            Fact(id="f09", statement="Due è nascosto in rete.", truth="unknown"),
+        ],
+        scenes=[
+            scene(
+                "s01",
+                "pkna2-001#p1",
+                "Ducklair Tower",
+                ["Uno"],
+                learns("pkna2-001#p2.t1", "Uno", "f05", "suspects"),
+                learns("pkna2-001#p3.t1", "Uno", "f09", "suspects"),
+            )
+        ],
+    ),
+]
+
+
+def test_linked_facts_replace_earlier_stances_and_revise_truth():
+    links = FactLinks(links=[FactLink(same=["pkna-0/f01"], opposite=["pkna-2/f05"])])
+
+    state = world_state(REVISED_LOGS, REGISTRY, Cutoff(issue="pkna-2"), links)
+
+    uno = state.beliefs["uno"]
+    assert sorted(uno) == ["pkna-0/f01", "pkna-2/f09"]
+    assert (uno["pkna-0/f01"].fact, uno["pkna-0/f01"].stance) == (
+        "pkna-2/f05",
+        "suspects",
+    )
+    assert state.truth == {
+        "pkna-0/f01": "false",
+        "pkna-2/f05": "true",
+        "pkna-2/f09": "unknown",
+    }
+
+    before = world_state(REVISED_LOGS, REGISTRY, Cutoff(issue="pkna-0"), links)
+    assert before.beliefs["uno"]["pkna-0/f01"].fact == "pkna-0/f01"
+    assert before.truth == {"pkna-0/f01": "true"}
+
+
+def test_unlinked_facts_keep_separate_stances():
+    state = world_state(REVISED_LOGS, REGISTRY, Cutoff(issue="pkna-2"))
+
+    assert sorted(state.beliefs["uno"]) == ["pkna-0/f01", "pkna-2/f05", "pkna-2/f09"]
+    assert state.truth["pkna-0/f01"] == "true"
 
 
 def test_ref_key_orders_panels_before_their_lettering():

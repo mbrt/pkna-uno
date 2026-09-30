@@ -1,0 +1,7 @@
+{
+  "links": [
+    {"same": ["pkna-2/due-cancellato", "pkna-8/f61"]},
+    {"same": ["pkna-30/f60"], "opposite": ["pkna-30/f62"]}
+  ],
+  "unlink": []
+}
