@@ -88,12 +88,20 @@ comes to know, suspect, or reject which facts.
    between places. The `NUOVA SCENA` markers are hints: the page-by-page
    extraction can miss a change at a page turn, or mark one where the scene
    continues.
-3. For each scene in reading order, write `out/scenes/NNN.json` (`001.json`,
-   `002.json`, ...) following `scene-schema.json`, and add the facts it uses to
-   `out/facts.json` following `facts-schema.json`.
+3. Write the log in batches of about ten scenes, in reading order: write each
+   scene as `out/scenes/NNN.json` (`001.json`, `002.json`, ...) following
+   `scene-schema.json`, and add the facts the batch uses to `out/facts.json`
+   following `facts-schema.json`. Write each batch to disk before working out
+   the next one; do not compose the whole log in a single step.
 4. Run `{tools} validate-log out` and fix every problem it reports.
 
-Use only the files in this directory: do not look up plot summaries or other
+If `out/` already holds scenes and facts from an interrupted session, check that
+they are consistent, and continue from the panel where they end instead of
+starting over.
+
+Use only the files in this directory: do not read files outside it (the
+validator's messages say what to fix), keep any scratch files in this
+directory rather than in `/tmp`, and do not look up plot summaries or other
 information about the comic.
 
 ## Rules
@@ -179,11 +187,20 @@ def output_path(out_root: Path, issue: str) -> Path:
     return out_root / f"{issue}.json"
 
 
-def is_done(path: Path, config_id: str, inputs_id: str) -> bool:
+def is_done(
+    path: Path, config_id: str, inputs_id: str, redo_stale: bool = False
+) -> bool:
+    """Whether a log exists for these inputs.
+
+    A log written with other instructions or model still counts, unless
+    redo_stale: changes that only make runs cheaper should not redo good logs.
+    """
     if not path.exists():
         return False
     meta = json.loads(path.read_text(encoding="utf-8")).get("meta", {})
-    return meta.get("config_id") == config_id and meta.get("input_hash") == inputs_id
+    if meta.get("input_hash") != inputs_id:
+        return False
+    return not redo_stale or meta.get("config_id") == config_id
 
 
 def load_cast(casts_root: Path, issue: str) -> IssueCast | None:
@@ -195,6 +212,15 @@ def load_cast(casts_root: Path, issue: str) -> IssueCast | None:
     )
 
 
+def same_inputs(workspace: Path, transcript: str, characters_json: str) -> bool:
+    try:
+        old_transcript = (workspace / "transcript.md").read_text(encoding="utf-8")
+        old_characters = (workspace / "characters.json").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return old_transcript == transcript and old_characters == characters_json
+
+
 def prepare_workspace(
     workspace: Path,
     transcript: str,
@@ -202,13 +228,17 @@ def prepare_workspace(
     index: IssueIndex,
     series_path: Path,
 ) -> None:
-    if workspace.exists():
+    """Write the agent's inputs.
+
+    Output left by an interrupted session on the same inputs is kept, so that a
+    retry continues from it instead of paying for the same work again.
+    """
+    characters_json = json.dumps(characters, ensure_ascii=False, indent=1)
+    if workspace.exists() and not same_inputs(workspace, transcript, characters_json):
         shutil.rmtree(workspace)
-    (workspace / "out" / "scenes").mkdir(parents=True)
+    (workspace / "out" / "scenes").mkdir(parents=True, exist_ok=True)
     (workspace / "transcript.md").write_text(transcript, encoding="utf-8")
-    (workspace / "characters.json").write_text(
-        json.dumps(characters, ensure_ascii=False, indent=1), encoding="utf-8"
-    )
+    (workspace / "characters.json").write_text(characters_json, encoding="utf-8")
     (workspace / "index.json").write_text(index.model_dump_json(), encoding="utf-8")
     shutil.copyfile(series_path, workspace / "series-facts.json")
     for name, model in (
@@ -308,6 +338,11 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, default=OUT_ROOT)
     parser.add_argument("--parallel", type=int, default=MAX_PARALLEL)
     parser.add_argument("--rounds", type=int, default=ROUNDS)
+    parser.add_argument(
+        "--redo-stale",
+        action="store_true",
+        help="Also redo logs written with other instructions or model",
+    )
     args = parser.parse_args()
 
     issues = args.issues
@@ -325,6 +360,7 @@ def main() -> None:
                 output_path(args.out_dir, issue),
                 config_id,
                 input_hash(*issue_inputs(records, cast)),
+                args.redo_stale,
             )
         ]
         if not pending:

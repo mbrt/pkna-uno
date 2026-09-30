@@ -92,7 +92,10 @@ def test_valid_log_is_written_with_provenance_and_resumable(
     assert list((out_root / "_work").iterdir()) == []
     assert is_done(output_path(out_root, "pkna-0"), "cfg", inputs_id)
     assert not is_done(output_path(out_root, "pkna-0"), "cfg", "other-input")
-    assert not is_done(output_path(out_root, "pkna-0"), "other-cfg", inputs_id)
+    assert is_done(output_path(out_root, "pkna-0"), "other-cfg", inputs_id)
+    assert not is_done(
+        output_path(out_root, "pkna-0"), "other-cfg", inputs_id, redo_stale=True
+    )
 
 
 def test_invalid_log_is_a_failure_and_keeps_workspace(tmp_path: Path, series: Path):
@@ -119,6 +122,35 @@ def test_invalid_log_is_a_failure_and_keeps_workspace(tmp_path: Path, series: Pa
     assert not output_path(out_root, "pkna-0").exists()
     assert failure["error"] == "scene 1 knowledge 1: unknown character 'Pikappa'"
     assert (out_root / "_work" / "pkna-0" / "out" / "scenes" / "001.json").exists()
+
+
+def test_retry_continues_from_the_output_of_an_interrupted_session(
+    tmp_path: Path, series: Path
+):
+    out_root = tmp_path / "out"
+    scenes = valid_scenes()
+    seen: list[list[str]] = []
+
+    def interrupted(workspace: Path, model: str) -> dict:
+        path = workspace / "out" / "scenes" / "001.json"
+        path.write_text(scenes[0].model_dump_json())
+        raise RuntimeError("claude exited with 1: Request timed out")
+
+    def continuing(workspace: Path, model: str) -> dict:
+        seen.append(
+            sorted(p.name for p in (workspace / "out" / "scenes").glob("*.json"))
+        )
+        return writing(scenes, FACTS)(workspace, model)
+
+    first = log_issue(
+        "pkna-0", RECORDS, CAST, interrupted, "m", out_root, "cfg", series
+    )
+    second = log_issue(
+        "pkna-0", RECORDS, CAST, continuing, "m", out_root, "cfg", series
+    )
+
+    assert (first, second) == (False, True)
+    assert seen == [["001.json"]]
 
 
 def test_validate_log_reports_unparsable_files(tmp_path: Path, series: Path):
